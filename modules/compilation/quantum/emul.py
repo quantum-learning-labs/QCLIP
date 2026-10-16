@@ -121,6 +121,7 @@ class BackendManager:
 
         raw_pos_circs, raw_neg_circs = [], []
         failed_circuits = 0
+        unknown_symbols = set()
 
         for idx in tqdm(range(data_size), desc="Compiling Qiskit DAGs", unit="pair"):
             try:
@@ -128,6 +129,8 @@ class BackendManager:
                 image = sample["image"]
                 pos_einsum, pos_wires = sample["pos_caption"]
                 neg_einsum, neg_wires = sample["neg_caption"]
+                unknown_symbols.update(g['name'] for g in pos_wires + neg_wires
+                                       if g['name'] is not None and g['name'] not in txt_params)
 
                 qc_pos_txt, pos_out_q, pos_txt_p = tn2qiskit(
                     einsum2interleaved(pos_einsum), pos_wires, txt_params, out_q=self.out_q, meas_output=False
@@ -178,7 +181,7 @@ class BackendManager:
                 print(f" Error compiling circuit pair at index {idx}: {e}")
                 failed_circuits += 1
         
-        print(f" Compiled {len(raw_pos_circs)} circuit pairs | Dropped {failed_circuits} samples.")
+        print(f" Compiled {len(raw_pos_circs)} circuit pairs | Dropped {failed_circuits} samples | Unknown text symbols (angle 0): {len(unknown_symbols)}")
         pos_circs = self.transpile(raw_pos_circs, batch_size=256, optimization_level=opt_lvl)
         neg_circs = self.transpile(raw_neg_circs, batch_size=256, optimization_level=opt_lvl)
 

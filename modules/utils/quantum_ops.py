@@ -97,7 +97,8 @@ def tn2qiskit(einsum_expr, gate_arr, param_dict={}, out_q=None, meas_output=True
                 gate_func(param, *q_targets)
 
                 if gate['name'] not in param_dict:
-                    qiskit_param_dict[param] = np.random.rand() * 2 * np.pi
+                    # unknown symbol: angle 0, as VQCModel's unk parameter (tanh(0) * 2pi)
+                    qiskit_param_dict[param] = 0.0
                 else:
                     qiskit_param_dict[param] = param_dict[gate['name']]
 
