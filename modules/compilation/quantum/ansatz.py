@@ -120,7 +120,11 @@ class BaseAnsatz(ABC):
                 else:
                     output_wires.append(idx)
                     output_types.append(atomic_type)
-            if len(input_wires) == len(output_wires):
+            # pass-through only if each output wire can reuse an input wire of the same width
+            # (an intransitive verb maps n (1 qubit) -> out (embedding_qubits), so it must not)
+            same_widths = all(self.obmap.get(t_in, 1) == self.obmap.get(t_out, 1)
+                              for t_in, t_out in zip(input_types, output_types))
+            if len(input_wires) == len(output_wires) and same_widths:
                 for in_idx, out_idx in zip(input_wires, output_wires):
                     current_wires.extend(ccg_map[in_idx])
                     ccg_map[out_idx] = ccg_map[in_idx]
