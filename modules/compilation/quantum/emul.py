@@ -106,7 +106,7 @@ class BackendManager:
                 basis_gates=self.basis_gates,
                 optimization_level=optimization_level,
                 # layout_method='trivial',
-                # seed_transpiler=42,
+                seed_transpiler=self.config.get('seed'),
                 num_processes=4  # Kept strict to manage RAM limits
             )
             transpiled_circs.extend(transpiled_chunk)

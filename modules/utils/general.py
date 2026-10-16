@@ -38,6 +38,10 @@ def set_seed(seed):
         torch.cuda.manual_seed(seed)
     elif torch.backends.mps.is_available():
         torch.mps.manual_seed(seed)
+    # deterministic kernels where torch has them (e.g. index_put accumulate in the text backward)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def flatten(container):
     for i in container:
@@ -80,7 +84,9 @@ def gen_id(config):
     timestamp = datetime.now().strftime('%m%d_%H%M')
     return f"q{q}__{t_str}__{v_str}__{timestamp}"
 
-def setup_exp(config_path: str):
+def setup_exp(config_path: str, seed=None):
+    # must be set before cuBLAS initialises for deterministic GPU matmuls
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     logging.getLogger("alembic").setLevel(logging.WARNING)
     logging.getLogger("mlflow").setLevel(logging.WARNING)
 
@@ -95,7 +101,9 @@ def setup_exp(config_path: str):
                              f"set text.discard (currently {text_discard}) instead.")
 
     device = get_device()
-    seed = config.get("seed", int.from_bytes(os.urandom(4), "big"))
+    if seed is None:
+        seed = config.get("seed", int.from_bytes(os.urandom(4), "big"))
+    config["seed"] = seed  # saved with the checkpoint config, read by the emulator
     set_seed(seed)
     
     return config, device, seed

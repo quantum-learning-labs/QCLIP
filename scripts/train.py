@@ -11,9 +11,10 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-cfg', "--config", type=str, required=True, help='Path to experiment config YAML')
+    parser.add_argument("--seed", type=int, default=None, help='Overrides the config seed')
     args = parser.parse_args()
 
-    config, DEV, SEED = setup_exp(args.config)
+    config, DEV, SEED = setup_exp(args.config, seed=args.seed)
     DATASET = config['dataset']['name']
     BATCH_SIZE = config['batch_size']
 
