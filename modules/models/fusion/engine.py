@@ -274,6 +274,29 @@ class MMEvaluator:
         self.image_model = image_model.to(device)
         self.text_model = text_model.to(device)
         self.device = device
+        self._sims_cache = None  # set by eval_set so several tasks share one encoding pass
+
+    @torch.no_grad()
+    def _pair_sims(self, dataloader, choice):
+        key = (id(dataloader), choice)
+        if self._sims_cache is not None and key in self._sims_cache:
+            return self._sims_cache[key]
+        pos_arr, neg_arr = [], []
+        for batch in dataloader:
+            if choice == 'text':
+                m1_emb = self._encode_img(batch["image"])
+                pos_m2_emb = self._encode_txt(batch["pos_caption"])
+                neg_m2_emb = self._encode_txt(batch["neg_caption"])
+            if choice == 'image':
+                m1_emb = self._encode_txt(batch["caption"])
+                pos_m2_emb = self._encode_img(batch["pos_image"])
+                neg_m2_emb = self._encode_img(batch["neg_image"])
+            pos_arr.append(torch.sum(m1_emb.conj() * pos_m2_emb, dim=1).abs())
+            neg_arr.append(torch.sum(m1_emb.conj() * neg_m2_emb, dim=1).abs())
+        sims = (torch.cat(pos_arr).cpu(), torch.cat(neg_arr).cpu())
+        if self._sims_cache is not None:
+            self._sims_cache[key] = sims
+        return sims
 
     @torch.no_grad()
     def _encode_txt(self, texts):
@@ -370,33 +393,12 @@ class MMEvaluator:
     def hard_neg_eval(self, dataloader, choice = 'text') -> dict:
         self.image_model.eval()
         self.text_model.eval()
-        correct_final = total = 0
-
-        pos_arr, neg_arr = [], []
-        correct_arr, margin_arr = [], []
-        for batch in dataloader:
-            if choice == 'text':
-                m1_emb = self._encode_img(batch["image"])
-                pos_m2_emb = self._encode_txt(batch["pos_caption"])
-                neg_m2_emb = self._encode_txt(batch["neg_caption"])
-            if choice == 'image':
-                m1_emb = self._encode_txt(batch["caption"])
-                pos_m2_emb = self._encode_img(batch["pos_image"])
-                neg_m2_emb = self._encode_img(batch["neg_image"])
-
-            pos_sim = torch.sum(m1_emb.conj() * pos_m2_emb, dim=1).abs()
-            neg_sim = torch.sum(m1_emb.conj() * neg_m2_emb, dim=1).abs()
-            pos_arr.extend(pos_sim.cpu().numpy())
-            neg_arr.extend(neg_sim.cpu().numpy())
-            
-            margin = pos_sim - neg_sim
-            correct = (margin > 0).float()
-            correct_final += correct.sum().item()
-            margin_arr.extend(margin.cpu().numpy())
-            correct_arr.extend(correct.cpu().numpy())
-
-            total += m1_emb.size(0)
-        return {"hard_neg_acc": correct_final / total}, {"pos_scores": pos_arr, "neg_scores": neg_arr, "margins": margin_arr, "correct": correct_arr}
+        pos_sim, neg_sim = self._pair_sims(dataloader, choice)
+        margin = pos_sim - neg_sim
+        correct = (margin > 0).float()
+        return ({"hard_neg_acc": correct.sum().item() / len(correct)},
+                {"pos_scores": list(pos_sim.numpy()), "neg_scores": list(neg_sim.numpy()),
+                 "margins": list(margin.numpy()), "correct": list(correct.numpy())})
             
     def evaluate_text_choice(self, dataloader) -> dict:
         return self.hard_neg_eval(dataloader, choice='text')
@@ -543,43 +545,15 @@ class MMEvaluator:
         self.image_model.eval()
         self.text_model.eval()
 
-        sum_pos_sim = 0.0
-        sum_neg_sim = 0.0
-        sum_absolute_gap = 0.0
-        total_samples = 0
-
         metrics = {}
-
-        for batch in dataloader:
-            if choice == "text":
-                m1_emb = self._encode_img(batch["image"])
-                pos_m2_emb = self._encode_txt(batch["pos_caption"])
-                neg_m2_emb = self._encode_txt(batch["neg_caption"])
-                text_tensors = [pos_m2_emb, neg_m2_emb]
-            elif choice == "image":
-                m1_emb = self._encode_txt(batch["caption"])
-                pos_m2_emb = self._encode_img(batch["pos_image"])
-                neg_m2_emb = self._encode_img(batch["neg_image"])
-                text_tensors = [m1_emb]
-            
-            # Replicating your model's native similarity metric calculation
-            pos_sim = torch.sum(m1_emb.conj() * pos_m2_emb, dim=1).abs()
-            neg_sim = torch.sum(m1_emb.conj() * neg_m2_emb, dim=1).abs()
-            
-            # Compute the absolute distance between the positive and negative scores per sample
-            batch_gap = (pos_sim - neg_sim).abs()
-
-            sum_pos_sim += pos_sim.sum().item()
-            sum_neg_sim += neg_sim.sum().item()
-            sum_absolute_gap += batch_gap.sum().item()
-            total_samples += m1_emb.size(0)
-
+        pos_sim, neg_sim = self._pair_sims(dataloader, choice)
+        total_samples = len(pos_sim)
         if total_samples == 0:
             return {}
-        
-        metrics["diag_mean_pos_overlap"] = sum_pos_sim / total_samples
-        metrics["diag_mean_neg_overlap"] = sum_neg_sim / total_samples
-        metrics["diag_collapse_gap"] = sum_absolute_gap / total_samples
+
+        metrics["diag_mean_pos_overlap"] = pos_sim.double().sum().item() / total_samples
+        metrics["diag_mean_neg_overlap"] = neg_sim.double().sum().item() / total_samples
+        metrics["diag_collapse_gap"] = (pos_sim - neg_sim).abs().double().sum().item() / total_samples
 
         return metrics
     
@@ -600,6 +574,7 @@ class MMEvaluator:
         self.image_model.eval()
         self.text_model.eval()
         metrics = {}
+        self._sims_cache = {}
         for task_name in tasks:
             eval_fn = getattr(self, task_name, None)
             if eval_fn is None:
@@ -613,5 +588,6 @@ class MMEvaluator:
                 task_metrics = out[0] if isinstance(out, tuple) else out
                 
             metrics.update(task_metrics)
-            
+
+        self._sims_cache = None
         return metrics
