@@ -193,8 +193,7 @@ class QuantumFeatureMap(nn.Module):
         if self.discard:
             pure_state = self.contraction_path(*tensor_arr)
             batch_dim = pure_state.shape[0]
-            k_latent = 3 
-            dim_latent = 2 ** k_latent
+            dim_latent = 2 ** self.k
             dim_env = pure_state.numel() // (batch_dim * dim_latent)
             psi = pure_state.reshape(batch_dim, dim_latent, dim_env)
             rho = torch.matmul(psi, psi.conj().transpose(1, 2))

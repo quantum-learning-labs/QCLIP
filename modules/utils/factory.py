@@ -64,7 +64,7 @@ def build_experiment(config, device):
 
         text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['text'].get('discard', False)).to(device)
         if config['text'].get('discard', False):
-            loss_fn = Pauli_InfoNCE(label_smoothing=0.1, temperature=0.07)
+            loss_fn = Pauli_InfoNCE(label_smoothing=0.1, temperature=0.07, num_qubits=config['embedding_qubits'])
         else:
             loss_fn = FS_InfoNCE(label_smoothing=0.1, temperature=0.07)
         
