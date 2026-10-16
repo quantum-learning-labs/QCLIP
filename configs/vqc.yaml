@@ -2,22 +2,24 @@ model_type: "vqc"
 batch_size: 256
 qlr: 0.001
 clr: 0.00001
+patience: 12    
+min_delta: 0.001
 epochs: 100
-embedding_qubits: 9
+embedding_qubits: 3
 out_dim: 512
 discard: false
 
 emulate:
   set: "swap"
   noise: false
-  resolution: 50
-  optimization_level: 1
+  optimization_level: 1 # 0, 1, 2, 3
+  resolution: 10000
+  num_runs: 10
   backend: "statevector" # 'statevector', 'tensor_network', 'matrix_product_state', 'density_matrix'
-  discard: false
-  measurement_method: 'compute_uncompute' # 'compute_uncompute', 'destructive_swap', or 'classical_shadows'
+  measurement_method: 'destructive_swap' # 'compute_uncompute', 'destructive_swap', or 'classical_shadows'
 
 text:
-  ansatz: "custom_v5"
+  # ansatz: "custom_v6"
   n: 1
   s: 1
   p: 1
@@ -44,6 +46,7 @@ dataset:
     diagnostics:
       - "evaluate_image_choice"
       - "diagnostic_image_choice"
+        # - "cptp_diagnostic_image_choice"
 
   test:
     std:
@@ -61,7 +64,7 @@ dataset:
       img_path: "data/svo-probes/processed/image_embeddings.pt"
       task: "evaluate_text_choice"
 
-dataset:
+_dataset:
   name: "aro"
   class: "modules.data_pipeline.datasets.ARODataset"
   collate_fn: "modules.data_pipeline.datasets.aro_collate_fn"
@@ -76,6 +79,7 @@ dataset:
     diagnostics:
       - "evaluate_text_choice"
       - "diagnostic_text_choice"
+
   test:
     att:
       class: "modules.data_pipeline.datasets.ARODataset"
