@@ -208,13 +208,13 @@ class BaseAnsatz(ABC):
                 if is_nested_list:
                     row_einsums, row_symbols = [], []
                     for tn in row_val:
-                        e_str, syms = self(tn, curry, spider)
+                        e_str, syms = self(tn, curry=curry, discard=discard, spider=spider)
                         row_einsums.append(e_str)
                         row_symbols.append(syms)
                     einsum_arr.append(row_einsums)
                     symbols_arr.append(row_symbols)
                 else:
-                    e_str, syms = self(row_val, curry, spider)
+                    e_str, syms = self(row_val, curry=curry, discard=discard, spider=spider)
                     einsum_arr.append(e_str)
                     symbols_arr.append(syms)
             df[einsum_col] = einsum_arr
