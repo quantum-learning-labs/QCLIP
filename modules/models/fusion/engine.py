@@ -282,7 +282,14 @@ class MMEvaluator:
         key = (id(dataloader), choice)
         if self._sims_cache is not None and key in self._sims_cache:
             return self._sims_cache[key]
-        pos_arr, neg_arr = [], []
+        is_dm = getattr(self.text_model, 'discard', False)
+        def unit(emb):
+            # unit norm (statevectors) or unit trace (flattened density matrices), as the emulator measures
+            if is_dm:
+                d = int(round(emb.shape[1] ** 0.5))
+                return emb / emb.view(-1, d, d).diagonal(dim1=1, dim2=2).sum(-1).real.clamp(min=1e-12).unsqueeze(1)
+            return emb / emb.norm(dim=1, keepdim=True).clamp(min=1e-12)
+        pos_arr, neg_arr, pos_n_arr, neg_n_arr = [], [], [], []
         for batch in dataloader:
             if choice == 'text':
                 m1_emb = self._encode_img(batch["image"])
@@ -294,7 +301,10 @@ class MMEvaluator:
                 neg_m2_emb = self._encode_img(batch["neg_image"])
             pos_arr.append(torch.sum(m1_emb.conj() * pos_m2_emb, dim=1).abs())
             neg_arr.append(torch.sum(m1_emb.conj() * neg_m2_emb, dim=1).abs())
-        sims = (torch.cat(pos_arr).cpu(), torch.cat(neg_arr).cpu())
+            m1_u = unit(m1_emb)
+            pos_n_arr.append(torch.sum(m1_u.conj() * unit(pos_m2_emb), dim=1).abs())
+            neg_n_arr.append(torch.sum(m1_u.conj() * unit(neg_m2_emb), dim=1).abs())
+        sims = tuple(torch.cat(a).cpu() for a in (pos_arr, neg_arr, pos_n_arr, neg_n_arr))
         if self._sims_cache is not None:
             self._sims_cache[key] = sims
         return sims
@@ -394,12 +404,14 @@ class MMEvaluator:
     def hard_neg_eval(self, dataloader, choice = 'text') -> dict:
         self.image_model.eval()
         self.text_model.eval()
-        pos_sim, neg_sim = self._pair_sims(dataloader, choice)
+        pos_sim, neg_sim, pos_n, neg_n = self._pair_sims(dataloader, choice)
         margin = pos_sim - neg_sim
         correct = (margin > 0).float()
-        return ({"hard_neg_acc": correct.sum().item() / len(correct)},
+        correct_n = (pos_n > neg_n).float()
+        return ({"hard_neg_acc": correct.sum().item() / len(correct),
+                 "hard_neg_acc_norm": correct_n.sum().item() / len(correct_n)},
                 {"pos_scores": list(pos_sim.numpy()), "neg_scores": list(neg_sim.numpy()),
-                 "margins": list(margin.numpy()), "correct": list(correct.numpy())})
+                 "margins": list(margin.numpy()), "correct": list(correct.numpy()), "correct_norm": list(correct_n.numpy())})
             
     def evaluate_text_choice(self, dataloader) -> dict:
         return self.hard_neg_eval(dataloader, choice='text')
@@ -547,7 +559,7 @@ class MMEvaluator:
         self.text_model.eval()
 
         metrics = {}
-        pos_sim, neg_sim = self._pair_sims(dataloader, choice)
+        pos_sim, neg_sim, _, _ = self._pair_sims(dataloader, choice)
         total_samples = len(pos_sim)
         if total_samples == 0:
             return {}
