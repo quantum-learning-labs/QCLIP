@@ -12,9 +12,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-cfg', "--config", type=str, required=True, help='Path to experiment config YAML')
     parser.add_argument("--seed", type=int, default=None, help='Overrides the config seed')
+    parser.add_argument("--run_name", type=str, default=None, help='Checkpoint directory name (default: generated from the config)')
+    parser.add_argument("--epochs", type=int, default=None, help='Overrides the config epochs (smoke tests)')
     args = parser.parse_args()
 
     config, DEV, SEED = setup_exp(args.config, seed=args.seed)
+    if args.run_name: config['run_name'] = args.run_name
+    if args.epochs: config['epochs'] = args.epochs
     DATASET = config['dataset']['name']
     BATCH_SIZE = config['batch_size']
 

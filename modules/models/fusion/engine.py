@@ -2,7 +2,7 @@ import torch, yaml, mlflow, time, socket, math
 from collections import defaultdict
 from typing import Callable
 import torch.nn.functional as F
-from modules.utils.general import gen_id, log_phase
+from modules.utils.general import gen_id, log_phase, git_state
 from pathlib import Path
 from tqdm import tqdm
 
@@ -22,7 +22,8 @@ class RunManager:
 
         self.dataset_name = config['dataset']['name']
         self.model_type = config['model_type']
-        self.run_name = gen_id(config)
+        self.run_name = config.get('run_name') or gen_id(config)
+        self.config['git_commit'] = git_state()
 
         self.checkpoint_dir = Path(f"./checkpoints/{self.dataset_name}/{self.model_type}/{self.run_name}")
         self.checkpoint_path = self.checkpoint_dir / f"last.pt"
@@ -31,12 +32,15 @@ class RunManager:
         self.eval_tasks = config['dataset']['val'].get('diagnostics', ['global_retrieval'])
 
     def _setup_environment(self):
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        # never reuse a run directory (runs started in the same minute used to share one)
+        if self.checkpoint_dir.exists():
+            raise FileExistsError(f"{self.checkpoint_dir} already exists; choose another run_name")
+        self.checkpoint_dir.mkdir(parents=True)
         
         with open(self.checkpoint_dir / f"config.yaml", 'w') as f:
             yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
 
-        mlf_db_path = Path.cwd() / f"mlf_dbs/{self.dataset_name}.db"
+        mlf_db_path = Path.cwd() / self.config.get('mlflow_db', f"mlf_dbs/{self.dataset_name}.db")
         mlf_db_path.parent.mkdir(parents=True, exist_ok=True)
 
         mlflow.pytorch.autolog(log_models=False)
@@ -84,6 +88,8 @@ class RunManager:
                 "model_path": str(self.checkpoint_path),
                 "early_stopping_patience": patience,
                 "early_stopping_min_delta": min_delta,
+                "discard": self.config['text'].get('discard', False),
+                "git_commit": self.config['git_commit'],
             })
 
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")

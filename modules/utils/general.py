@@ -1,4 +1,4 @@
-import torch, pickle, gc, random, logging, yaml, os
+import torch, pickle, gc, random, logging, yaml, os, subprocess
 from datetime import datetime
 import numpy as np
 from pathlib import Path
@@ -83,6 +83,14 @@ def gen_id(config):
     v_str = f"v_{serialise_subsapce(config['vision'])}"
     timestamp = datetime.now().strftime('%m%d_%H%M')
     return f"q{q}__{t_str}__{v_str}__{timestamp}"
+
+def git_state():
+    try:
+        commit = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'], capture_output=True, text=True).stdout.strip()
+        return commit + ('-dirty' if dirty else '')
+    except (OSError, subprocess.CalledProcessError):
+        return 'unknown'
 
 def setup_exp(config_path: str, seed=None):
     # must be set before cuBLAS initialises for deterministic GPU matmuls
