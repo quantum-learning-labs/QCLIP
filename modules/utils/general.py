@@ -116,6 +116,24 @@ def setup_exp(config_path: str, seed=None):
     
     return config, device, seed
 
+# keys that define the model: an eval config must agree with the training config on these
+MODEL_KEYS = ['model_type', 'embedding_qubits', 'out_dim', 'text', 'vision']
+
+def resolve_eval_config(config_arg, checkpoint_path):
+    saved = Path(checkpoint_path).parent / 'config.yaml' if checkpoint_path is not None else None
+    if saved is None or not saved.exists():
+        if config_arg is None:
+            raise ValueError("No --config given and no config.yaml next to the checkpoint.")
+        return config_arg
+    if config_arg is None:
+        return str(saved)
+    with open(config_arg) as f: given_cfg = yaml.safe_load(f)
+    with open(saved) as f: saved_cfg = yaml.safe_load(f)
+    diff = [k for k in MODEL_KEYS if given_cfg.get(k) != saved_cfg.get(k)]
+    if diff:
+        raise ValueError(f"--config {config_arg} differs from {saved} in {diff}; drop --config to use the checkpoint's own.")
+    return config_arg
+
 class CheckpointManager:
     @staticmethod
     def upgrade_checkpoint(old_state_dict):
@@ -140,7 +158,10 @@ class CheckpointManager:
         if "params" in image_params and not any("params." in k for k in image_params):
             image_params = cls.upgrade_checkpoint(image_params)
 
-        text_model.load_state_dict(text_params, strict=False)
+        missing, unexpected = text_model.load_state_dict(text_params, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(f"Text weights in {checkpoint_path} do not match the model built from the config: "
+                               f"{len(missing)} missing, {len(unexpected)} unexpected (e.g. {(missing + unexpected)[:3]})")
         image_model.load_state_dict(image_params)
         
         return checkpoint

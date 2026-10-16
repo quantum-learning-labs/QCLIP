@@ -1,23 +1,30 @@
-import argparse
+import argparse, json
 from pathlib import Path
 import pandas as pd
 
 from modules.utils.factory import build_experiment
-from modules.utils.general import log_phase, setup_exp, CheckpointManager
+from modules.utils.general import log_phase, setup_exp, CheckpointManager, resolve_eval_config, git_state
 from modules.data_pipeline.engine import DataEngine
 from modules.compilation.quantum.emul import BackendManager, Emulator
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-cfg', '--config', type=str, required=True, help='Path to experiment config YAML')
+    parser.add_argument('-cfg', '--config', type=str, default=None, help='Config YAML (default: the config.yaml saved next to the checkpoint)')
     parser.add_argument('-cp',"--checkpoint", type=str, default=None, help="Path to model checkpoint (.pt file)")
     parser.add_argument('-l', "--limit", type=int, default=None, help="Debug Flag: Truncate execution to top N samples")
+    parser.add_argument("--seed", type=int, default=None, help="Overrides the config seed (shot sampling, transpiler)")
+    parser.add_argument("-o", "--out", type=str, default=None, help="Results JSON (default: emulate_<checkpoint>.json next to the checkpoint); never overwritten")
     args = parser.parse_args()
 
-    config, DEV, _ = setup_exp(args.config)
+    checkpoint_path = Path(args.checkpoint) if args.checkpoint is not None else None
+    config_path = resolve_eval_config(args.config, checkpoint_path)
+    out_path = Path(args.out) if args.out else (checkpoint_path.parent / f"emulate_{checkpoint_path.stem}.json" if checkpoint_path else None)
+    if out_path is not None and out_path.exists():
+        raise FileExistsError(f"{out_path} already exists")
+    config, DEV, SEED = setup_exp(config_path, seed=args.seed)
 
     log_phase("Evaluation Environment")
-    print(f" Target Device   : {DEV} ")
+    print(f" Target Device   : {DEV} | Config : {config_path} | Seed : {SEED}")
 
     log_phase("Instantiating Architecture")
     ansatz, image_model, text_model, _ = build_experiment(config, DEV)
@@ -38,10 +45,12 @@ def main():
     data_engine.image_init(image_model)
 
     log_phase("Loading Model Checkpoint Weights")
-    if args.checkpoint is not None:
-        checkpoint_path = Path(args.checkpoint)
+    checkpoint = {}
+    if checkpoint_path is not None:
         checkpoint = CheckpointManager.load_model(checkpoint_path, image_model, text_model, DEV)
         print(f" Recovered from ({checkpoint_path.name}) Epoch: {checkpoint.get('epoch', 'N/A')} | Historical Loss: {checkpoint.get('train_loss', 'N/A')}")
+    else:
+        print(" [Warning] No checkpoint given: emulating untrained (randomly initialised) weights")
 
     image_model.eval()
     text_model.eval()
@@ -75,6 +84,15 @@ def main():
         print(f"  {'Pos Pair Fidelity (Mean ± Std)':<34} | {data['pos_fidelity_mean']:.4f} ± {data['pos_fidelity_std']:.4f}")
         print(f"  {'Neg Pair Fidelity (Mean ± Std)':<34} | {data['neg_fidelity_mean']:.4f} ± {data['neg_fidelity_std']:.4f}")
     print(" " + "—" * 63 + "\n")
+
+    if out_path is not None:
+        payload = {"checkpoint": str(checkpoint_path), "config": config_path, "epoch": checkpoint.get('epoch'),
+                   "seed": SEED, "discard": config['text'].get('discard', False), "git_commit": git_state(),
+                   "train_git_commit": config.get('git_commit'), "pairs": len(pos_circs), "shots": emulator.shots,
+                   "limit": args.limit, "emulate": config['emulate'], "results": data}
+        with open(out_path, 'x') as f:
+            json.dump(payload, f, indent=1, default=float)
+        print(f" Results written to {out_path}")
 
 if __name__ == "__main__":
     main()

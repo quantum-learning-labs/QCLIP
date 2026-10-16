@@ -390,6 +390,7 @@ class Emulator:
         all_accuracies = []
         all_pos_fidelities = []
         all_neg_fidelities = []
+        per_pair_pos, per_pair_neg = [], []
 
         base_seed = int(np.random.randint(0, 2**31 - 1))
 
@@ -407,6 +408,8 @@ class Emulator:
             all_accuracies.append(accuracy)
             all_pos_fidelities.append(pos_raw.mean().item())
             all_neg_fidelities.append(neg_raw.mean().item())
+            per_pair_pos.append(pos_raw.tolist())
+            per_pair_neg.append(neg_raw.tolist())
 
             print(f" Trial {run_idx + 1} ({elapsed:.2f}s) | Accuracy: {accuracy * 100:.2f}% | Mean Pos Fid: {pos_raw.mean().item():.4f} | Mean Neg Fid: {neg_raw.mean().item():.4f}")
 
@@ -446,4 +449,6 @@ class Emulator:
             "neg_fidelity_std": neg_std,
             "num_runs": num_runs,
             "raw_accuracies": all_accuracies,
+            "per_pair_pos_fidelities": per_pair_pos,
+            "per_pair_neg_fidelities": per_pair_neg,
         }
