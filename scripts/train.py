@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     log_phase("Setting Up Experiment Components")
     ansatz, image_model, text_model, loss_fn = build_experiment(config, DEV)
-    print(f"Model type: {config['model_type']} | CPTP: {config['discard']} | Latent Qubits: {config['embedding_qubits']}")
+    print(f"Model type: {config['model_type']} | CPTP: {config['text'].get('discard', False)} | Latent Qubits: {config['embedding_qubits']}")
     print(f"Text Model: {text_model.__class__.__name__} ansatz: {ansatz.__class__.__name__} | qubits: (n: {config['text']['n']}, s: {config['text']['s']}, p: {config['text']['p']}) | layers: {config['text']['layers']} | curry: {config['text']['curry']}")
     print(f"Image Model: {image_model.__class__.__name__} img_dim: {config['out_dim']} | method: {config['vision']['method']} | layers: {config['vision']['layers']}")
 

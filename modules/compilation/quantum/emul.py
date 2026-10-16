@@ -18,7 +18,7 @@ class BackendManager:
     def __init__(self, config, qlimit=None, hardware_profile=FakeMiami()):
         self.config = config
         self.amplitude_encode = True if config['vision']['method'] == 'amp' else False
-        self.discard = self.config.get('discard', False)
+        self.discard = self.config.get('text', {}).get('discard', False)
         self.meas_method = self.config.get('emulate', {}).get('measurement_method', 'compute_uncompute')
         self.out_q = self.config.get('embedding_qubits', None) if self.discard else None
         self.qlimit = qlimit
@@ -249,7 +249,7 @@ class Emulator:
         self.config = config
         self.backend = backend
         self.shots = 64
-        self.discard = self.config.get('discard', False)
+        self.discard = self.config.get('text', {}).get('discard', False)
         self.meas_method = self.config.get('emulate', {}).get('measurement_method', 'compute_uncompute')
         self.dataset_name = config['dataset']['name']
         self.experiment_name = gen_id(config)
@@ -350,7 +350,7 @@ class Emulator:
                 "dataset": self.dataset_name,
                 "measurement_method": meas_method,
                 "embedding_qubits": self.config.get('embedding_qubits', 0),
-                "discard_qubits": self.config.get('discard', False),
+                "discard_qubits": self.config.get('text', {}).get('discard', False),
                 "epsilon": self.config.get('emulate', {}).get('eps', 0.01),
                 "shots": self.shots,
                 "backend_method": self.config.get('emulate', {}).get('backend', 'statevector'),

@@ -71,7 +71,7 @@ def serialise_subsapce(sub_config):
 
 def gen_id(config):
     q = str(config['embedding_qubits'])
-    if 'discard' in config and config['discard']:
+    if config.get('text', {}).get('discard', False):
         q += 'd'
     else:
         q += 'p'
@@ -86,6 +86,13 @@ def setup_exp(config_path: str):
 
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
+
+    # discard lives under text:, old configs set it at the top level
+    if 'discard' in config:
+        text_discard = config.get('text', {}).get('discard')
+        if text_discard != config['discard']:
+            raise ValueError(f"{config_path}: top-level 'discard: {config['discard']}' is no longer read; "
+                             f"set text.discard (currently {text_discard}) instead.")
 
     device = get_device()
     seed = config.get("seed", int.from_bytes(os.urandom(4), "big"))

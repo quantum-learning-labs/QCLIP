@@ -7,7 +7,6 @@ min_delta: 0.001
 epochs: 100
 embedding_qubits: 3
 out_dim: 512
-discard: false
 
 emulate:
   set: "swap"
@@ -26,6 +25,7 @@ text:
   layers: 2
   curry: true
   spider: false
+  discard: false
 
 vision:
   layers: 2

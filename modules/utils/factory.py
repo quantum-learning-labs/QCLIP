@@ -59,11 +59,11 @@ def build_experiment(config, device):
                                             batch_size=config['batch_size'], 
                                             out_dim=config['out_dim'],
                                             id_init=False, 
-                                            discard=config['discard'],
+                                            discard=config['text'].get('discard', False),
                                             method=config['vision']['method']).to(device)
 
-        text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['discard']).to(device)
-        if config['discard']:
+        text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['text'].get('discard', False)).to(device)
+        if config['text'].get('discard', False):
             loss_fn = Pauli_InfoNCE(label_smoothing=0.1, temperature=0.07)
         else:
             loss_fn = FS_InfoNCE(label_smoothing=0.1, temperature=0.07)
