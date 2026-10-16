@@ -15,6 +15,9 @@ class BaseAnsatz(ABC):
         self.char_idx = count(0)
 
     def __call__(self, tn, curry=False, discard=False, spider=False):
+        # spider() is placeholder code and not implemented properly yet
+        if spider:
+            raise NotImplementedError("spider ansatz is not implemented yet; set text.spider: false")
         if curry:
             return self.tn2ansatz_curried(tn,  discard=discard)
         elif spider:
