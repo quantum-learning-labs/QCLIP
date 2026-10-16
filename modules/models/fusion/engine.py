@@ -89,6 +89,7 @@ class RunManager:
                 "early_stopping_patience": patience,
                 "early_stopping_min_delta": min_delta,
                 "discard": self.config['text'].get('discard', False),
+                "loss": type(self.trainer.loss_fn).__name__,
                 "git_commit": self.config['git_commit'],
             })
 

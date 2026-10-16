@@ -12,7 +12,7 @@ from modules.models.vision.quantum_map import QuantumFeatureMap, QFMap_CPTP
 from modules.models.vision.clip import FrozenCLIP
 from modules.models.vision.image_model import TTNImageModel
 
-from modules.models.fusion.criteria import FS_InfoNCE, InfoNCE, UJ_InfoNCE, Pauli_InfoNCE, FS_InfoNCE
+from modules.models.fusion.criteria import FS_InfoNCE, InfoNCE, UJ_InfoNCE, Pauli_InfoNCE, HS_InfoNCE
 import importlib
 
 def load_obj(import_str: str):
@@ -63,10 +63,20 @@ def build_experiment(config, device):
                                             method=config['vision']['method']).to(device)
 
         text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['text'].get('discard', False)).to(device)
-        if config['text'].get('discard', False):
+        discard = config['text'].get('discard', False)
+        loss_name = config.get('loss', 'pauli' if discard else 'fs')
+        if loss_name in ('pauli', 'uj') and not discard:
+            raise ValueError(f"loss '{loss_name}' needs density matrices: set text.discard: true")
+        if loss_name == 'pauli':
             loss_fn = Pauli_InfoNCE(label_smoothing=0.1, temperature=0.07, num_qubits=config['embedding_qubits'])
-        else:
+        elif loss_name == 'uj':
+            loss_fn = UJ_InfoNCE(label_smoothing=0.1, temperature=0.07)
+        elif loss_name == 'hs':
+            loss_fn = HS_InfoNCE(label_smoothing=0.1, temperature=0.07)
+        elif loss_name == 'fs':
             loss_fn = FS_InfoNCE(label_smoothing=0.1, temperature=0.07)
+        else:
+            raise ValueError(f"Unknown loss '{loss_name}' (pauli, uj, hs, fs)")
         
     elif model_type == "mlp":
         ansatz = MLPCompiler()
