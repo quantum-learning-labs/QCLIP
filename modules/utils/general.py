@@ -93,7 +93,21 @@ def git_state():
         # code copies without .git (e.g. on the HPC cluster) pass the commit in the environment
         return os.environ.get('QCLIP_GIT_COMMIT', 'unknown')
 
-def setup_exp(config_path: str, seed=None):
+def apply_overrides(config, overrides):
+    # "a.b=value" -> config['a']['b'] = yaml.safe_load(value)
+    for item in overrides or []:
+        key, sep, value = item.partition('=')
+        if not sep: raise ValueError(f"--set expects key=value, got '{item}'")
+        *parents, leaf = key.split('.')
+        node = config
+        for p in parents:
+            if not isinstance(node.get(p), dict): raise KeyError(f"--set {key}: '{p}' is not a config section")
+            node = node[p]
+        node[leaf] = yaml.safe_load(value)
+    if overrides: config['overrides'] = list(overrides)
+    return config
+
+def setup_exp(config_path: str, seed=None, overrides=None):
     # must be set before cuBLAS initialises for deterministic GPU matmuls
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     logging.getLogger("alembic").setLevel(logging.WARNING)
@@ -101,6 +115,7 @@ def setup_exp(config_path: str, seed=None):
 
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
+    apply_overrides(config, overrides)
 
     # discard lives under text:, old configs set it at the top level
     if 'discard' in config:

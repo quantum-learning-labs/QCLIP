@@ -14,9 +14,11 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=None, help='Overrides the config seed')
     parser.add_argument("--run_name", type=str, default=None, help='Checkpoint directory name (default: generated from the config)')
     parser.add_argument("--epochs", type=int, default=None, help='Overrides the config epochs (smoke tests)')
+    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                        help='Override a config value, e.g. --set qlr=3e-3 --set text.layers=3 (repeatable)')
     args = parser.parse_args()
 
-    config, DEV, SEED = setup_exp(args.config, seed=args.seed)
+    config, DEV, SEED = setup_exp(args.config, seed=args.seed, overrides=args.set)
     if args.run_name: config['run_name'] = args.run_name
     if args.epochs: config['epochs'] = args.epochs
     DATASET = config['dataset']['name']
@@ -57,16 +59,16 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(
         [{'params': quantum_params, 'lr': config['qlr']},
          {'params': classical_params, 'lr': config['clr']}], 
-        betas=(0.9, 0.999), eps=1e-08, weight_decay=1e-4
+        betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4)
     )
-    warmup_epochs = 5
+    warmup_epochs = config.get('warmup_epochs', 5)
     total_epochs = config['epochs']
 
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
     scheduler_cosine = CosineAnnealingLR(optimizer, T_max=total_epochs - warmup_epochs, eta_min=1e-6)
     scheduler = SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_epochs])
 
-    print(f"Optimizer: {optimizer.__class__.__name__} | Quantum LR: {config['qlr']} | Classical LR: {config['clr']} | Weight Decay: 1e-4")
+    print(f"Optimizer: {optimizer.__class__.__name__} | Quantum LR: {config['qlr']} | Classical LR: {config['clr']} | Weight Decay: {config.get('weight_decay', 1e-4)}")
     print(f"Scheduler: {scheduler.__class__.__name__} | Warmup Epochs: {warmup_epochs} | Total Epochs: {total_epochs} | Patience : {config['patience']} | Delta : {config['min_delta']}")
     loss_fn.describe()
     print(f"Training for {total_epochs} epochs with batch size {BATCH_SIZE}")

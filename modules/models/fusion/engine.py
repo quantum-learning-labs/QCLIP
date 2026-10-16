@@ -91,6 +91,13 @@ class RunManager:
                 "discard": self.config['text'].get('discard', False),
                 "loss": type(self.trainer.loss_fn).__name__,
                 "git_commit": self.config['git_commit'],
+                "label_smoothing": self.trainer.loss_fn.label_smoothing if hasattr(self.trainer.loss_fn, 'label_smoothing') else None,
+                "weight_decay": self.config.get('weight_decay', 1e-4),
+                "warmup_epochs": self.config.get('warmup_epochs', 5),
+                "purity_weight": getattr(self.trainer.loss_fn, 'purity_weight', None),
+                "text_layers": self.config['text']['layers'],
+                "vision_layers": self.config['vision']['layers'],
+                "overrides": " ".join(self.config.get('overrides', [])) or "none",
             })
 
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
