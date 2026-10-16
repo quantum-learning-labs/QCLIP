@@ -8,7 +8,7 @@ from modules.compilation.quantum.gates import *
 from modules.utils.general import get_device
 
 class VQCModel(nn.Module):
-    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64):
+    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64, renorm=False):
         super().__init__()
         self.symbols: List[str] = []
         self.params = nn.ParameterList([])
@@ -18,6 +18,7 @@ class VQCModel(nn.Module):
         self.out_q: int = out_q
         self.precision: torch.dtype = precision
         self.discard = discard
+        self.renorm = renorm  # unit-trace density matrices (hybrid circuits post-select some wires)
 
         h_gate = torch.tensor([[1.0, 1.0], [1.0, -1.0]], dtype=precision) / (2.0**0.5)
         cx_gate = torch.block_diag(
@@ -188,6 +189,8 @@ class VQCModel(nn.Module):
                         traced_dim = 1
                     group_out = group_out.reshape(minibatch_size, sent_dim, traced_dim)
                     rho = torch.bmm(group_out, group_out.conj().transpose(1, 2))
+                    if self.renorm:
+                        rho = rho / rho.diagonal(dim1=1, dim2=2).sum(-1).real.clamp(min=1e-12)[:, None, None]
                     results[list(indices)] = rho
                 else:    
                     results[list(indices)] = group_out

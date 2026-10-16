@@ -27,6 +27,10 @@ class DataEngine:
             compile_kwargs["curry"] = self.config["text"].get("curry", False)
             compile_kwargs["discard"] = self.config["text"].get("discard", False)
             compile_kwargs["spider"] = self.config["text"].get("spider", False)
+            postselect = tuple(self.config["text"].get("postselect_types") or ())
+            if postselect and not compile_kwargs["discard"]:
+                raise ValueError("text.postselect_types only applies with text.discard: true")
+            compile_kwargs["postselect"] = postselect
             
         if split == 'train' or split == 'val':
             data = load_pkl(self.config["dataset"][split]["text_path"])

@@ -60,9 +60,11 @@ def build_experiment(config, device):
                                             out_dim=config['out_dim'],
                                             id_init=False, 
                                             discard=config['text'].get('discard', False),
-                                            method=config['vision']['method']).to(device)
+                                            method=config['vision']['method'],
+                                            env_qubits=config['vision'].get('env_qubits', 0)).to(device)
 
-        text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['text'].get('discard', False)).to(device)
+        text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['text'].get('discard', False),
+                              renorm=bool(config['text'].get('postselect_types'))).to(device)
         discard = config['text'].get('discard', False)
         loss_name = config.get('loss', 'pauli' if discard else 'fs')
         if loss_name in ('pauli', 'uj') and not discard:

@@ -98,6 +98,8 @@ class RunManager:
                 "text_layers": self.config['text']['layers'],
                 "vision_layers": self.config['vision']['layers'],
                 "overrides": " ".join(self.config.get('overrides', [])) or "none",
+                "postselect_types": ",".join(self.config['text'].get('postselect_types') or []) or "none",
+                "env_qubits": self.config['vision'].get('env_qubits', 0),
             })
 
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")

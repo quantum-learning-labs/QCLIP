@@ -253,6 +253,8 @@ class Emulator:
         self.backend = backend
         self.shots = 64
         self.discard = self.config.get('text', {}).get('discard', False)
+        if self.config['text'].get('postselect_types') or self.config['vision'].get('env_qubits'):
+            raise NotImplementedError("emulation of hybrid post-selection / image env_qubits is not implemented yet")
         self.meas_method = self.config.get('emulate', {}).get('measurement_method', 'compute_uncompute')
         self.dataset_name = config['dataset']['name']
         self.experiment_name = gen_id(config)

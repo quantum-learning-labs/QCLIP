@@ -14,19 +14,20 @@ class BaseAnsatz(ABC):
         self.id = type(self).__name__ + '_' + str(obmap['n']) + '_' + str(obmap['s']) + '_' + str(obmap['p']) + '_' + str(obmap['out'])
         self.char_idx = count(0)
 
-    def __call__(self, tn, curry=False, discard=False, spider=False):
+    def __call__(self, tn, curry=False, discard=False, spider=False, postselect=()):
         # spider() is placeholder code and not implemented properly yet
         if spider:
             raise NotImplementedError("spider ansatz is not implemented yet; set text.spider: false")
         if curry:
-            return self.tn2ansatz_curried(tn,  discard=discard)
+            return self.tn2ansatz_curried(tn,  discard=discard, postselect=postselect)
         elif spider:
             return self.spider(tn)
         else:
+            if postselect: raise NotImplementedError("text.postselect_types needs text.curry: true")
             return self.tn2ansatz(tn, discard=discard)
 
-    def tns2ansatze(self, tn_arr, curry=False, discard=False, spider=False):
-        return [self(tn, curry=curry, discard=discard, spider=spider) for tn in tn_arr]
+    def tns2ansatze(self, tn_arr, curry=False, discard=False, spider=False, postselect=()):
+        return [self(tn, curry=curry, discard=discard, spider=spider, postselect=postselect) for tn in tn_arr]
 
     def reset_char(self):
         self.char_idx = count(0)
@@ -102,9 +103,11 @@ class BaseAnsatz(ABC):
         einsum_expr = self.gen_einsum_expr(input_indices, ccg_map)
         return einsum_expr, tensor_arr
     
-    def tn2ansatz_curried(self, tn, discard=False):
+    def tn2ansatz_curried(self, tn, discard=False, postselect=()):
+        # discard: trace out every non-sentence wire, except wires of the atomic types in `postselect`,
+        # which are post-selected onto |0> as in the non-discard circuit (hybrid)
         self.reset_char()
-        ccg_map = {}
+        ccg_map, wire_type = {}, {}
         input_indices, tensor_arr = [], []
         tn_sorted = sort_tn(tn)
 
@@ -149,11 +152,12 @@ class BaseAnsatz(ABC):
             for idx, typ in zip(idx_arr, type_arr):
                 n = self.obmap.get(typ, 1)
                 ccg_map[idx] = current_wires[i:i+n]
+                wire_type[idx] = typ
                 i += n
 
-        if not discard:
+        if not discard or postselect:
             for virtual_idx, physical_wires in ccg_map.items():
-                if virtual_idx != 0:
+                if virtual_idx != 0 and (not discard or wire_type[virtual_idx] in postselect):
                     input_indices.extend([[w] for w in physical_wires])
                     # tensor_arr.extend([(None, '0_dag')] * len(physical_wires))
                     tensor_arr.extend([{'name': None, 'op_type': '0_dag'}] * len(physical_wires))
@@ -196,7 +200,7 @@ class BaseAnsatz(ABC):
         einsum_expr = f"{lhs}->{''.join(target_wires)}"
         return einsum_expr, tensor_arr
 
-    def compile_dataset(self, df, curry=False, discard=False, spider=False):
+    def compile_dataset(self, df, curry=False, discard=False, spider=False, postselect=()):
         #blueprint_df = pd.DataFrame(index=df.index)
         cols = [col for col in df.columns if col.endswith('_diagram')]
         for col in cols:
@@ -215,13 +219,13 @@ class BaseAnsatz(ABC):
                 if is_nested_list:
                     row_einsums, row_symbols = [], []
                     for tn in row_val:
-                        e_str, syms = self(tn, curry=curry, discard=discard, spider=spider)
+                        e_str, syms = self(tn, curry=curry, discard=discard, spider=spider, postselect=postselect)
                         row_einsums.append(e_str)
                         row_symbols.append(syms)
                     einsum_arr.append(row_einsums)
                     symbols_arr.append(row_symbols)
                 else:
-                    e_str, syms = self(row_val, curry=curry, discard=discard, spider=spider)
+                    e_str, syms = self(row_val, curry=curry, discard=discard, spider=spider, postselect=postselect)
                     einsum_arr.append(e_str)
                     symbols_arr.append(syms)
             df[einsum_col] = einsum_arr
