@@ -90,7 +90,8 @@ def git_state():
         dirty = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'], capture_output=True, text=True).stdout.strip()
         return commit + ('-dirty' if dirty else '')
     except (OSError, subprocess.CalledProcessError):
-        return 'unknown'
+        # code copies without .git (e.g. on the HPC cluster) pass the commit in the environment
+        return os.environ.get('QCLIP_GIT_COMMIT', 'unknown')
 
 def setup_exp(config_path: str, seed=None):
     # must be set before cuBLAS initialises for deterministic GPU matmuls
