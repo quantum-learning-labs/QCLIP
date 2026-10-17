@@ -13,7 +13,7 @@ from modules.models.vision.clip import FrozenCLIP
 from modules.models.vision.image_model import TTNImageModel
 
 from modules.models.fusion.criteria import FS_InfoNCE, InfoNCE, UJ_InfoNCE, Pauli_InfoNCE, HS_InfoNCE, Bures_InfoNCE
-import math
+import math, torch
 import torch.nn as nn
 import importlib
 
