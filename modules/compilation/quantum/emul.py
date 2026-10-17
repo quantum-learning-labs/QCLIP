@@ -9,7 +9,8 @@ from qiskit_aer.noise import NoiseModel, coherent_unitary_error, RelaxationNoise
 from qiskit_ibm_runtime.fake_provider import FakeMiami
 from qiskit.circuit.library import RZZGate
 from qiskit.circuit import Delay
-from qiskit.transpiler import InstructionDurations
+from qiskit.transpiler import PassManager
+from qiskit.transpiler.passes import ALAPScheduleAnalysis, PadDelay
 from qiskit.transpiler import CouplingMap
 # from qiskit.qiskit_iqm import IQMProvider
 
@@ -153,12 +154,12 @@ class BackendManager:
                 # layout_method='trivial',
                 seed_transpiler=self.config.get('seed'),
                 num_processes=4,  # Kept strict to manage RAM limits
-                **({"scheduling_method": "alap", "instruction_durations": self.hardware_profile.target.durations()} if idle else {})
             )
-            if idle:   # thermal relaxation on every idle period (delay) the scheduler inserted
-                qp = self.hardware_profile.target.qubit_properties
-                relax = RelaxationNoisePass([q.t1 for q in qp], [q.t2 for q in qp], dt=self.hardware_profile.dt, op_types=[Delay])
-                transpiled_chunk = [relax(c) for c in transpiled_chunk]
+            if idle:   # ALAP-schedule with the device's gate durations, then thermal relaxation on every idle delay
+                tgt = self.hardware_profile.target; qp = tgt.qubit_properties
+                pm = PassManager([ALAPScheduleAnalysis(target=tgt), PadDelay(target=tgt),
+                                  RelaxationNoisePass([q.t1 for q in qp], [q.t2 for q in qp], dt=self.hardware_profile.dt, op_types=[Delay])])
+                transpiled_chunk = [pm.run(c) for c in transpiled_chunk]
             transpiled_circs.extend(transpiled_chunk)
         return transpiled_circs
     
