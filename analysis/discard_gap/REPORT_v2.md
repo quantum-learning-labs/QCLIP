@@ -140,22 +140,28 @@ Mixed images = extra image-circuit wires that are traced out.
 |---|---|---|---|
 | non-discard (baseline) | 0.847 ± 0.008 | 0.832 ± 0.009 | 0.756 ± 0.131 |
 | discard (baseline) | 0.793 ± 0.013 | 0.761 ± 0.024 | 0.794 ± 0.126 |
-| discard + hybrid `s` | **0.839** ± 0.022 | **0.817** ± 0.014 | 0.766 ± 0.159 |
+| discard + hybrid `s` (10 seeds) | **0.834** ± 0.016 | **0.817** ± 0.010 | 0.792 ± 0.116 |
+| discard + hybrid `n` (post-select nouns, trace `s`; 3 seeds) | **0.839** ± 0.004 | 0.812 ± 0.004 | 0.726 ± 0.159 |
 | discard + hybrid `s` + 1 image env qubit | 0.835 ± 0.013 | **0.822** ± 0.009 | 0.766 ± 0.099 |
 | discard + 1 image env qubit | 0.811 ± 0.009 | 0.792 ± 0.010 | 0.718 ± 0.052 |
 | discard + 2 image env qubits (3 seeds) | 0.798 ± 0.019 | 0.766 ± 0.026 | 0.698 ± 0.179 |
 
-* Post-selecting the single wire that carries the verb into the sentence closes most of the test gap:
-  7.1 -> 1.5 points against non-discard on these 5 seeds. That matches sections 2-3: the loss comes from
-  averaging over the branches of that wire.
+* Post-selecting the verb's `s` wire closes most of the test gap (10 seeds: discard 0.774 -> 0.817,
+  non-discard 0.828).
+* **Correction (control run):** post-selecting the *noun* wires instead, and tracing out only `s`, helps just
+  as much (val 0.839). So the gain is not specific to the verb wire. What matters is post-selecting *some* of
+  the non-sentence wires rather than tracing all of them, which keeps a filtering step (section 2) while still
+  producing mixed states. The v1 claim that the verb wire is *the* bottleneck should be read as "one of the
+  wires whose averaging costs accuracy". Which specific pairs each variant fixes still needs the per-negative-type
+  breakdown on the hybrid checkpoints.
 * One mixed image qubit helps a little (+3 test points); two do not.
 * At 3 text layers the hybrid adds less (discard 0.816 -> 0.825 test, 2 seeds), consistent with the verb gap
   already being closed at that depth (section 5).
 
 ## 7. What to try (status)
 
-1. Hybrid readout: done (section 6), closes most of the gap at 2 layers. Next: post-select other single
-   wire types (e.g. the preposition's subject input) to target the subject gap at 3 layers.
+1. Hybrid readout: done (section 6). Best discard config so far: 2 layers + hybrid `s` + purity weight 0,
+   val 0.844, test 0.831 ± 0.016 (3 seeds; 10-seed run in progress), level with the non-discard baseline.
 2. Mixed images: done (section 6); 1 env qubit +3 points, 2 no gain.
 3. Pauli loss without the purity term (pw0 helped val), plus the FS/HS spreading regulariser. Not run yet;
    needs a small loss change.
