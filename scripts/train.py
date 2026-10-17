@@ -58,13 +58,16 @@ if __name__ == "__main__":
     train_loader = data_engine.get_loader(compiled_train, split='train')
     val_loader = data_engine.get_loader(compiled_val, split='val')
 
+    loss_fn.to(DEV)
+    loss_params = [p for p in loss_fn.parameters() if p.requires_grad]   # e.g. a learnable logit scale
     quantum_params = list(text_model.parameters()) + list(image_model.params)
     classical_params = list(image_model.projector.parameters()) if config['vision']['method'] == 'mlp' else []
 
     # optimizer = adaptive_optimizer(text_model, image_model, base_qlr=config['qlr'], base_clr=config['clr'], weight_decay=1.8)
     optimizer = torch.optim.Adam(
         [{'params': quantum_params, 'lr': config['qlr']},
-         {'params': classical_params, 'lr': config['clr']}], 
+         {'params': classical_params, 'lr': config['clr']}]
+        + ([{'params': loss_params, 'lr': config.get('temperature_lr', 1e-3), 'weight_decay': 0.0}] if loss_params else []), 
         betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4)
     )
     warmup_epochs = config.get('warmup_epochs', 5)
@@ -80,6 +83,7 @@ if __name__ == "__main__":
     print(f"Training for {total_epochs} epochs with batch size {BATCH_SIZE}")
 
     trainer = ContrastiveTrainer(image_model, text_model, optimizer, loss_fn, DEV)
+    trainer.hard_negatives = bool(config.get('hard_negatives', False))   # add each caption's negative image to the softmax
     evaluator = MMEvaluator(image_model, text_model, DEV)
 
     manager = RunManager(config, trainer, evaluator, DEV, SEED, scheduler=scheduler)

@@ -103,6 +103,11 @@ class RunManager:
                 "mixer_layers": self.config['text'].get('mixer_layers', 0),
                 "spread_weight": getattr(self.trainer.loss_fn, 'spread_weight', getattr(self.trainer.loss_fn, 'lambda_reg', None)),
                 "init_from": self.config.get('init_from') or "none",
+                "hard_negatives": bool(self.config.get('hard_negatives', False)),
+                "learn_temperature": getattr(self.trainer.loss_fn, 'logit_scale', None) is not None,
+                "margin": self.config.get('margin', 0.0),
+                "uniformity_weight": self.config.get('uniformity_weight', 0.0),
+                "shot_weight": self.config.get('shot_weight', 0.0),
             })
 
             if self.config.get('checkpoint_every'):   # the initialisation, as epoch -1
@@ -146,6 +151,8 @@ class RunManager:
 
                 self._save_checkpoint(epoch, loss, metrics, is_best=is_best)
                 mlflow.log_metric("train_loss", loss, step=epoch)
+                ls_ = getattr(self.trainer.loss_fn, 'logit_scale', None)
+                if ls_ is not None: mlflow.log_metric("logit_scale", float(ls_.exp().clamp(max=100)), step=epoch)
                 every = self.config.get('checkpoint_every')
                 if every and epoch % every == 0:   # per-epoch snapshots for training-dynamics analysis
                     torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
@@ -234,7 +241,11 @@ class ContrastiveTrainer:
             image_emb = self.image_model(images)
             text_emb = self.text_model(texts)
 
-            loss = self.loss_fn(text_emb, image_emb)
+            if getattr(self, 'hard_negatives', False) and 'neg_image' in batch:
+                neg_emb = self.image_model(batch['neg_image'].to(self.device))
+                loss = self.loss_fn(text_emb, image_emb, neg_emb)
+            else:
+                loss = self.loss_fn(text_emb, image_emb)
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
 
