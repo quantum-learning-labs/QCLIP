@@ -293,6 +293,7 @@ class Emulator:
 
         if self.discard:
             target_str = "0" * num_clbits
+            self.accept_log.append(1.0)
             return counts.get(target_str, 0) / total_shots
         else:
             accepted_shots = 0
@@ -301,6 +302,7 @@ class Emulator:
                 rev_bstr = bstr[::-1]  
                 if all(rev_bstr[q] == '0' for q in range(num_clbits) if q not in out_qs):
                     accepted_shots += count
+            self.accept_log.append(accepted_shots / total_shots)
             if accepted_shots == 0:
                 return 0.0
             return all_zero_shots / accepted_shots
@@ -336,6 +338,7 @@ class Emulator:
                     parity_sign = 1 if k % 2 == 0 else -1
                     weighted_parity_sum += count * parity_sign
                     accepted_shots += count
+        self.accept_log.append(accepted_shots / max(sum(counts.values()), 1))  # post-selection acceptance (1 for discard)
         if accepted_shots == 0:
             return 0.0
 
@@ -388,6 +391,7 @@ class Emulator:
     def run_experiment(self, pos_circs, neg_circs, batch_size=24, shots=None, num_runs=5):
         shots = shots if shots is not None else self.shots
         torch.cuda.empty_cache()
+        self.accept_log = []
 
         all_accuracies = []
         all_pos_fidelities = []
@@ -453,4 +457,7 @@ class Emulator:
             "raw_accuracies": all_accuracies,
             "per_pair_pos_fidelities": per_pair_pos,
             "per_pair_neg_fidelities": per_pair_neg,
+            "shots": shots,
+            "accept_frac_mean": float(np.mean(self.accept_log)) if self.accept_log else None,
+            "accept_frac_median": float(np.median(self.accept_log)) if self.accept_log else None,
         }

@@ -13,6 +13,11 @@ def main():
     parser.add_argument('-cp',"--checkpoint", type=str, default=None, help="Path to model checkpoint (.pt file)")
     parser.add_argument('-l', "--limit", type=int, default=None, help="Debug Flag: Truncate execution to top N samples")
     parser.add_argument("--seed", type=int, default=None, help="Overrides the config seed (shot sampling, transpiler)")
+    parser.add_argument("--shots", type=str, default=None,
+                        help="Comma-separated shot budgets per circuit (e.g. 64,256,1024); circuits are compiled once and run at each")
+    parser.add_argument("--eval_set", type=str, default=None, help="Overrides emulate.set (e.g. std, swap)")
+    parser.add_argument("--noise", action="store_true", help="Overrides emulate.noise: hardware noise model (FakeMiami)")
+    parser.add_argument("--num_runs", type=int, default=None, help="Overrides emulate.num_runs")
     parser.add_argument("-o", "--out", type=str, default=None, help="Results JSON (default: emulate_<checkpoint>.json next to the checkpoint); never overwritten")
     args = parser.parse_args()
 
@@ -22,6 +27,9 @@ def main():
     if out_path is not None and out_path.exists():
         raise FileExistsError(f"{out_path} already exists")
     config, DEV, SEED = setup_exp(config_path, seed=args.seed)
+    if args.eval_set: config['emulate']['set'] = args.eval_set
+    if args.noise: config['emulate']['noise'] = True
+    if args.num_runs: config['emulate']['num_runs'] = args.num_runs
 
     log_phase("Evaluation Environment")
     print(f" Target Device   : {DEV} | Config : {config_path} | Seed : {SEED}")
@@ -68,7 +76,15 @@ def main():
     emulator.shot_estimation(nq_out, max_nq - nq_out, resolution=config['emulate']['resolution'])
     print(f" Simulating quantum states across {len(pos_circs)} pairs with {emulator.shots} shot resolution")
     num_runs = config['emulate'].get('num_runs', 5)
-    data = emulator.run_experiment(pos_circs, neg_circs, batch_size=64, num_runs=num_runs)
+    if args.shots:
+        by_shots = {}
+        for s in [int(x) for x in args.shots.split(',')]:
+            print(f" --- {s} shots per circuit ---")
+            by_shots[s] = emulator.run_experiment(pos_circs, neg_circs, batch_size=64, shots=s, num_runs=num_runs)
+            print(f" shots {s}: accuracy {by_shots[s]['accuracy']:.4f} | accepted fraction {by_shots[s]['accept_frac_mean']:.4f}")
+        data = dict(by_shots[max(by_shots)]); data['by_shots'] = by_shots
+    else:
+        data = emulator.run_experiment(pos_circs, neg_circs, batch_size=64, num_runs=num_runs)
 
     log_phase("Benchmark Emulation Results")
     print(f" {'Metric Key':<35} | {'Value / Score':<25}")

@@ -105,6 +105,9 @@ class RunManager:
                 "init_from": self.config.get('init_from') or "none",
             })
 
+            if self.config.get('checkpoint_every'):   # the initialisation, as epoch -1
+                torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
+                            "epoch": -1, "train_loss": None, "val_metrics": {}}, self.checkpoint_dir / "epoch_init.pt")
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
             current_lr = self.config.get('qlr', 1e-3)
             
@@ -142,6 +145,11 @@ class RunManager:
                     is_best = False
 
                 self._save_checkpoint(epoch, loss, metrics, is_best=is_best)
+                mlflow.log_metric("train_loss", loss, step=epoch)
+                every = self.config.get('checkpoint_every')
+                if every and epoch % every == 0:   # per-epoch snapshots for training-dynamics analysis
+                    torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
+                                "epoch": epoch, "train_loss": loss, "val_metrics": metrics}, self.checkpoint_dir / f"epoch_{epoch:03d}.pt")
 
                 if patience_counter >= patience:
                     stopped_epoch = epoch
