@@ -131,11 +131,32 @@ Same weights, read out both ways (val accuracy, mean ± sd over seeds):
   * at L3 the verb gap is gone (0.873 vs 0.869), but discard is far behind on subjects (0.681 vs 0.898,
     2-3 seeds).
 
-## 6. What to try (status)
+## 6. Test of the main lead: hybrid readout and mixed images (dv1, seeds 0-4, 2 text layers)
 
-1. Hybrid readout: post-select the verb's `s` wire, trace out the rest (`text.postselect_types=[s]`).
-   Running (dv1, 5 seeds; plus 3 layers + hybrid in hp2).
-2. Mixed images (`vision.env_qubits` 1, 2), so both sides are mixed. Running (dv1).
+Hybrid = post-select only the verb's `s` wire and trace out the rest (1 post-selected wire instead of 4).
+Mixed images = extra image-circuit wires that are traced out.
+
+| variant | val (selection) | test std | test swap (norm) |
+|---|---|---|---|
+| non-discard (baseline) | 0.847 ± 0.008 | 0.832 ± 0.009 | 0.756 ± 0.131 |
+| discard (baseline) | 0.793 ± 0.013 | 0.761 ± 0.024 | 0.794 ± 0.126 |
+| discard + hybrid `s` | **0.839** ± 0.022 | **0.817** ± 0.014 | 0.766 ± 0.159 |
+| discard + hybrid `s` + 1 image env qubit | 0.835 ± 0.013 | **0.822** ± 0.009 | 0.766 ± 0.099 |
+| discard + 1 image env qubit | 0.811 ± 0.009 | 0.792 ± 0.010 | 0.718 ± 0.052 |
+| discard + 2 image env qubits (3 seeds) | 0.798 ± 0.019 | 0.766 ± 0.026 | 0.698 ± 0.179 |
+
+* Post-selecting the single wire that carries the verb into the sentence closes most of the test gap:
+  7.1 -> 1.5 points against non-discard on these 5 seeds. That matches sections 2-3: the loss comes from
+  averaging over the branches of that wire.
+* One mixed image qubit helps a little (+3 test points); two do not.
+* At 3 text layers the hybrid adds less (discard 0.816 -> 0.825 test, 2 seeds), consistent with the verb gap
+  already being closed at that depth (section 5).
+
+## 7. What to try (status)
+
+1. Hybrid readout: done (section 6), closes most of the gap at 2 layers. Next: post-select other single
+   wire types (e.g. the preposition's subject input) to target the subject gap at 3 layers.
+2. Mixed images: done (section 6); 1 env qubit +3 points, 2 no gain.
 3. Pauli loss without the purity term (pw0 helped val), plus the FS/HS spreading regulariser. Not run yet;
    needs a small loss change.
 4. Fewer traced wires per sentence (e.g. a smaller determiner/preposition footprint), since purity and
