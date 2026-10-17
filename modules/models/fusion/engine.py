@@ -100,6 +100,9 @@ class RunManager:
                 "overrides": " ".join(self.config.get('overrides', [])) or "none",
                 "postselect_types": ",".join(self.config['text'].get('postselect_types') or []) or "none",
                 "env_qubits": self.config['vision'].get('env_qubits', 0),
+                "mixer_layers": self.config['text'].get('mixer_layers', 0),
+                "spread_weight": getattr(self.trainer.loss_fn, 'spread_weight', getattr(self.trainer.loss_fn, 'lambda_reg', None)),
+                "init_from": self.config.get('init_from') or "none",
             })
 
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")

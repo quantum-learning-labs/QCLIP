@@ -2,7 +2,7 @@ import torch, argparse
 import pandas as pd
 
 from modules.utils.factory import build_experiment
-from modules.utils.general import log_phase, setup_exp
+from modules.utils.general import log_phase, setup_exp, CheckpointManager
 from modules.data_pipeline.engine import DataEngine
 from modules.models.fusion.engine import ContrastiveTrainer, MMEvaluator, RunManager, adaptive_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
@@ -14,11 +14,14 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=None, help='Overrides the config seed')
     parser.add_argument("--run_name", type=str, default=None, help='Checkpoint directory name (default: generated from the config)')
     parser.add_argument("--epochs", type=int, default=None, help='Overrides the config epochs (smoke tests)')
+    parser.add_argument("--init_from", type=str, default=None,
+                        help='Initialise text+image weights from this checkpoint (.pt), e.g. a non-discard model')
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help='Override a config value, e.g. --set qlr=3e-3 --set text.layers=3 (repeatable)')
     args = parser.parse_args()
 
     config, DEV, SEED = setup_exp(args.config, seed=args.seed, overrides=args.set)
+    if args.init_from: config['init_from'] = args.init_from
     if args.run_name: config['run_name'] = args.run_name
     if args.epochs: config['epochs'] = args.epochs
     DATASET = config['dataset']['name']
@@ -46,6 +49,9 @@ if __name__ == "__main__":
     log_phase("Initializing Model Parameters")
     data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
     data_engine.image_init(image_model)
+    if args.init_from:
+        ck = CheckpointManager.load_model(args.init_from, image_model, text_model, DEV)
+        print(f"Initialised weights from {args.init_from} (epoch {ck.get('epoch')})")
     print(f"Model Parameter Counts: Image={sum(p.numel() for p in image_model.parameters()):,} | Text={sum(p.numel() for p in text_model.parameters()):,}")
 
     log_phase("Preparing Pipeline Execution")

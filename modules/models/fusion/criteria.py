@@ -330,8 +330,9 @@ class UJ_InfoNCE(BaseInfoNCELoss):
         return fs_similarity
 
 class Pauli_InfoNCE(BaseInfoNCELoss):
-    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, num_qubits: int = 3, eps: float = 1e-8, purity_weight = 0.1):
+    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, num_qubits: int = 3, eps: float = 1e-8, purity_weight = 0.1, spread_weight: float = 0.0):
         super().__init__(temperature=temperature, label_smoothing=label_smoothing)
+        self.spread_weight = spread_weight  # same text-spreading term as FS/HS_InfoNCE (lambda_reg), off by default
         self.num_qubits = num_qubits
         self.purity_weight = purity_weight
         self.dim_hilbert = 2 ** num_qubits
@@ -358,6 +359,7 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
         hp = super().get_hyperparams()
         hp.update({
             "purity_weight": self.purity_weight,
+            "spread_weight": self.spread_weight,
             "num_qubits": self.num_qubits,
             "eps": self.eps
         })
@@ -383,9 +385,20 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
         
         return torch.matmul(v_text_norm, v_image_norm.T)
 
+    def _spread(self, text_emb: torch.Tensor) -> torch.Tensor:
+        # FS/HS_InfoNCE's regulariser on the flattened (Hilbert-Schmidt) text states: pushes sentences apart
+        B = text_emb.size(0)
+        text_flat = torch.nn.functional.normalize(text_emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
+        overlap = torch.clamp((text_flat @ text_flat.conj().T).abs(), 0.0, 1.0 - 1e-7)
+        logits = 1.0 - (torch.acos(overlap) / (math.pi / 2))
+        mask = ~torch.eye(B, dtype=torch.bool, device=text_emb.device)
+        return logits[mask].mean()
+
     def compute_regularization(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
+        spread = self.spread_weight * self._spread(text_emb) if self.spread_weight > 0 and text_emb.size(0) > 1 \
+            else torch.tensor(0.0, device=text_emb.device)
         if self.purity_weight <= 0:
-            return torch.tensor(0.0, device=text_emb.device)
+            return spread
 
         rho_text, rho_image, _ = self._ensure_density_matrices(text_emb, image_emb)
         v_text = self._to_pauli_vector(rho_text)
@@ -395,7 +408,7 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
 
         loss_purity = text_purity_loss
 
-        return self.purity_weight * loss_purity
+        return self.purity_weight * loss_purity + spread
 
 
 

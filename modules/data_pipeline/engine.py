@@ -31,6 +31,7 @@ class DataEngine:
             if postselect and not compile_kwargs["discard"]:
                 raise ValueError("text.postselect_types only applies with text.discard: true")
             compile_kwargs["postselect"] = postselect
+            compile_kwargs["mixer"] = int(self.config["text"].get("mixer_layers", 0) or 0)
             
         if split == 'train' or split == 'val':
             data = load_pkl(self.config["dataset"][split]["text_path"])

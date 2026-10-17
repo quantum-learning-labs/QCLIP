@@ -71,13 +71,14 @@ def build_experiment(config, device):
             raise ValueError(f"loss '{loss_name}' needs density matrices: set text.discard: true")
         ls, temp = config.get('label_smoothing', 0.1), config.get('temperature', 0.07)
         if loss_name == 'pauli':
-            loss_fn = Pauli_InfoNCE(label_smoothing=ls, temperature=temp, num_qubits=config['embedding_qubits'], purity_weight=config.get('purity_weight', 0.1))
+            loss_fn = Pauli_InfoNCE(label_smoothing=ls, temperature=temp, num_qubits=config['embedding_qubits'],
+                                    purity_weight=config.get('purity_weight', 0.1), spread_weight=config.get('spread_weight', 0.0))
         elif loss_name == 'uj':
             loss_fn = UJ_InfoNCE(label_smoothing=ls, temperature=temp)
         elif loss_name == 'hs':
-            loss_fn = HS_InfoNCE(label_smoothing=ls, temperature=temp)
+            loss_fn = HS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1))
         elif loss_name == 'fs':
-            loss_fn = FS_InfoNCE(label_smoothing=ls, temperature=temp)
+            loss_fn = FS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1))
         else:
             raise ValueError(f"Unknown loss '{loss_name}' (pauli, uj, hs, fs)")
         
