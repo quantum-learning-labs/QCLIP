@@ -30,7 +30,7 @@ text:
   discard: false
 
 vision:
-  layers: 3
+  layers: 2
   method: 'mlp' # 'amp' or 'pca' or 'mlp'
 
 dataset:
