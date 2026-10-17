@@ -35,7 +35,7 @@ class BackendManager:
         #     server_url = self.cfg.get('server_url', 'https://cocos.resonance.meetiqm.com/garnet')
 
         devices = AerSimulator().available_devices()
-        qdev = 'GPU' if 'GPU' in devices else 'CPU'
+        qdev = 'GPU' if 'GPU' in devices and torch.cuda.is_available() else 'CPU'  # aer-gpu builds list GPU even on CPU-only nodes
         method = self.config['emulate'].get('backend', 'statevector')
         
         backend_options = {
