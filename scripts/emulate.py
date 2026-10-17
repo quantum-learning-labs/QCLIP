@@ -22,6 +22,10 @@ def main():
     parser.add_argument("--num_runs", type=int, default=None, help="Overrides emulate.num_runs")
     parser.add_argument("--method", type=str, default=None, choices=["statevector", "density_matrix", "tensor_network", "matrix_product_state"],
                         help="Overrides emulate.backend (Aer method; GPU + cuStateVec when CUDA is available)")
+    parser.add_argument("--mlflow_db", type=str, default=None,
+                        help="Also log this emulation to MLflow (sqlite file); on the cluster use one file per job")
+    parser.add_argument("--mlflow_experiment", type=str, default=None,
+                        help="MLflow experiment (default: emulation_noise with --noise, else emulation_shot_sweep)")
     parser.add_argument("-o", "--out", type=str, default=None, help="Results JSON (default: emulate_<checkpoint>.json next to the checkpoint); never overwritten")
     args = parser.parse_args()
 
@@ -106,6 +110,24 @@ def main():
         print(f"  {'Pos Pair Fidelity (Mean ± Std)':<34} | {data['pos_fidelity_mean']:.4f} ± {data['pos_fidelity_std']:.4f}")
         print(f"  {'Neg Pair Fidelity (Mean ± Std)':<34} | {data['neg_fidelity_mean']:.4f} ± {data['neg_fidelity_std']:.4f}")
     print(" " + "—" * 63 + "\n")
+
+    if args.mlflow_db:   # same schema as the central importer (qclip_snapshots/tools/central_import.py)
+        import mlflow
+        mlflow.set_tracking_uri(f"sqlite:///{Path(args.mlflow_db).resolve()}")
+        em = config['emulate']
+        mlflow.set_experiment(args.mlflow_experiment or ('emulation_noise' if em.get('noise') else 'emulation_shot_sweep'))
+        name = out_path.stem if out_path is not None else Path(args.checkpoint).parent.name
+        with mlflow.start_run(run_name=name, tags={'source_key': f"emu:direct:{name}", 'analysis': 'E6 emulation',
+                                                   'step_meaning': 'shots per circuit (total, incl. rejected post-selection shots)'}):
+            mlflow.log_params({'checkpoint': str(checkpoint_path), 'trained_method': 'discard' if config['text'].get('discard') else 'nodiscard',
+                               'seed': SEED, 'pairs': len(pos_circs), 'eval_set': em.get('set'), 'noise': bool(em.get('noise')),
+                               'noise_profile': em.get('noise_profile', 'backend') if em.get('noise') else 'none', 'aer_method': em.get('backend'),
+                               'measurement_method': em.get('measurement_method'), 'git_commit': git_state(), 'honest_knobs': str(em.get('honest') or 'defaults')})
+            for s, r in (data.get('by_shots') or {emulator.shots: data}).items():
+                for k, v in (('accuracy', r['accuracy']), ('accuracy_std_over_shot_runs', r.get('accuracy_std')),
+                             ('accept_fraction', r.get('accept_frac_mean')), ('pos_fidelity_mean', r.get('pos_fidelity_mean')),
+                             ('neg_fidelity_mean', r.get('neg_fidelity_mean'))):
+                    if v is not None: mlflow.log_metric(k, float(v), step=int(s))
 
     if out_path is not None:
         payload = {"checkpoint": str(checkpoint_path), "config": config_path, "epoch": checkpoint.get('epoch'),
