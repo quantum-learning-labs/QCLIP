@@ -160,9 +160,10 @@ class BackendManager:
                 tgt = self.hardware_profile.target; qp = tgt.qubit_properties
                 t1s = [q.t1 if q and q.t1 else float('inf') for q in qp]
                 t2s = [min(q.t2, 1.99 * q.t1) if q and q.t1 and q.t2 else float('inf') for q in qp]
-                pm = PassManager([ALAPScheduleAnalysis(target=tgt), PadDelay(target=tgt),
-                                  RelaxationNoisePass(t1s, t2s, dt=self.hardware_profile.dt, op_types=[Delay])])
-                transpiled_chunk = [pm.run(c) for c in transpiled_chunk]
+                sched = PassManager([ALAPScheduleAnalysis(target=tgt), PadDelay(target=tgt)])
+                relax = PassManager([RelaxationNoisePass(t1s, t2s, dt=self.hardware_profile.dt, op_types=[Delay])])
+                transpiled_chunk = [relax.run(sched.run(c)) for c in transpiled_chunk]   # separate managers: the
+                # relaxation pass rewrites nodes the scheduler's start-time map refers to
             transpiled_circs.extend(transpiled_chunk)
         return transpiled_circs
     
