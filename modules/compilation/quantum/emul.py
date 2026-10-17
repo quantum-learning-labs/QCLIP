@@ -126,49 +126,48 @@ class BackendManager:
         for idx in tqdm(range(data_size), desc="Compiling Qiskit DAGs", unit="pair"):
             try:
                 sample = dataset[idx]
-                image = sample["image"]
-                pos_einsum, pos_wires = sample["pos_caption"]
-                neg_einsum, neg_wires = sample["neg_caption"]
-                unknown_symbols.update(g['name'] for g in pos_wires + neg_wires
-                                       if g['name'] is not None and g['name'] not in txt_params)
+                to_f = lambda d: {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in d.items()}
 
-                qc_pos_txt, pos_out_q, pos_txt_p = tn2qiskit(
-                    einsum2interleaved(pos_einsum), pos_wires, txt_params, out_q=self.out_q, meas_output=False
-                )
-                qc_neg_txt, neg_out_q, neg_txt_p = tn2qiskit(
-                    einsum2interleaved(neg_einsum), neg_wires, txt_params, out_q=self.out_q, meas_output=False
-                )
+                def text_circ(recipe):
+                    einsum, wires = recipe
+                    unknown_symbols.update(g['name'] for g in wires if g['name'] is not None and g['name'] not in txt_params)
+                    qc, out_q, prm = tn2qiskit(einsum2interleaved(einsum), wires, txt_params, out_q=self.out_q, meas_output=False)
+                    qc.assign_parameters(to_f(prm), inplace=True)
+                    return qc, out_q
+
+                def image_circ(image):
+                    if self.amplitude_encode:
+                        img_vec = image if isinstance(image, np.ndarray) else image.detach().cpu().numpy()
+                        normed_img_vec = amplitude_encoding(img_vec)
+                        qc = QuantumCircuit(int(math.ceil(math.log2(len(normed_img_vec)))), 0)
+                        qc.initialize(normed_img_vec)
+                        return qc
+                    img_vars = img_params | image_model.encode_features(image)
+                    in_idx, out_idx = einsum2interleaved(image_model.einsum_expr.replace('b', ''))
+                    qc, _, img_p = tn2qiskit([in_idx, out_idx], image_model.gate_arr, img_vars, out_q=self.out_q, meas_output=False)
+                    if img_p: qc.assign_parameters(to_f(img_p), inplace=True)
+                    return qc
+
+                if "image" in sample:      # text choice (swap): one image, two captions
+                    qc_pos_txt, pos_out_q = text_circ(sample["pos_caption"])
+                    qc_neg_txt, neg_out_q = text_circ(sample["neg_caption"])
+                    qc_img_pos = qc_img_neg = image_circ(sample["image"])
+                else:                      # image choice (std): one caption, two images
+                    qc_pos_txt, pos_out_q = text_circ(sample["caption"])
+                    qc_neg_txt, neg_out_q = qc_pos_txt, pos_out_q
+                    qc_img_pos, qc_img_neg = image_circ(sample["pos_image"]), image_circ(sample["neg_image"])
 
                 if qc_pos_txt.num_qubits > self.qlimit or qc_neg_txt.num_qubits > self.qlimit:
                     failed_circuits += 1
                     continue
 
-                if self.amplitude_encode:
-                    img_vec = image if isinstance(image, np.ndarray) else image.detach().cpu().numpy()
-                    normed_img_vec = amplitude_encoding(img_vec)
-                    qc_img = QuantumCircuit(int(math.ceil(math.log2(len(normed_img_vec)))), 0)
-                    qc_img.initialize(normed_img_vec)
-                    img_p = {}
-                else:
-                    img_vars = img_params | image_model.encode_features(image)
-                    in_idx, out_idx = einsum2interleaved(image_model.einsum_expr.replace('b', ''))
-                    qc_img, _, img_p = tn2qiskit([in_idx, out_idx], image_model.gate_arr, img_vars, out_q=self.out_q, meas_output=False)
-
-                pos_txt_p = {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in pos_txt_p.items()}
-                neg_txt_p = {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in neg_txt_p.items()}
-                img_p = {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in img_p.items()}
-
-                qc_pos_txt.assign_parameters(pos_txt_p, inplace=True)
-                qc_neg_txt.assign_parameters(neg_txt_p, inplace=True)
-                if img_p: qc_img.assign_parameters(img_p, inplace=True)
-
                 # Assemble frames
                 if self.meas_method == 'compute_uncompute':
-                    qc_pos = self._compute_uncompute(qc_pos_txt, qc_img, pos_out_q)
-                    qc_neg = self._compute_uncompute(qc_neg_txt, qc_img, neg_out_q)
+                    qc_pos = self._compute_uncompute(qc_pos_txt, qc_img_pos, pos_out_q)
+                    qc_neg = self._compute_uncompute(qc_neg_txt, qc_img_neg, neg_out_q)
                 elif self.meas_method == 'destructive_swap':
-                    qc_pos = self._destructive_swap(qc_pos_txt, qc_img, pos_out_q)
-                    qc_neg = self._destructive_swap(qc_neg_txt, qc_img, neg_out_q)
+                    qc_pos = self._destructive_swap(qc_pos_txt, qc_img_pos, pos_out_q)
+                    qc_neg = self._destructive_swap(qc_neg_txt, qc_img_neg, neg_out_q)
 
                 qc_pos.metadata = {"output_qubits": pos_out_q}
                 qc_neg.metadata = {"output_qubits": neg_out_q}
