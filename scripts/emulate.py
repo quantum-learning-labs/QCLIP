@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--noise_profile", type=str, default=None, choices=["backend", "honest"],
                         help="backend = Aer NoiseModel.from_backend (default); honest = scaled errors + coherent ZZ + idle decoherence")
     parser.add_argument("--num_runs", type=int, default=None, help="Overrides emulate.num_runs")
+    parser.add_argument("--method", type=str, default=None, choices=["statevector", "density_matrix", "tensor_network", "matrix_product_state"],
+                        help="Overrides emulate.backend (Aer method; GPU + cuStateVec when CUDA is available)")
     parser.add_argument("-o", "--out", type=str, default=None, help="Results JSON (default: emulate_<checkpoint>.json next to the checkpoint); never overwritten")
     args = parser.parse_args()
 
@@ -33,6 +35,7 @@ def main():
     if args.noise: config['emulate']['noise'] = True
     if args.noise_profile: config['emulate']['noise_profile'] = args.noise_profile
     if args.num_runs: config['emulate']['num_runs'] = args.num_runs
+    if args.method: config['emulate']['backend'] = args.method
 
     log_phase("Evaluation Environment")
     print(f" Target Device   : {DEV} | Config : {config_path} | Seed : {SEED}")
