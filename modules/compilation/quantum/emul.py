@@ -44,7 +44,8 @@ def honest_backend(backend, knobs):
     for qp in t.qubit_properties:
         if qp is None: continue
         if qp.t1: qp.t1 *= knobs['scale_t']
-        if qp.t2: qp.t2 = min(qp.t2 * knobs['scale_t'], 2 * qp.t1)
+        if qp.t2: qp.t2 *= knobs['scale_t']
+        if qp.t1 and qp.t2: qp.t2 = min(qp.t2, 1.99 * qp.t1)   # physical bound T2 <= 2 T1 (some snapshot qubits violate it)
     return b
 
 class BackendManager:
@@ -157,8 +158,10 @@ class BackendManager:
             )
             if idle:   # ALAP-schedule with the device's gate durations, then thermal relaxation on every idle delay
                 tgt = self.hardware_profile.target; qp = tgt.qubit_properties
+                t1s = [q.t1 if q and q.t1 else float('inf') for q in qp]
+                t2s = [min(q.t2, 1.99 * q.t1) if q and q.t1 and q.t2 else float('inf') for q in qp]
                 pm = PassManager([ALAPScheduleAnalysis(target=tgt), PadDelay(target=tgt),
-                                  RelaxationNoisePass([q.t1 for q in qp], [q.t2 for q in qp], dt=self.hardware_profile.dt, op_types=[Delay])])
+                                  RelaxationNoisePass(t1s, t2s, dt=self.hardware_profile.dt, op_types=[Delay])])
                 transpiled_chunk = [pm.run(c) for c in transpiled_chunk]
             transpiled_circs.extend(transpiled_chunk)
         return transpiled_circs
