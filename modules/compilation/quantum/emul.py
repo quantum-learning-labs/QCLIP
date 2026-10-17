@@ -5,14 +5,46 @@ from tqdm import tqdm
 
 from qiskit import transpile, QuantumCircuit
 from qiskit_aer import AerSimulator
-from qiskit_aer.noise import NoiseModel
+from qiskit_aer.noise import NoiseModel, coherent_unitary_error, RelaxationNoisePass
 from qiskit_ibm_runtime.fake_provider import FakeMiami
+from qiskit.circuit.library import RZZGate
+from qiskit.circuit import Delay
+from qiskit.transpiler import InstructionDurations
 from qiskit.transpiler import CouplingMap
 # from qiskit.qiskit_iqm import IQMProvider
 
 from modules.utils.tensor_ops import einsum2interleaved
 from modules.utils.quantum_ops import tn2qiskit, amplitude_encoding
 from modules.utils.general import gen_id, store_pkl
+
+# "honest" hardware noise (emulate.noise_profile: honest): the device calibration made worse where Aer's
+# from_backend model is known to be optimistic. Each knob is an assumption, see the CPTP report, section on E6.
+HONEST_DEFAULTS = {
+    "scale_2q": 3.0,     # 2q depolarising error x3: layered/crosstalk error exceeds isolated 2q error (McKay 2023, Sarovar 2020)
+    "scale_1q": 2.0,     # 1q error x2
+    "scale_ro": 1.5,     # readout assignment error x1.5 (drift between calibrations)
+    "scale_t": 0.5,      # T1, T2 halved (TLS fluctuations, Klimov 2018)
+    "zz_rad": 0.02,      # coherent RZZ over-rotation after every 2q gate (coherent errors add up, Harper 2020)
+    "idle": True,        # ALAP scheduling + thermal relaxation on idle delays (absent from from_backend)
+}
+
+def honest_backend(backend, knobs):
+    # a copy of the fake backend whose target carries the scaled error rates and coherence times
+    import copy
+    b = copy.deepcopy(backend); t = b.target
+    for name in t.operation_names:
+        props = t[name]
+        if not props: continue
+        nq = t.operation_from_name(name).num_qubits if name != 'measure' else 0
+        scale = knobs['scale_ro'] if name == 'measure' else knobs['scale_2q'] if nq == 2 else knobs['scale_1q']
+        for q, p in props.items():
+            if p is not None and p.error is not None:
+                p.error = min(p.error * scale, 0.5 if name == 'measure' else 0.75)
+    for qp in t.qubit_properties:
+        if qp is None: continue
+        if qp.t1: qp.t1 *= knobs['scale_t']
+        if qp.t2: qp.t2 = min(qp.t2 * knobs['scale_t'], 2 * qp.t1)
+    return b
 
 class BackendManager:
     def __init__(self, config, qlimit=None, hardware_profile=FakeMiami()):
@@ -60,8 +92,19 @@ class BackendManager:
             self.coupling_map = self.hardware_profile.coupling_map
         self.basis_gates = self.hardware_profile.basis_gates
 
+        self.noise_profile = self.config['emulate'].get('noise_profile', 'backend')
+        self.honest = {**HONEST_DEFAULTS, **(self.config['emulate'].get('honest') or {})}
+        if self.config['emulate'].get('noise') and self.noise_profile == 'honest':
+            self.hardware_profile = honest_backend(self.hardware_profile, self.honest)
         if self.config['emulate'].get('noise'):
             noise_model = NoiseModel.from_backend(self.hardware_profile)
+            if self.noise_profile == 'honest' and self.honest['zz_rad']:
+                # coherent ZZ over-rotation composed onto every 2q gate's local error
+                zz = coherent_unitary_error(RZZGate(self.honest['zz_rad']).to_matrix())
+                for gate, errs in noise_model._local_quantum_errors.items():
+                    for qubits, err in list(errs.items()):
+                        if len(qubits) == 2:
+                            errs[qubits] = err.compose(zz)
             backend_options["noise_model"] = noise_model 
             backend_options["seed_simulator"] = 42
             backend_options['shot_branching_enable'] = True
@@ -80,7 +123,8 @@ class BackendManager:
             backend_options["matrix_product_state_truncation_threshold"] = 1e-8
             backend_options["matrix_product_state_parallel_swap"] = True
 
-        print(f" Simulation: Profile {self.hardware_profile.name} ({self.qlimit} qubits), Device {qdev}, Method {method}, Noise {'Enabled' if self.config['emulate'].get('noise') else 'Disabled'}")
+        print(f" Simulation: Profile {self.hardware_profile.name} ({self.qlimit} qubits), Device {qdev}, Method {method}, Noise {'Enabled' if self.config['emulate'].get('noise') else 'Disabled'}"
+              + (f" | noise profile {self.noise_profile} {self.honest if self.noise_profile == 'honest' else ''}" if self.config['emulate'].get('noise') else ''))
         if method == 'tensor_network':
             self._backend = AerSimulator(method=method, device=qdev)
         else:
@@ -100,6 +144,7 @@ class BackendManager:
         chunks = [circuits[i:i + batch_size] for i in range(0, len(circuits), batch_size)]
         
         for chunk in tqdm(chunks, desc="Transpiling", unit="batch"):
+            idle = self.config['emulate'].get('noise') and self.noise_profile == 'honest' and self.honest['idle']
             transpiled_chunk = transpile(
                 chunk, 
                 coupling_map=self.coupling_map,
@@ -107,8 +152,13 @@ class BackendManager:
                 optimization_level=optimization_level,
                 # layout_method='trivial',
                 seed_transpiler=self.config.get('seed'),
-                num_processes=4  # Kept strict to manage RAM limits
+                num_processes=4,  # Kept strict to manage RAM limits
+                **({"scheduling_method": "alap", "instruction_durations": self.hardware_profile.target.durations()} if idle else {})
             )
+            if idle:   # thermal relaxation on every idle period (delay) the scheduler inserted
+                qp = self.hardware_profile.target.qubit_properties
+                relax = RelaxationNoisePass([q.t1 for q in qp], [q.t2 for q in qp], dt=self.hardware_profile.dt, op_types=[Delay])
+                transpiled_chunk = [relax(c) for c in transpiled_chunk]
             transpiled_circs.extend(transpiled_chunk)
         return transpiled_circs
     

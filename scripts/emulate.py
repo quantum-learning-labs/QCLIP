@@ -17,6 +17,8 @@ def main():
                         help="Comma-separated shot budgets per circuit (e.g. 64,256,1024); circuits are compiled once and run at each")
     parser.add_argument("--eval_set", type=str, default=None, help="Overrides emulate.set (e.g. std, swap)")
     parser.add_argument("--noise", action="store_true", help="Overrides emulate.noise: hardware noise model (FakeMiami)")
+    parser.add_argument("--noise_profile", type=str, default=None, choices=["backend", "honest"],
+                        help="backend = Aer NoiseModel.from_backend (default); honest = scaled errors + coherent ZZ + idle decoherence")
     parser.add_argument("--num_runs", type=int, default=None, help="Overrides emulate.num_runs")
     parser.add_argument("-o", "--out", type=str, default=None, help="Results JSON (default: emulate_<checkpoint>.json next to the checkpoint); never overwritten")
     args = parser.parse_args()
@@ -29,6 +31,7 @@ def main():
     config, DEV, SEED = setup_exp(config_path, seed=args.seed)
     if args.eval_set: config['emulate']['set'] = args.eval_set
     if args.noise: config['emulate']['noise'] = True
+    if args.noise_profile: config['emulate']['noise_profile'] = args.noise_profile
     if args.num_runs: config['emulate']['num_runs'] = args.num_runs
 
     log_phase("Evaluation Environment")
