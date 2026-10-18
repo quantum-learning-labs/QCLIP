@@ -108,6 +108,10 @@ class RunManager:
                 "margin": self.config.get('margin', 0.0),
                 "uniformity_weight": self.config.get('uniformity_weight', 0.0),
                 "shot_weight": self.config.get('shot_weight', 0.0),
+                "distill_from": self.config.get('distill_from') or "none",
+                "distill_kd_weight": self.config.get('distill_kd_weight', 1.0) if self.config.get('distill_from') else 0.0,
+                "distill_tau": self.config.get('distill_tau', 1.0),
+                "distill_state_weight": self.config.get('distill_state_weight', 0.0) if self.config.get('distill_from') else 0.0,
             })
 
             if self.config.get('checkpoint_every'):   # the initialisation, as epoch -1
@@ -246,6 +250,8 @@ class ContrastiveTrainer:
                 loss = self.loss_fn(text_emb, image_emb, neg_emb)
             else:
                 loss = self.loss_fn(text_emb, image_emb)
+            if getattr(self, 'teacher', None) is not None:
+                loss = loss + self.teacher.loss(batch['idx'].to(self.device), self.loss_fn, text_emb, image_emb)
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
 

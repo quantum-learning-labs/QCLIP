@@ -135,7 +135,8 @@ class SVODataset(BaseDataset):
         
         return {"caption": (einsum, symbols),
                 "pos_image": pos_image,
-                "neg_image": neg_image
+                "neg_image": neg_image,
+                "idx": idx,   # row index (distillation looks up the teacher's embeddings by it)
                 }
 
 def svo_collate_fn(batch):
@@ -146,7 +147,8 @@ def svo_collate_fn(batch):
     return {
         "caption": captions,
         "pos_image": pos_images,
-        "neg_image": neg_images
+        "neg_image": neg_images,
+        "idx": torch.tensor([item['idx'] for item in batch]) if 'idx' in batch[0] else None,
     }
 
 class SwapDataset(BaseDataset):
