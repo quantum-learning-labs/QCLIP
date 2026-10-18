@@ -127,10 +127,14 @@ class BackendManager:
 
         print(f" Simulation: Profile {self.hardware_profile.name} ({self.qlimit} qubits), Device {qdev}, Method {method}, Noise {'Enabled' if self.config['emulate'].get('noise') else 'Disabled'}"
               + (f" | noise profile {self.noise_profile} {self.honest if self.noise_profile == 'honest' else ''}" if self.config['emulate'].get('noise') else ''))
+        backend_options.update(self.config['emulate'].get('aer_options') or {})   # emulate.py --aer key=value
+        custatevec = backend_options.pop('cuStateVec_enable', True)
+        if self.config['emulate'].get('aer_options'):
+            print(f" Aer option overrides: {self.config['emulate']['aer_options']}")
         if method == 'tensor_network':
             self._backend = AerSimulator(method=method, device=qdev)
         else:
-            self._backend = AerSimulator(method=method, device=qdev, cuStateVec_enable=True)
+            self._backend = AerSimulator(method=method, device=qdev, cuStateVec_enable=custatevec)
         self._backend.set_options(**backend_options)
 
     @property

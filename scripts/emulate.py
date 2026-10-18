@@ -1,4 +1,5 @@
 import argparse, json
+import yaml
 from pathlib import Path
 import pandas as pd
 
@@ -22,6 +23,8 @@ def main():
     parser.add_argument("--num_runs", type=int, default=None, help="Overrides emulate.num_runs")
     parser.add_argument("--method", type=str, default=None, choices=["statevector", "density_matrix", "tensor_network", "matrix_product_state"],
                         help="Overrides emulate.backend (Aer method; GPU + cuStateVec when CUDA is available)")
+    parser.add_argument("--aer", action="append", default=[], metavar="KEY=VALUE",
+                        help="Extra Aer backend option (YAML value, repeatable), applied last, e.g. --aer batched_shots_gpu=false")
     parser.add_argument("--mlflow_db", type=str, default=None,
                         help="Also log this emulation to MLflow (sqlite file); on the cluster use one file per job")
     parser.add_argument("--mlflow_experiment", type=str, default=None,
@@ -40,6 +43,8 @@ def main():
     if args.noise_profile: config['emulate']['noise_profile'] = args.noise_profile
     if args.num_runs: config['emulate']['num_runs'] = args.num_runs
     if args.method: config['emulate']['backend'] = args.method
+    if args.aer:
+        config['emulate']['aer_options'] = {k: yaml.safe_load(v) for k, v in (a.split('=', 1) for a in args.aer)}
 
     log_phase("Evaluation Environment")
     print(f" Target Device   : {DEV} | Config : {config_path} | Seed : {SEED}")
