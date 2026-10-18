@@ -1,0 +1,106 @@
+# Best pure-discard recipe (2026-10-18, 10 seeds: test std 0.850+-0.011): 3 text layers, purity_weight 0,
+# warm start + score distillation from the post-selected final model of the SAME seed. Per seed run:
+#   train.py --config configs/final/vqc_discard_distill.yaml --seed S --init_from T --set distill_from=T
+#   with T = checkpoints/svo-probes/vqc/hp_hp2_nodiscard_tl3_qlr3e-3_sS/best.pt (configs/final/vqc_nodiscard.yaml)
+model_type: "vqc"
+mlflow_db: "mlf_dbs/svo-probes_final.db"
+batch_size: 256
+qlr: 0.01
+clr: 0.0001
+patience: 12    
+min_delta: 0.001
+epochs: 100
+purity_weight: 0.0
+distill_kd_weight: 1.0
+distill_tau: 1.0
+distill_state_weight: 0.0
+embedding_qubits: 3
+out_dim: 512
+
+emulate:
+  set: "swap"
+  noise: false
+  optimization_level: 1 # 0, 1, 2, 3
+  resolution: 10000
+  num_runs: 10
+  backend: "statevector" # 'statevector', 'tensor_network', 'matrix_product_state', 'density_matrix'
+  measurement_method: 'destructive_swap' # 'compute_uncompute', 'destructive_swap', or 'classical_shadows'
+
+text:
+  # ansatz: "custom_v6"
+  n: 1
+  s: 1
+  p: 1
+  layers: 3
+  curry: true
+  spider: false
+  discard: true
+
+vision:
+  layers: 2
+  method: 'mlp' # 'amp' or 'pca' or 'mlp'
+
+dataset:
+  name: "svo-probes"
+  class: "modules.data_pipeline.datasets.SVODataset"
+  collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
+  eval_mapper: "modules.models.fusion.engine.svo_mapper"
+
+  train:
+    text_path: "data/svo-probes/processed/train.pkl"
+    img_path: "data/svo-probes/processed/image_embeddings.pt"
+  val:
+    text_path: "data/svo-probes/processed/val.pkl"
+    img_path: "data/svo-probes/processed/image_embeddings.pt"
+    diagnostics:
+      - "evaluate_image_choice"
+      - "diagnostic_image_choice"
+        # - "cptp_diagnostic_image_choice"
+
+  test:
+    std:
+      class: "modules.data_pipeline.datasets.SVODataset"
+      collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
+
+      text_path: "data/svo-probes/processed/test.pkl"
+      img_path: "data/svo-probes/processed/image_embeddings.pt"
+      task: "evaluate_image_choice"
+    swap:
+      class: "modules.data_pipeline.datasets.SwapDataset"
+      collate_fn: "modules.data_pipeline.datasets.swap_collate_fn"
+
+      text_path: "data/svo-probes/processed/swap.pkl"
+      img_path: "data/svo-probes/processed/image_embeddings.pt"
+      task: "evaluate_text_choice"
+
+_dataset:
+  name: "aro"
+  class: "modules.data_pipeline.datasets.ARODataset"
+  collate_fn: "modules.data_pipeline.datasets.aro_collate_fn"
+  eval_mapper: "modules.models.fusion.engine.aro_mapper"
+
+  train:
+    text_path: "data/aro/processed/train.pkl"
+    img_path: "data/aro/processed/image_embeddings.pt"
+  val:
+    text_path: "data/aro/processed/val.pkl"
+    img_path: "data/aro/processed/image_embeddings.pt"
+    diagnostics:
+      - "evaluate_text_choice"
+      - "diagnostic_text_choice"
+
+  test:
+    att:
+      class: "modules.data_pipeline.datasets.ARODataset"
+      collate_fn: "modules.data_pipeline.datasets.aro_collate_fn"
+
+      text_path: "data/aro/processed/test_att.pkl"
+      img_path: "data/aro/processed/image_embeddings.pt"
+      task: "evaluate_text_choice"
+    rel:
+      class: "modules.data_pipeline.datasets.ARODataset"
+      collate_fn: "modules.data_pipeline.datasets.aro_collate_fn"
+
+      text_path: "data/aro/processed/test_rel.pkl"
+      img_path: "data/aro/processed/image_embeddings.pt"
+      task: "evaluate_text_choice"
