@@ -352,15 +352,20 @@ class Emulator:
         if self.discard:
             target_str = "0" * num_clbits
             self.accept_log.append(1.0)
+            self.circuit_log.append((1.0, counts.get(target_str, 0) / total_shots, counts.get(target_str, 0) / total_shots))
             return counts.get(target_str, 0) / total_shots
         else:
             accepted_shots = 0
+            out_zero_shots = 0   # output qubits all 0, whatever the post-selected qubits read (no post-selection)
             all_zero_shots = counts.get("0" * num_clbits, 0)
             for bstr, count in counts.items():
                 rev_bstr = bstr[::-1]  
                 if all(rev_bstr[q] == '0' for q in range(num_clbits) if q not in out_qs):
                     accepted_shots += count
+                if all(rev_bstr[q] == '0' for q in out_qs):
+                    out_zero_shots += count
             self.accept_log.append(accepted_shots / total_shots)
+            self.circuit_log.append((accepted_shots / total_shots, all_zero_shots / total_shots, out_zero_shots / total_shots))
             if accepted_shots == 0:
                 return 0.0
             return all_zero_shots / accepted_shots
@@ -386,17 +391,21 @@ class Emulator:
             n_txt = qc.num_clbits - n_out
             aux_qs = [q for q in range(n_txt) if q not in out_qs]
 
+            parity_all = 0   # the same swap test over ALL shots = the traced (discard) readout of this circuit, no post-selection
             for bstr, count in counts.items():
                 rev_bstr = bstr[::-1]
+                k = sum(
+                    int(rev_bstr[out_qs[i]]) * int(rev_bstr[n_txt + i])
+                    for i in range(n_out)
+                )
+                parity_sign = 1 if k % 2 == 0 else -1
+                parity_all += count * parity_sign
                 if all(rev_bstr[q] == '0' for q in aux_qs):
-                    k = sum(
-                        int(rev_bstr[out_qs[i]]) * int(rev_bstr[n_txt + i])
-                        for i in range(n_out)
-                    )
-                    parity_sign = 1 if k % 2 == 0 else -1
                     weighted_parity_sum += count * parity_sign
                     accepted_shots += count
-        self.accept_log.append(accepted_shots / max(sum(counts.values()), 1))  # post-selection acceptance (1 for discard)
+        total = max(sum(counts.values()), 1)
+        self.accept_log.append(accepted_shots / total)  # post-selection acceptance (1 for discard)
+        self.circuit_log.append((accepted_shots / total, weighted_parity_sum / total, (weighted_parity_sum if self.discard else parity_all) / total))
         if accepted_shots == 0:
             return 0.0
 
@@ -450,6 +459,7 @@ class Emulator:
         shots = shots if shots is not None else self.shots
         torch.cuda.empty_cache()
         self.accept_log = []
+        self.circuit_log = []   # per circuit (acceptance, accepted signal / all shots, unconditioned signal / all shots); order: per run, pos then neg
 
         all_accuracies = []
         all_pos_fidelities = []
@@ -518,4 +528,5 @@ class Emulator:
             "shots": shots,
             "accept_frac_mean": float(np.mean(self.accept_log)) if self.accept_log else None,
             "accept_frac_median": float(np.median(self.accept_log)) if self.accept_log else None,
+            "per_circuit_log": self.circuit_log,   # (acceptance, accepted signal/shots, unconditioned signal/shots); per run: pos then neg circuits
         }
