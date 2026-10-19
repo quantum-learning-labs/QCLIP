@@ -321,15 +321,31 @@ class Emulator:
         raw_shots = resolution * max(nq_ps, 1) * (2 ** nq_out)
         self.shots = min(int(math.ceil(raw_shots)), 1_000_000)
 
+    @staticmethod
+    def active_qubits(qc):
+        return len({q for inst in qc.data for q in inst.qubits})
+
+    def _run_counts(self, chunk, shots):
+        # hybrid (emulate.py --dm_max_qubits N): circuits with <= N active qubits run as exact density matrices
+        # (cost independent of shots), the rest on the main backend (statevector trajectories)
+        dm, nmax = getattr(self, 'dm_backend', None), getattr(self, 'dm_max_qubits', 0)
+        idx_dm = [i for i, qc in enumerate(chunk) if dm is not None and self.active_qubits(qc) <= nmax]
+        idx_sv = [i for i in range(len(chunk)) if i not in set(idx_dm)]
+        out = [None] * len(chunk)
+        for backend, idx in ((dm, idx_dm), (self.backend, idx_sv)):
+            if not idx: continue
+            res = backend.run([chunk[i] for i in idx], shots=shots).result()
+            for j, i in enumerate(idx): out[i] = res.get_counts(j)
+        return out
+
     def run_circuit(self, qc_array, shots=None, batch_size=24):
         result_array = []
         chunks = [qc_array[i:i + batch_size] for i in range(0, len(qc_array), batch_size)]
 
         for chunk in tqdm(chunks, desc="Running Circuits"):
-            job = self.backend.run(chunk, shots=shots)
-            result = job.result()
+            all_counts = self._run_counts(chunk, shots)
             for i, qc in enumerate(chunk):
-                counts = result.get_counts(i)
+                counts = all_counts[i]
                 if getattr(self, 'save_counts', False) and self._run_idx == 0:   # emulate.py --save_counts (first shot run only)
                     self.counts_log.append({'counts': dict(counts), 'out_qs': list(qc.metadata.get('output_qubits', [])),
                                             'num_clbits': qc.num_clbits, 'n_out': len(qc.metadata.get('output_qubits', []))})
@@ -475,6 +491,7 @@ class Emulator:
         for run_idx in range(num_runs):
             self._run_idx = run_idx
             self.backend.set_options(seed_simulator=base_seed + run_idx) 
+            if getattr(self, 'dm_backend', None) is not None: self.dm_backend.set_options(seed_simulator=base_seed + run_idx)
 
             start_eval_time = time.time()
             pos_raw = self.run_circuit(pos_circs, shots=shots, batch_size=batch_size)

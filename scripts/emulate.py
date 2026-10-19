@@ -30,6 +30,8 @@ def main():
     parser.add_argument("--honest", action="append", default=[], metavar="KEY=VALUE",
                         help="Override an honest-profile knob (scale_2q, scale_1q, scale_ro, scale_t, zz_rad, idle), repeatable")
     parser.add_argument("--circuit_batch", type=int, default=64, help="Circuits per Aer job (default 64)")
+    parser.add_argument("--dm_max_qubits", type=int, default=0,
+                        help="Hybrid: circuits with <= N active qubits run as exact density matrices on GPU, larger ones on --method")
     parser.add_argument("--save_counts", action="store_true", help="Store the full counts of every circuit (first shot run)")
     parser.add_argument("--mlflow_db", type=str, default=None,
                         help="Also log this emulation to MLflow (sqlite file); on the cluster use one file per job")
@@ -101,6 +103,15 @@ def main():
     log_phase("Executing Emulator Engine Pipeline")
     emulator = Emulator(config, backend_manager.backend)
     emulator.save_counts = args.save_counts
+    if args.dm_max_qubits:
+        from qiskit_aer import AerSimulator
+        o = backend_manager.backend.options
+        emulator.dm_backend = AerSimulator(method='density_matrix', device=o.device, precision=o.precision, noise_model=getattr(o, 'noise_model', None))
+        emulator.dm_max_qubits = args.dm_max_qubits
+        widths = [emulator.active_qubits(qc) for qc in pos_circs + neg_circs]
+        print(f" Hybrid emulation: {sum(w <= args.dm_max_qubits for w in widths)}/{len(widths)} circuits as density matrices "
+              f"(<= {args.dm_max_qubits} active qubits); widths {min(widths)}-{max(widths)}, "
+              f"histogram { {w: widths.count(w) for w in sorted(set(widths))} }")
     max_nq = max(qc.num_qubits for qc in pos_circs + neg_circs)
     nq_out = config['embedding_qubits']
     emulator.shot_estimation(nq_out, max_nq - nq_out, resolution=config['emulate']['resolution'])
