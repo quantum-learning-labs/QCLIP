@@ -330,6 +330,9 @@ class Emulator:
             result = job.result()
             for i, qc in enumerate(chunk):
                 counts = result.get_counts(i)
+                if getattr(self, 'save_counts', False) and self._run_idx == 0:   # emulate.py --save_counts (first shot run only)
+                    self.counts_log.append({'counts': dict(counts), 'out_qs': list(qc.metadata.get('output_qubits', [])),
+                                            'num_clbits': qc.num_clbits, 'n_out': len(qc.metadata.get('output_qubits', []))})
                 
                 if self.meas_method == "compute_uncompute":
                     fidelity = self._eval_compute_uncompute(qc, counts)
@@ -468,13 +471,16 @@ class Emulator:
 
         base_seed = int(np.random.randint(0, 2**31 - 1))
 
+        self.counts_log = []
         for run_idx in range(num_runs):
+            self._run_idx = run_idx
             self.backend.set_options(seed_simulator=base_seed + run_idx) 
 
             start_eval_time = time.time()
             pos_raw = self.run_circuit(pos_circs, shots=shots, batch_size=batch_size)
             neg_raw = self.run_circuit(neg_circs, shots=shots, batch_size=batch_size)
             elapsed = time.time() - start_eval_time
+            self.elapsed_log = (getattr(self, 'elapsed_log', None) or []) + [elapsed]
 
             correct = (pos_raw > neg_raw).float()
             accuracy = correct.mean().item()
@@ -528,5 +534,7 @@ class Emulator:
             "shots": shots,
             "accept_frac_mean": float(np.mean(self.accept_log)) if self.accept_log else None,
             "accept_frac_median": float(np.median(self.accept_log)) if self.accept_log else None,
+            "per_circuit_counts": self.counts_log or None,   # --save_counts: run 0, pos then neg circuits
+            "elapsed_s_per_run": getattr(self, 'elapsed_log', None),
             "per_circuit_log": self.circuit_log,   # (acceptance, accepted signal/shots, unconditioned signal/shots); per run: pos then neg circuits
         }

@@ -108,6 +108,7 @@ class RunManager:
                 "margin": self.config.get('margin', 0.0),
                 "uniformity_weight": self.config.get('uniformity_weight', 0.0),
                 "shot_weight": self.config.get('shot_weight', 0.0),
+                "purity_anneal_epochs": self.config.get('purity_anneal_epochs', 0),
                 "distill_from": self.config.get('distill_from') or "none",
                 "distill_kd_weight": self.config.get('distill_kd_weight', 1.0) if self.config.get('distill_from') else 0.0,
                 "distill_tau": self.config.get('distill_tau', 1.0),
@@ -120,8 +121,12 @@ class RunManager:
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
             current_lr = self.config.get('qlr', 1e-3)
             
+            anneal = int(self.config.get('purity_anneal_epochs', 0) or 0)
+            w0 = getattr(self.trainer.loss_fn, 'purity_weight', None)
             for epoch in epoch_pbar:
                 start_time = time.time()
+                if anneal and w0:   # purity penalty annealed linearly from purity_weight to 0 over purity_anneal_epochs
+                    self.trainer.loss_fn.purity_weight = w0 * max(0.0, 1.0 - epoch / anneal)
                 loss = self.trainer.train_epoch(train_loader, eval_mapper)
                 elapsed_time = time.time() - start_time
 
