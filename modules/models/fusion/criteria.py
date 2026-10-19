@@ -204,7 +204,8 @@ class BaseInfoNCELoss(nn.Module):
     def positive_margin(self, similarity: torch.Tensor) -> torch.Tensor:
         return similarity   # subclasses may subtract a margin from the positives (diagonal)
 
-    def forward(self, text_emb: torch.Tensor, image_emb: torch.Tensor, neg_image_emb: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, text_emb: torch.Tensor, image_emb: torch.Tensor, neg_image_emb: torch.Tensor = None,
+                neg_text_emb: torch.Tensor = None, neg_text_valid: torch.Tensor = None) -> torch.Tensor:
         B = text_emb.size(0)
         labels = torch.arange(B, device=text_emb.device)
         scale = self.scale().to(text_emb.device)
@@ -219,7 +220,13 @@ class BaseInfoNCELoss(nn.Module):
             sim_neg = self.compute_similarity(text_emb, neg_image_emb)
             logits_t2i = torch.cat([logits_t2i, sim_neg * scale], dim=1)
         loss_t2i = self.cross_entropy(logits_t2i, labels)
-        loss_i2t = self.cross_entropy((similarity * scale).T, labels)
+        logits_i2t = (similarity * scale).T
+        if neg_text_emb is not None:   # every image also scores the batch's swapped captions (invalid swaps masked out)
+            sim_swap = (self.compute_similarity(neg_text_emb, image_emb) * scale).T   # [images, swapped captions]
+            if neg_text_valid is not None:
+                sim_swap = sim_swap.masked_fill(~neg_text_valid.to(sim_swap.device)[None, :], float('-inf'))
+            logits_i2t = torch.cat([logits_i2t, sim_swap], dim=1)
+        loss_i2t = self.cross_entropy(logits_i2t, labels)
         sym_loss = 0.5 * (loss_t2i + loss_i2t)
 
         # 3. Optional regularisation (uniformity, purity, shot-aware margins, ...)

@@ -84,6 +84,7 @@ if __name__ == "__main__":
 
     trainer = ContrastiveTrainer(image_model, text_model, optimizer, loss_fn, DEV)
     trainer.hard_negatives = bool(config.get('hard_negatives', False))   # add each caption's negative image to the softmax
+    trainer.swap_negatives = bool(config.get('swap_negatives', False))   # add swapped captions to the image->text softmax (train text_path from make_swap.py --keep_all)
     if config.get('distill_from'):   # frozen post-selected teacher: match its scores (KD) and/or its states
         from modules.models.fusion.distill import Teacher
         trainer.teacher = Teacher(config['distill_from'], config, compiled_train, DEV, kd_weight=config.get('distill_kd_weight', 1.0),

@@ -133,11 +133,15 @@ class SVODataset(BaseDataset):
         einsum = row_compiled['corrected_sentence_einsum']
         symbols = row_compiled['corrected_sentence_symbols']
         
-        return {"caption": (einsum, symbols),
+        item = {"caption": (einsum, symbols),
                 "pos_image": pos_image,
                 "neg_image": neg_image,
                 "idx": idx,   # row index (distillation looks up the teacher's embeddings by it)
                 }
+        if 'swapped_sentence_einsum' in row_compiled.index:   # training with swapped-caption negatives (scripts/make_swap.py --keep_all)
+            item["swap_caption"] = (row_compiled['swapped_sentence_einsum'], row_compiled['swapped_sentence_symbols'])
+            item["swap_valid"] = bool(row_compiled.get('swap_valid', True))
+        return item
 
 def svo_collate_fn(batch):
     captions = [item['caption'] for item in batch]
@@ -149,6 +153,8 @@ def svo_collate_fn(batch):
         "pos_image": pos_images,
         "neg_image": neg_images,
         "idx": torch.tensor([item['idx'] for item in batch]) if 'idx' in batch[0] else None,
+        **({"swap_caption": [item['swap_caption'] for item in batch],
+            "swap_valid": torch.tensor([item['swap_valid'] for item in batch])} if 'swap_caption' in batch[0] else {}),
     }
 
 class SwapDataset(BaseDataset):

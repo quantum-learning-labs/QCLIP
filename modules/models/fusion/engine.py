@@ -109,6 +109,7 @@ class RunManager:
                 "uniformity_weight": self.config.get('uniformity_weight', 0.0),
                 "shot_weight": self.config.get('shot_weight', 0.0),
                 "purity_anneal_epochs": self.config.get('purity_anneal_epochs', 0),
+                "swap_negatives": bool(self.config.get('swap_negatives', False)),
                 "distill_from": self.config.get('distill_from') or "none",
                 "distill_kd_weight": self.config.get('distill_kd_weight', 1.0) if self.config.get('distill_from') else 0.0,
                 "distill_tau": self.config.get('distill_tau', 1.0),
@@ -250,9 +251,12 @@ class ContrastiveTrainer:
             image_emb = self.image_model(images)
             text_emb = self.text_model(texts)
 
-            if getattr(self, 'hard_negatives', False) and 'neg_image' in batch:
-                neg_emb = self.image_model(batch['neg_image'].to(self.device))
-                loss = self.loss_fn(text_emb, image_emb, neg_emb)
+            neg_emb = self.image_model(batch['neg_image'].to(self.device)) if getattr(self, 'hard_negatives', False) and 'neg_image' in batch else None
+            swap_kw = {}
+            if getattr(self, 'swap_negatives', False) and 'swap_caption' in batch:
+                swap_kw = {'neg_text_emb': self.text_model(batch['swap_caption']), 'neg_text_valid': batch['swap_valid'].to(self.device)}
+            if neg_emb is not None or swap_kw:
+                loss = self.loss_fn(text_emb, image_emb, neg_emb, **swap_kw)
             else:
                 loss = self.loss_fn(text_emb, image_emb)
             if getattr(self, 'teacher', None) is not None:
