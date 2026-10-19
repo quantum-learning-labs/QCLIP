@@ -49,7 +49,29 @@ if __name__ == "__main__":
     log_phase("Initializing Model Parameters")
     data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
     data_engine.image_init(image_model)
-    if args.init_from:
+    if args.init_from and config.get('init_by_symbol'):
+        # copy parameters by symbol name from a checkpoint of a DIFFERENT circuit family (e.g. post-selected -> discard with
+        # mixer/sinks): the source model is rebuilt from its own config; symbols the source lacks keep their init
+        import yaml as _yaml
+        from pathlib import Path as _Path
+        src_cfg = _yaml.safe_load(open(_Path(args.init_from).parent / 'config.yaml')); src_cfg['num_workers'] = 0
+        s_ansatz, s_img, s_txt, _ = build_experiment(src_cfg, DEV)
+        s_de = DataEngine(src_cfg, s_ansatz, DEV)
+        s_de.text_init(s_txt, pd.concat([s_de.compile_text('train'), s_de.compile_text('val')], ignore_index=True)); s_de.image_init(s_img)
+        ck = CheckpointManager.load_model(args.init_from, s_img, s_txt, DEV)
+        copied = 0
+        with torch.no_grad():
+            for sym, i in text_model.sym2param.items():
+                j = s_txt.sym2param.get(sym)
+                if j is not None:
+                    text_model.params[i].copy_(s_txt.params[j].to(text_model.params[i].device)); copied += 1
+                else:   # new symbols (identity-initialisable mixer, text.mixer_ansatz: cr) start at exactly 0 = identity gates
+                    text_model.params[i].zero_()
+        image_model.load_state_dict(s_img.state_dict())
+        print(f"Initialised by symbol from {args.init_from} (epoch {ck.get('epoch')}): {copied}/{len(text_model.symbols)} text symbols copied, "
+              f"{len(text_model.symbols) - copied} new (mixer/sinks) set to 0; image model copied")
+        del s_txt, s_img
+    elif args.init_from:
         ck = CheckpointManager.load_model(args.init_from, image_model, text_model, DEV)
         print(f"Initialised weights from {args.init_from} (epoch {ck.get('epoch')})")
     print(f"Model Parameter Counts: Image={sum(p.numel() for p in image_model.parameters()):,} | Text={sum(p.numel() for p in text_model.parameters()):,}")

@@ -103,6 +103,24 @@ class BaseAnsatz(ABC):
         einsum_expr = self.gen_einsum_expr(input_indices, ccg_map)
         return einsum_expr, tensor_arr
     
+    def mixer_cr(self, current_wires, base_symbol):
+        # one identity-initialisable mixer layer (text.mixer_ansatz: cr): Ry, Rz on every wire, a ring of CRy and a reverse
+        # ring of CRx. Every gate is the identity at angle 0, so a near-zero init leaves a warm-started circuit unchanged.
+        new_indices, new_tensors = [], []
+        N, op = len(current_wires), 0
+        for i in range(N):
+            for g in ('Ry', 'Rz'):
+                nxt = self.get_char(); new_indices.append(current_wires[i] + nxt)
+                new_tensors.append({'name': f"{base_symbol}_cr{op}", 'op_type': g}); current_wires[i] = nxt; op += 1
+        if N > 1:
+            for g, pairs in (('CRy', [(i, (i + 1) % N) for i in range(N)]), ('CRx', [((i + 1) % N, i) for i in range(N)])):
+                for c, t in pairs:
+                    c_out, t_out = self.get_char(), self.get_char()
+                    new_indices.append(current_wires[c] + current_wires[t] + c_out + t_out)
+                    new_tensors.append({'name': f"{base_symbol}_cr{op}", 'op_type': g})
+                    current_wires[c], current_wires[t] = c_out, t_out; op += 1
+        return current_wires, new_indices, new_tensors
+
     def tn2ansatz_curried(self, tn, discard=False, postselect=(), mixer=0, sinks=0):
         # discard: trace out every non-sentence wire, except wires of the atomic types in `postselect`,
         # which are post-selected onto |0> as in the non-discard circuit (hybrid)
@@ -171,8 +189,10 @@ class BaseAnsatz(ABC):
                 input_indices.extend([[w] for w in sink_wires]); tensor_arr.extend([{'name': None, 'op_type': '0'}] * sinks)
                 wires = wires + sink_wires
             tag = f"_k{sinks}" if sinks else ""
+            cr = getattr(self, 'mixer_type', 'default') == 'cr'
             for l in range(mixer):
-                wires, new_indices, new_tensors = self.ansatz(wires, f"__mixer{l}_m{m}{tag}")
+                block = self.mixer_cr if cr else self.ansatz
+                wires, new_indices, new_tensors = block(wires, f"__mixer{l}_m{m}{tag}{'_cr' if cr else ''}")
                 input_indices.extend(new_indices); tensor_arr.extend(new_tensors)
             pos = len(ccg_map[0]); ccg_map[0] = wires[:pos]
             for k in others:
