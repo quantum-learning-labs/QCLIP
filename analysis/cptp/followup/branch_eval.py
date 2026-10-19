@@ -16,7 +16,7 @@ def models(config, ck, DEV):
     ansatz, img, txt, _ = build_experiment(config, DEV)
     de = DataEngine(config, ansatz, DEV)
     de.text_init(txt, pd.concat([de.compile_text('train'), de.compile_text('val')], ignore_index=True)); de.image_init(img)
-    CheckpointManager.load_model(ck, img, txt, DEV); img.eval(); txt.eval()
+    CheckpointManager.load_model(ck, img, txt, DEV); img.to(DEV).eval(); txt.to(DEV).eval()   # params stay on CPU after init/load
     return de, img, txt
 
 def vec(x): return x.reshape(x.shape[0], -1).to(torch.complex128)
