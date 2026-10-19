@@ -223,8 +223,8 @@ class BaseInfoNCELoss(nn.Module):
         logits_i2t = (similarity * scale).T
         if neg_text_emb is not None:   # every image also scores the batch's swapped captions (invalid swaps masked out)
             sim_swap = (self.compute_similarity(neg_text_emb, image_emb) * scale).T   # [images, swapped captions]
-            if neg_text_valid is not None:
-                sim_swap = sim_swap.masked_fill(~neg_text_valid.to(sim_swap.device)[None, :], float('-inf'))
+            if neg_text_valid is not None:   # drop captions without a real swap (masking with -inf breaks label smoothing)
+                sim_swap = sim_swap[:, neg_text_valid.to(sim_swap.device).bool()]
             logits_i2t = torch.cat([logits_i2t, sim_swap], dim=1)
         loss_i2t = self.cross_entropy(logits_i2t, labels)
         sym_loss = 0.5 * (loss_t2i + loss_i2t)
