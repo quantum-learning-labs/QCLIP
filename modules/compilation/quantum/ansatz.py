@@ -14,20 +14,20 @@ class BaseAnsatz(ABC):
         self.id = type(self).__name__ + '_' + str(obmap['n']) + '_' + str(obmap['s']) + '_' + str(obmap['p']) + '_' + str(obmap['out'])
         self.char_idx = count(0)
 
-    def __call__(self, tn, curry=False, discard=False, spider=False, postselect=(), mixer=0):
+    def __call__(self, tn, curry=False, discard=False, spider=False, postselect=(), mixer=0, sinks=0):
         # spider() is placeholder code and not implemented properly yet
         if spider:
             raise NotImplementedError("spider ansatz is not implemented yet; set text.spider: false")
         if curry:
-            return self.tn2ansatz_curried(tn,  discard=discard, postselect=postselect, mixer=mixer)
+            return self.tn2ansatz_curried(tn,  discard=discard, postselect=postselect, mixer=mixer, sinks=sinks)
         elif spider:
             return self.spider(tn)
         else:
-            if postselect or mixer: raise NotImplementedError("text.postselect_types / text.mixer_layers need text.curry: true")
+            if postselect or mixer or sinks: raise NotImplementedError("text.postselect_types / text.mixer_layers / text.sinks need text.curry: true")
             return self.tn2ansatz(tn, discard=discard)
 
-    def tns2ansatze(self, tn_arr, curry=False, discard=False, spider=False, postselect=(), mixer=0):
-        return [self(tn, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer) for tn in tn_arr]
+    def tns2ansatze(self, tn_arr, curry=False, discard=False, spider=False, postselect=(), mixer=0, sinks=0):
+        return [self(tn, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer, sinks=sinks) for tn in tn_arr]
 
     def reset_char(self):
         self.char_idx = count(0)
@@ -103,7 +103,7 @@ class BaseAnsatz(ABC):
         einsum_expr = self.gen_einsum_expr(input_indices, ccg_map)
         return einsum_expr, tensor_arr
     
-    def tn2ansatz_curried(self, tn, discard=False, postselect=(), mixer=0):
+    def tn2ansatz_curried(self, tn, discard=False, postselect=(), mixer=0, sinks=0):
         # discard: trace out every non-sentence wire, except wires of the atomic types in `postselect`,
         # which are post-selected onto |0> as in the non-discard circuit (hybrid)
         self.reset_char()
@@ -163,8 +163,16 @@ class BaseAnsatz(ABC):
             others = [k for k in ccg_map if k != 0]
             wires = list(ccg_map[0]) + [w for k in others for w in ccg_map[k]]
             m = len(wires) - len(ccg_map[0])
+            # text.sinks = k: k extra |0> wires inside the mixer, traced with the noun wires at the end. They raise the
+            # discard channel's Kraus-rank cap from 2^m to 2^(m+k), so failure branches can be neutralised (report sec 22, C7)
+            if sinks:
+                if not discard: raise ValueError("text.sinks only applies with text.discard: true")
+                sink_wires = [self.get_char() for _ in range(sinks)]
+                input_indices.extend([[w] for w in sink_wires]); tensor_arr.extend([{'name': None, 'op_type': '0'}] * sinks)
+                wires = wires + sink_wires
+            tag = f"_k{sinks}" if sinks else ""
             for l in range(mixer):
-                wires, new_indices, new_tensors = self.ansatz(wires, f"__mixer{l}_m{m}")
+                wires, new_indices, new_tensors = self.ansatz(wires, f"__mixer{l}_m{m}{tag}")
                 input_indices.extend(new_indices); tensor_arr.extend(new_tensors)
             pos = len(ccg_map[0]); ccg_map[0] = wires[:pos]
             for k in others:
@@ -215,7 +223,7 @@ class BaseAnsatz(ABC):
         einsum_expr = f"{lhs}->{''.join(target_wires)}"
         return einsum_expr, tensor_arr
 
-    def compile_dataset(self, df, curry=False, discard=False, spider=False, postselect=(), mixer=0):
+    def compile_dataset(self, df, curry=False, discard=False, spider=False, postselect=(), mixer=0, sinks=0):
         #blueprint_df = pd.DataFrame(index=df.index)
         cols = [col for col in df.columns if col.endswith('_diagram')]
         for col in cols:
@@ -234,13 +242,13 @@ class BaseAnsatz(ABC):
                 if is_nested_list:
                     row_einsums, row_symbols = [], []
                     for tn in row_val:
-                        e_str, syms = self(tn, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer)
+                        e_str, syms = self(tn, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer, sinks=sinks)
                         row_einsums.append(e_str)
                         row_symbols.append(syms)
                     einsum_arr.append(row_einsums)
                     symbols_arr.append(row_symbols)
                 else:
-                    e_str, syms = self(row_val, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer)
+                    e_str, syms = self(row_val, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer, sinks=sinks)
                     einsum_arr.append(e_str)
                     symbols_arr.append(syms)
             df[einsum_col] = einsum_arr
