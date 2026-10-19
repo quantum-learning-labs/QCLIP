@@ -47,8 +47,8 @@ class DataEngine:
         if hasattr(text_model, "from_symbols"):
             sym_cols = [c for c in compiled_data.columns if c.endswith("_symbols")]
             symbol_arr = []
-            for col in sym_cols:
-                symbol_arr += compiled_data[col].tolist()
+            for col in sym_cols:   # skip NaN cells: a column only one split has (e.g. swapped training captions)
+                symbol_arr += [v for v in compiled_data[col].tolist() if not isinstance(v, float)]
             
             sym_kwargs = {"id_init": True} if self.config["model_type"] == "vqc" else {}
             text_model.from_symbols(symbol_arr, **sym_kwargs)
@@ -57,7 +57,7 @@ class DataEngine:
             cols = [col for col in compiled_data.columns if col.endswith('_einsum')]
             plan_stream = []
             for col in cols:
-                plan_stream += compiled_data[col].tolist()
+                plan_stream += [v for v in compiled_data[col].tolist() if not isinstance(v, float)]
             text_model.from_plans(list(plan_stream))
         
     def image_init(self, image_model):
@@ -75,7 +75,7 @@ class DataEngine:
             for einsum_col, sym_col in zip(einsum_cols, sym_cols):
                 symbol_arr += data[sym_col].tolist()
                 einsum_arr += data[einsum_col].tolist()
-            tn_arr = list(zip(einsum_arr, symbol_arr))
+            tn_arr = [(e, t) for e, t in zip(einsum_arr, symbol_arr) if not isinstance(e, float)]
             metrics = tn_metadata(tn_arr)
             print(f"Metrics for {model.__class__.__name__}:")
             print(f" (Max) Qubits: {metrics['max'][0]:.4f} | Gates: {metrics['max'][1]:.4f} | Depth: {metrics['max'][2]:.4f} | Rank: {metrics['max'][3]:.4f} | 2-Qubit Gates: {metrics['max'][4]:.4f}")
