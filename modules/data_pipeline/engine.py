@@ -34,6 +34,7 @@ class DataEngine:
             compile_kwargs["mixer"] = int(self.config["text"].get("mixer_layers", 0) or 0)
             compile_kwargs["sinks"] = int(self.config["text"].get("sinks", 0) or 0)
             self.ansatz.mixer_type = self.config["text"].get("mixer_ansatz", "default")   # 'cr': identity-initialisable mixer
+            self.ansatz.phi_block = bool(self.config["text"].get("phi_block", False))   # Theorem A's Phi as a fixed discard block
             if compile_kwargs["sinks"] and not compile_kwargs["mixer"]:
                 raise ValueError("text.sinks needs text.mixer_layers >= 1 (the sinks are coupled in by the mixer)")
             

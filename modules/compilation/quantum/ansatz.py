@@ -198,6 +198,28 @@ class BaseAnsatz(ABC):
             for k in others:
                 n = len(ccg_map[k]); ccg_map[k] = wires[pos:pos + n]; pos += n
 
+        if getattr(self, 'phi_block', False):
+            # text.phi_block (report sec 22, direction 2): Theorem A's channel as a fixed, parameter-free discard block.
+            # Per sentence wire S_i a Bell pair (A_i, B_i); if any non-sentence wire is not |0>, swap S_i with A_i.
+            # Tracing all but S gives Phi = K0 rho K0^+ + (1 - p0) I/d exactly: the all-|0> branch keeps the
+            # post-selected state, every other branch leaves S holding halves of Bell pairs (I/d).
+            if not discard or postselect or sinks:
+                raise ValueError("text.phi_block needs text.discard: true and no postselect_types / sinks")
+            others = [k for k in ccg_map if k != 0]
+            nw = [w for k in others for w in ccg_map[k]]; m = len(nw)
+            if m:
+                s = list(ccg_map[0])
+                for i in range(len(s)):
+                    a, b = self.get_char(), self.get_char()
+                    input_indices.append([a, b]); tensor_arr.append({'name': None, 'op_type': 'bell'})
+                    nw_out = [self.get_char() for _ in nw]; s_out, a_out = self.get_char(), self.get_char()
+                    input_indices.append(nw + [s[i], a] + nw_out + [s_out, a_out])
+                    tensor_arr.append({'name': None, 'op_type': f'cswap{m}'})
+                    nw, s[i] = nw_out, s_out
+                ccg_map[0] = s; pos = 0
+                for k in others:
+                    n = len(ccg_map[k]); ccg_map[k] = nw[pos:pos + n]; pos += n
+
         if not discard or postselect:
             for virtual_idx, physical_wires in ccg_map.items():
                 if virtual_idx != 0 and (not discard or wire_type[virtual_idx] in postselect):
