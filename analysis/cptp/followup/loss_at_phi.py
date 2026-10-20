@@ -85,7 +85,7 @@ for ck in sys.argv[2:]:
                 nb += 1
             for r in readouts:
                 gs, gh = L[r]['grid_sym'] / nb, L[r]['grid_hn'] / nb
-                m = lambda x: float(torch.tensor(x).mean()); md = lambda x: float(torch.tensor(x).median())
+                m = lambda x: float(torch.tensor(x, dtype=torch.float64).mean()); md = lambda x: float(torch.tensor(x, dtype=torch.float64).median())
                 res.setdefault(split, {})[r] = {
                     'n': len(acc[r]['tr']), 'batches': nb,
                     'loss_sym': m(L[r]['sym']), 'loss_hn': m(L[r]['hn']), 'max_abs_diff_vs_library': max(L[r]['check']),
