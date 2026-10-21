@@ -15,6 +15,9 @@ class BaseAnsatz(ABC):
         self.char_idx = count(0)
 
     def __call__(self, tn, curry=False, discard=False, spider=False):
+        # spider() is placeholder code and not implemented properly yet
+        if spider:
+            raise NotImplementedError("spider ansatz is not implemented yet; set text.spider: false")
         if curry:
             return self.tn2ansatz_curried(tn,  discard=discard)
         elif spider:
@@ -117,7 +120,11 @@ class BaseAnsatz(ABC):
                 else:
                     output_wires.append(idx)
                     output_types.append(atomic_type)
-            if len(input_wires) == len(output_wires):
+            # pass-through only if each output wire can reuse an input wire of the same width
+            # (an intransitive verb maps n (1 qubit) -> out (embedding_qubits), so it must not)
+            same_widths = all(self.obmap.get(t_in, 1) == self.obmap.get(t_out, 1)
+                              for t_in, t_out in zip(input_types, output_types))
+            if len(input_wires) == len(output_wires) and same_widths:
                 for in_idx, out_idx in zip(input_wires, output_wires):
                     current_wires.extend(ccg_map[in_idx])
                     ccg_map[out_idx] = ccg_map[in_idx]
@@ -208,13 +215,13 @@ class BaseAnsatz(ABC):
                 if is_nested_list:
                     row_einsums, row_symbols = [], []
                     for tn in row_val:
-                        e_str, syms = self(tn, curry, spider)
+                        e_str, syms = self(tn, curry=curry, discard=discard, spider=spider)
                         row_einsums.append(e_str)
                         row_symbols.append(syms)
                     einsum_arr.append(row_einsums)
                     symbols_arr.append(row_symbols)
                 else:
-                    e_str, syms = self(row_val, curry, spider)
+                    e_str, syms = self(row_val, curry=curry, discard=discard, spider=spider)
                     einsum_arr.append(e_str)
                     symbols_arr.append(syms)
             df[einsum_col] = einsum_arr

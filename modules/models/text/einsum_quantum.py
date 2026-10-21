@@ -13,6 +13,7 @@ class VQCModel(nn.Module):
         self.symbols: List[str] = []
         self.params = nn.ParameterList([])
         self.path_cache = {}
+        self.plan_cache = {}
         self.sym2param: Dict[str, nn.Parameter] = {}
         self.out_q: int = out_q
         self.precision: torch.dtype = precision
@@ -120,6 +121,30 @@ class VQCModel(nn.Module):
             if cache_key not in self.path_cache: 
                 self.path_cache[cache_key] = contract_expression(batched_str, *shapes)
 
+    GATE_FNS = {'Rz': Rz, 'Rx': Rx, 'Ry': Ry, 'CRz': CRz, 'CRx': CRx, 'CRy': CRy}
+
+    def _plan(self, einsum_str, tensors, nominal_batch=64):
+        # Per circuit structure: the batched contraction (path searched once, valid for any
+        # minibatch size) and which operand slots are static gates / which op type each
+        # parametrised slot is, so a forward builds each op type's gates in one call.
+        if einsum_str not in self.plan_cache:
+            input_subscripts, output_subscript = einsum_str.split('->')
+            batched_str = f"{','.join('$' + s for s in input_subscripts.split(','))}->${output_subscript}"
+            shapes, static, param_pos, by_type = [], [], [], defaultdict(list)
+            for pos, gate in enumerate(tensors):
+                if gate['name'] is None:
+                    buf = getattr(self, f"gate_{gate['op_type']}")
+                    static.append((pos, f"gate_{gate['op_type']}"))
+                    shapes.append((nominal_batch, *buf.shape))
+                else:
+                    by_type[gate['op_type']].append(len(param_pos))
+                    param_pos.append(pos)
+                    n_wires = 2 if gate['op_type'].startswith('C') else 1
+                    shapes.append((nominal_batch, *[2] * (2 * n_wires)))
+            self.plan_cache[einsum_str] = {'expr': contract_expression(batched_str, *shapes), 'n_ops': len(tensors),
+                                           'static': static, 'param_pos': param_pos, 'by_type': dict(by_type)}
+        return self.plan_cache[einsum_str]
+
     def forward(self, batch_recipes):
         groups = defaultdict(list)
         for i, (einsum_str, tensors) in enumerate(batch_recipes):
@@ -136,41 +161,21 @@ class VQCModel(nn.Module):
         for einsum_str, items in groups.items():
             indices, tensor_lists = zip(*items)
             minibatch_size = len(indices)
-            gate_columns = zip(*tensor_lists)
-            stacked_tensors, shapes = [], []
             try:
-                for column in gate_columns:
-                    first_symbol, op_type = column[0]['name'], column[0]['op_type']
-                    if first_symbol is None:
-                        static_data = getattr(self, f"gate_{op_type}")
-                        data = static_data.unsqueeze(0).expand(minibatch_size, *static_data.shape).contiguous()
-                        shapes.append(data.shape)
-                        stacked_tensors.append(data)
-                    else:
-                        param_indices = []
-                        for gate in column:
-                            if gate['name'] in self.sym2param:
-                                param_indices.append(self.sym2param[gate['name']])
-                            else:
-                                param_indices.append(self.unk_param_index)
-                        sub_thetas = thetas[param_indices].to(dtype=self.precision, device=dev)
-                        if op_type == 'Rz': gate_batch = Rz(sub_thetas)
-                        elif op_type == 'Rx': gate_batch = Rx(sub_thetas)
-                        elif op_type == 'Ry': gate_batch = Ry(sub_thetas)
-                        elif op_type == 'CRz': gate_batch = CRz(sub_thetas)
-                        elif op_type == 'CRx': gate_batch = CRx(sub_thetas)
-                        elif op_type == 'CRy': gate_batch = CRy(sub_thetas)
-                        shapes.append(gate_batch.shape)
-                        stacked_tensors.append(gate_batch)
-
-                input_subscripts, output_subscript = einsum_str.split('->')
-                batched_inputs = ["$" + s for s in input_subscripts.split(',')]
-                batched_str = f"{','.join(batched_inputs)}->${output_subscript}"
-
-                cache_key = (batched_str, tuple(shapes))
-                if cache_key not in self.path_cache:
-                    self.path_cache[cache_key] = contract_expression(batched_str, *shapes)
-                group_out = self.path_cache[cache_key](*stacked_tensors, backend='torch')
+                plan = self._plan(einsum_str, tensor_lists[0])
+                operands = [None] * plan['n_ops']
+                for pos, buf_name in plan['static']:
+                    buf = getattr(self, buf_name)
+                    operands[pos] = buf.expand(minibatch_size, *buf.shape)
+                if plan['param_pos']:
+                    param_idx = torch.tensor([[self.sym2param.get(tensors[p]['name'], self.unk_param_index) for p in plan['param_pos']]
+                                              for tensors in tensor_lists], device=dev)
+                    angles = thetas[param_idx].to(dtype=self.precision)  # [minibatch, n_param_gates]
+                    for op_type, cols in plan['by_type'].items():
+                        gate_batch = self.GATE_FNS[op_type](angles[:, cols])  # [minibatch, len(cols), 2, 2(, 2, 2)]
+                        for j, c in enumerate(cols):
+                            operands[plan['param_pos'][c]] = gate_batch[:, j]
+                group_out = plan['expr'](*operands, backend='torch')
 
                 if self.discard:
                     elems_per_item = group_out.numel() // minibatch_size

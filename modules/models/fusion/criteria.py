@@ -328,10 +328,13 @@ class UJ_InfoNCE(BaseInfoNCELoss):
         fs_similarity = torch.asin(torch.clamp(tr_sqrt_M, 0.0, 1.0 - self.eps)) / (math.pi / 2.0)
 
         return fs_similarity
+
 class Pauli_InfoNCE(BaseInfoNCELoss):
-    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, num_qubits: int = 3, eps: float = 1e-8):
+    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, num_qubits: int = 3, eps: float = 1e-8, purity_weight = 0.1):
         super().__init__(temperature=temperature, label_smoothing=label_smoothing)
         self.num_qubits = num_qubits
+        self.purity_weight = purity_weight
+        self.dim_hilbert = 2 ** num_qubits
         self.eps = eps
         
         I = torch.eye(2, dtype=torch.complex64)
@@ -351,9 +354,23 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
             
         self.register_buffer("pauli_basis", torch.stack(basis_list), persistent=False)
 
+    def get_hyperparams(self) -> Dict[str, Any]:
+        hp = super().get_hyperparams()
+        hp.update({
+            "purity_weight": self.purity_weight,
+            "num_qubits": self.num_qubits,
+            "eps": self.eps
+        })
+        return hp
+
     def _to_pauli_vector(self, rho: torch.Tensor) -> torch.Tensor:
         pauli_vec = torch.real(torch.einsum('bmn, knm -> bk', rho, self.pauli_basis.to(rho.device)))
         return pauli_vec
+
+    def _compute_purity_from_pauli(self, v_pauli: torch.Tensor) -> torch.Tensor:
+        v_norm_sq = torch.sum(v_pauli ** 2, dim=-1)
+        purity = (1.0 + v_norm_sq) / self.dim_hilbert
+        return torch.clamp(purity, min=1.0 / self.dim_hilbert, max=1.0)
 
     def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
         rho_text, rho_image, _ = self._ensure_density_matrices(text_emb, image_emb)
@@ -365,3 +382,54 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
         v_image_norm = torch.nn.functional.normalize(v_image, dim=-1, eps=self.eps)
         
         return torch.matmul(v_text_norm, v_image_norm.T)
+
+    def compute_regularization(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
+        if self.purity_weight <= 0:
+            return torch.tensor(0.0, device=text_emb.device)
+
+        rho_text, rho_image, _ = self._ensure_density_matrices(text_emb, image_emb)
+        v_text = self._to_pauli_vector(rho_text)
+        
+        text_purity = self._compute_purity_from_pauli(v_text)
+        text_purity_loss = (1.0 - text_purity).mean()
+
+        loss_purity = text_purity_loss
+
+        return self.purity_weight * loss_purity
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

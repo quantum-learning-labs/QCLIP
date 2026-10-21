@@ -227,3 +227,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# tails working-copy clutter (added 2026-10-16)
+jobs/
+mlruns/
+.DS_Store
+* copy.*

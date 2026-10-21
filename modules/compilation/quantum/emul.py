@@ -18,7 +18,7 @@ class BackendManager:
     def __init__(self, config, qlimit=None, hardware_profile=FakeMiami()):
         self.config = config
         self.amplitude_encode = True if config['vision']['method'] == 'amp' else False
-        self.discard = self.config.get('discard', False)
+        self.discard = self.config.get('text', {}).get('discard', False)
         self.meas_method = self.config.get('emulate', {}).get('measurement_method', 'compute_uncompute')
         self.out_q = self.config.get('embedding_qubits', None) if self.discard else None
         self.qlimit = qlimit
@@ -106,7 +106,7 @@ class BackendManager:
                 basis_gates=self.basis_gates,
                 optimization_level=optimization_level,
                 # layout_method='trivial',
-                # seed_transpiler=42,
+                seed_transpiler=self.config.get('seed'),
                 num_processes=4  # Kept strict to manage RAM limits
             )
             transpiled_circs.extend(transpiled_chunk)
@@ -121,6 +121,7 @@ class BackendManager:
 
         raw_pos_circs, raw_neg_circs = [], []
         failed_circuits = 0
+        unknown_symbols = set()
 
         for idx in tqdm(range(data_size), desc="Compiling Qiskit DAGs", unit="pair"):
             try:
@@ -128,6 +129,8 @@ class BackendManager:
                 image = sample["image"]
                 pos_einsum, pos_wires = sample["pos_caption"]
                 neg_einsum, neg_wires = sample["neg_caption"]
+                unknown_symbols.update(g['name'] for g in pos_wires + neg_wires
+                                       if g['name'] is not None and g['name'] not in txt_params)
 
                 qc_pos_txt, pos_out_q, pos_txt_p = tn2qiskit(
                     einsum2interleaved(pos_einsum), pos_wires, txt_params, out_q=self.out_q, meas_output=False
@@ -178,7 +181,7 @@ class BackendManager:
                 print(f" Error compiling circuit pair at index {idx}: {e}")
                 failed_circuits += 1
         
-        print(f" Compiled {len(raw_pos_circs)} circuit pairs | Dropped {failed_circuits} samples.")
+        print(f" Compiled {len(raw_pos_circs)} circuit pairs | Dropped {failed_circuits} samples | Unknown text symbols (angle 0): {len(unknown_symbols)}")
         pos_circs = self.transpile(raw_pos_circs, batch_size=256, optimization_level=opt_lvl)
         neg_circs = self.transpile(raw_neg_circs, batch_size=256, optimization_level=opt_lvl)
 
@@ -249,7 +252,7 @@ class Emulator:
         self.config = config
         self.backend = backend
         self.shots = 64
-        self.discard = self.config.get('discard', False)
+        self.discard = self.config.get('text', {}).get('discard', False)
         self.meas_method = self.config.get('emulate', {}).get('measurement_method', 'compute_uncompute')
         self.dataset_name = config['dataset']['name']
         self.experiment_name = gen_id(config)
@@ -350,7 +353,7 @@ class Emulator:
                 "dataset": self.dataset_name,
                 "measurement_method": meas_method,
                 "embedding_qubits": self.config.get('embedding_qubits', 0),
-                "discard_qubits": self.config.get('discard', False),
+                "discard_qubits": self.config.get('text', {}).get('discard', False),
                 "epsilon": self.config.get('emulate', {}).get('eps', 0.01),
                 "shots": self.shots,
                 "backend_method": self.config.get('emulate', {}).get('backend', 'statevector'),
@@ -387,6 +390,7 @@ class Emulator:
         all_accuracies = []
         all_pos_fidelities = []
         all_neg_fidelities = []
+        per_pair_pos, per_pair_neg = [], []
 
         base_seed = int(np.random.randint(0, 2**31 - 1))
 
@@ -404,6 +408,8 @@ class Emulator:
             all_accuracies.append(accuracy)
             all_pos_fidelities.append(pos_raw.mean().item())
             all_neg_fidelities.append(neg_raw.mean().item())
+            per_pair_pos.append(pos_raw.tolist())
+            per_pair_neg.append(neg_raw.tolist())
 
             print(f" Trial {run_idx + 1} ({elapsed:.2f}s) | Accuracy: {accuracy * 100:.2f}% | Mean Pos Fid: {pos_raw.mean().item():.4f} | Mean Neg Fid: {neg_raw.mean().item():.4f}")
 
@@ -443,4 +449,6 @@ class Emulator:
             "neg_fidelity_std": neg_std,
             "num_runs": num_runs,
             "raw_accuracies": all_accuracies,
+            "per_pair_pos_fidelities": per_pair_pos,
+            "per_pair_neg_fidelities": per_pair_neg,
         }

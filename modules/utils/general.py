@@ -1,4 +1,4 @@
-import torch, pickle, gc, random, logging, yaml, os
+import torch, pickle, gc, random, logging, yaml, os, subprocess
 from datetime import datetime
 import numpy as np
 from pathlib import Path
@@ -38,6 +38,10 @@ def set_seed(seed):
         torch.cuda.manual_seed(seed)
     elif torch.backends.mps.is_available():
         torch.mps.manual_seed(seed)
+    # deterministic kernels where torch has them (e.g. index_put accumulate in the text backward)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def flatten(container):
     for i in container:
@@ -71,7 +75,7 @@ def serialise_subsapce(sub_config):
 
 def gen_id(config):
     q = str(config['embedding_qubits'])
-    if 'discard' in config and config['discard']:
+    if config.get('text', {}).get('discard', False):
         q += 'd'
     else:
         q += 'p'
@@ -80,18 +84,71 @@ def gen_id(config):
     timestamp = datetime.now().strftime('%m%d_%H%M')
     return f"q{q}__{t_str}__{v_str}__{timestamp}"
 
-def setup_exp(config_path: str):
+def git_state():
+    try:
+        commit = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'], capture_output=True, text=True).stdout.strip()
+        return commit + ('-dirty' if dirty else '')
+    except (OSError, subprocess.CalledProcessError):
+        # code copies without .git (e.g. on the HPC cluster) pass the commit in the environment
+        return os.environ.get('QCLIP_GIT_COMMIT', 'unknown')
+
+def apply_overrides(config, overrides):
+    # "a.b=value" -> config['a']['b'] = yaml.safe_load(value)
+    for item in overrides or []:
+        key, sep, value = item.partition('=')
+        if not sep: raise ValueError(f"--set expects key=value, got '{item}'")
+        *parents, leaf = key.split('.')
+        node = config
+        for p in parents:
+            if not isinstance(node.get(p), dict): raise KeyError(f"--set {key}: '{p}' is not a config section")
+            node = node[p]
+        node[leaf] = yaml.safe_load(value)
+    if overrides: config['overrides'] = list(overrides)
+    return config
+
+def setup_exp(config_path: str, seed=None, overrides=None):
+    # must be set before cuBLAS initialises for deterministic GPU matmuls
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     logging.getLogger("alembic").setLevel(logging.WARNING)
     logging.getLogger("mlflow").setLevel(logging.WARNING)
 
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
+    apply_overrides(config, overrides)
+
+    # discard lives under text:, old configs set it at the top level
+    if 'discard' in config:
+        text_discard = config.get('text', {}).get('discard')
+        if text_discard != config['discard']:
+            raise ValueError(f"{config_path}: top-level 'discard: {config['discard']}' is no longer read; "
+                             f"set text.discard (currently {text_discard}) instead.")
 
     device = get_device()
-    seed = config.get("seed", int.from_bytes(os.urandom(4), "big"))
+    if seed is None:
+        seed = config.get("seed", int.from_bytes(os.urandom(4), "big"))
+    config["seed"] = seed  # saved with the checkpoint config, read by the emulator
     set_seed(seed)
     
     return config, device, seed
+
+# keys that define the model: an eval config must agree with the training config on these
+MODEL_KEYS = ['model_type', 'embedding_qubits', 'out_dim', 'text', 'vision']
+
+def resolve_eval_config(config_arg, checkpoint_path):
+    saved = Path(checkpoint_path).parent / 'config.yaml' if checkpoint_path is not None else None
+    if saved is None or not saved.exists():
+        if config_arg is None:
+            raise ValueError("No --config given and no config.yaml next to the checkpoint.")
+        return config_arg
+    if config_arg is None:
+        return str(saved)
+    with open(config_arg) as f: given_cfg = yaml.safe_load(f)
+    with open(saved) as f: saved_cfg = yaml.safe_load(f)
+    diff = [k for k in MODEL_KEYS if given_cfg.get(k) != saved_cfg.get(k)]
+    if diff:
+        raise ValueError(f"--config {config_arg} differs from {saved} in {diff}; drop --config to use the checkpoint's own.")
+    return config_arg
 
 class CheckpointManager:
     @staticmethod
@@ -117,7 +174,10 @@ class CheckpointManager:
         if "params" in image_params and not any("params." in k for k in image_params):
             image_params = cls.upgrade_checkpoint(image_params)
 
-        text_model.load_state_dict(text_params, strict=False)
+        missing, unexpected = text_model.load_state_dict(text_params, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(f"Text weights in {checkpoint_path} do not match the model built from the config: "
+                               f"{len(missing)} missing, {len(unexpected)} unexpected (e.g. {(missing + unexpected)[:3]})")
         image_model.load_state_dict(image_params)
         
         return checkpoint

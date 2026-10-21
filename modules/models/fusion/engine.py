@@ -2,7 +2,7 @@ import torch, yaml, mlflow, time, socket, math
 from collections import defaultdict
 from typing import Callable
 import torch.nn.functional as F
-from modules.utils.general import gen_id, log_phase
+from modules.utils.general import gen_id, log_phase, git_state
 from pathlib import Path
 from tqdm import tqdm
 
@@ -22,7 +22,8 @@ class RunManager:
 
         self.dataset_name = config['dataset']['name']
         self.model_type = config['model_type']
-        self.run_name = gen_id(config)
+        self.run_name = config.get('run_name') or gen_id(config)
+        self.config['git_commit'] = git_state()
 
         self.checkpoint_dir = Path(f"./checkpoints/{self.dataset_name}/{self.model_type}/{self.run_name}")
         self.checkpoint_path = self.checkpoint_dir / f"last.pt"
@@ -31,12 +32,15 @@ class RunManager:
         self.eval_tasks = config['dataset']['val'].get('diagnostics', ['global_retrieval'])
 
     def _setup_environment(self):
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        # never reuse a run directory (runs started in the same minute used to share one)
+        if self.checkpoint_dir.exists():
+            raise FileExistsError(f"{self.checkpoint_dir} already exists; choose another run_name")
+        self.checkpoint_dir.mkdir(parents=True)
         
         with open(self.checkpoint_dir / f"config.yaml", 'w') as f:
             yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
 
-        mlf_db_path = Path.cwd() / f"mlf_dbs/{self.dataset_name}.db"
+        mlf_db_path = Path.cwd() / self.config.get('mlflow_db', f"mlf_dbs/{self.dataset_name}.db")
         mlf_db_path.parent.mkdir(parents=True, exist_ok=True)
 
         mlflow.pytorch.autolog(log_models=False)
@@ -84,6 +88,16 @@ class RunManager:
                 "model_path": str(self.checkpoint_path),
                 "early_stopping_patience": patience,
                 "early_stopping_min_delta": min_delta,
+                "discard": self.config['text'].get('discard', False),
+                "loss": type(self.trainer.loss_fn).__name__,
+                "git_commit": self.config['git_commit'],
+                "label_smoothing": self.trainer.loss_fn.label_smoothing if hasattr(self.trainer.loss_fn, 'label_smoothing') else None,
+                "weight_decay": self.config.get('weight_decay', 1e-4),
+                "warmup_epochs": self.config.get('warmup_epochs', 5),
+                "purity_weight": getattr(self.trainer.loss_fn, 'purity_weight', None),
+                "text_layers": self.config['text']['layers'],
+                "vision_layers": self.config['vision']['layers'],
+                "overrides": " ".join(self.config.get('overrides', [])) or "none",
             })
 
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
@@ -268,6 +282,39 @@ class MMEvaluator:
         self.image_model = image_model.to(device)
         self.text_model = text_model.to(device)
         self.device = device
+        self._sims_cache = None  # set by eval_set so several tasks share one encoding pass
+
+    @torch.no_grad()
+    def _pair_sims(self, dataloader, choice):
+        key = (id(dataloader), choice)
+        if self._sims_cache is not None and key in self._sims_cache:
+            return self._sims_cache[key]
+        is_dm = getattr(self.text_model, 'discard', False)
+        def unit(emb):
+            # unit norm (statevectors) or unit trace (flattened density matrices), as the emulator measures
+            if is_dm:
+                d = int(round(emb.shape[1] ** 0.5))
+                return emb / emb.view(-1, d, d).diagonal(dim1=1, dim2=2).sum(-1).real.clamp(min=1e-12).unsqueeze(1)
+            return emb / emb.norm(dim=1, keepdim=True).clamp(min=1e-12)
+        pos_arr, neg_arr, pos_n_arr, neg_n_arr = [], [], [], []
+        for batch in dataloader:
+            if choice == 'text':
+                m1_emb = self._encode_img(batch["image"])
+                pos_m2_emb = self._encode_txt(batch["pos_caption"])
+                neg_m2_emb = self._encode_txt(batch["neg_caption"])
+            if choice == 'image':
+                m1_emb = self._encode_txt(batch["caption"])
+                pos_m2_emb = self._encode_img(batch["pos_image"])
+                neg_m2_emb = self._encode_img(batch["neg_image"])
+            pos_arr.append(torch.sum(m1_emb.conj() * pos_m2_emb, dim=1).abs())
+            neg_arr.append(torch.sum(m1_emb.conj() * neg_m2_emb, dim=1).abs())
+            m1_u = unit(m1_emb)
+            pos_n_arr.append(torch.sum(m1_u.conj() * unit(pos_m2_emb), dim=1).abs())
+            neg_n_arr.append(torch.sum(m1_u.conj() * unit(neg_m2_emb), dim=1).abs())
+        sims = tuple(torch.cat(a).cpu() for a in (pos_arr, neg_arr, pos_n_arr, neg_n_arr))
+        if self._sims_cache is not None:
+            self._sims_cache[key] = sims
+        return sims
 
     @torch.no_grad()
     def _encode_txt(self, texts):
@@ -364,33 +411,14 @@ class MMEvaluator:
     def hard_neg_eval(self, dataloader, choice = 'text') -> dict:
         self.image_model.eval()
         self.text_model.eval()
-        correct_final = total = 0
-
-        pos_arr, neg_arr = [], []
-        correct_arr, margin_arr = [], []
-        for batch in dataloader:
-            if choice == 'text':
-                m1_emb = self._encode_img(batch["image"])
-                pos_m2_emb = self._encode_txt(batch["pos_caption"])
-                neg_m2_emb = self._encode_txt(batch["neg_caption"])
-            if choice == 'image':
-                m1_emb = self._encode_txt(batch["caption"])
-                pos_m2_emb = self._encode_img(batch["pos_image"])
-                neg_m2_emb = self._encode_img(batch["neg_image"])
-
-            pos_sim = torch.sum(m1_emb.conj() * pos_m2_emb, dim=1).abs()
-            neg_sim = torch.sum(m1_emb.conj() * neg_m2_emb, dim=1).abs()
-            pos_arr.extend(pos_sim.cpu().numpy())
-            neg_arr.extend(neg_sim.cpu().numpy())
-            
-            margin = pos_sim - neg_sim
-            correct = (margin > 0).float()
-            correct_final += correct.sum().item()
-            margin_arr.extend(margin.cpu().numpy())
-            correct_arr.extend(correct.cpu().numpy())
-
-            total += m1_emb.size(0)
-        return {"hard_neg_acc": correct_final / total}, {"pos_scores": pos_arr, "neg_scores": neg_arr, "margins": margin_arr, "correct": correct_arr}
+        pos_sim, neg_sim, pos_n, neg_n = self._pair_sims(dataloader, choice)
+        margin = pos_sim - neg_sim
+        correct = (margin > 0).float()
+        correct_n = (pos_n > neg_n).float()
+        return ({"hard_neg_acc": correct.sum().item() / len(correct),
+                 "hard_neg_acc_norm": correct_n.sum().item() / len(correct_n)},
+                {"pos_scores": list(pos_sim.numpy()), "neg_scores": list(neg_sim.numpy()),
+                 "margins": list(margin.numpy()), "correct": list(correct.numpy()), "correct_norm": list(correct_n.numpy())})
             
     def evaluate_text_choice(self, dataloader) -> dict:
         return self.hard_neg_eval(dataloader, choice='text')
@@ -537,43 +565,15 @@ class MMEvaluator:
         self.image_model.eval()
         self.text_model.eval()
 
-        sum_pos_sim = 0.0
-        sum_neg_sim = 0.0
-        sum_absolute_gap = 0.0
-        total_samples = 0
-
         metrics = {}
-
-        for batch in dataloader:
-            if choice == "text":
-                m1_emb = self._encode_img(batch["image"])
-                pos_m2_emb = self._encode_txt(batch["pos_caption"])
-                neg_m2_emb = self._encode_txt(batch["neg_caption"])
-                text_tensors = [pos_m2_emb, neg_m2_emb]
-            elif choice == "image":
-                m1_emb = self._encode_txt(batch["caption"])
-                pos_m2_emb = self._encode_img(batch["pos_image"])
-                neg_m2_emb = self._encode_img(batch["neg_image"])
-                text_tensors = [m1_emb]
-            
-            # Replicating your model's native similarity metric calculation
-            pos_sim = torch.sum(m1_emb.conj() * pos_m2_emb, dim=1).abs()
-            neg_sim = torch.sum(m1_emb.conj() * neg_m2_emb, dim=1).abs()
-            
-            # Compute the absolute distance between the positive and negative scores per sample
-            batch_gap = (pos_sim - neg_sim).abs()
-
-            sum_pos_sim += pos_sim.sum().item()
-            sum_neg_sim += neg_sim.sum().item()
-            sum_absolute_gap += batch_gap.sum().item()
-            total_samples += m1_emb.size(0)
-
+        pos_sim, neg_sim, _, _ = self._pair_sims(dataloader, choice)
+        total_samples = len(pos_sim)
         if total_samples == 0:
             return {}
-        
-        metrics["diag_mean_pos_overlap"] = sum_pos_sim / total_samples
-        metrics["diag_mean_neg_overlap"] = sum_neg_sim / total_samples
-        metrics["diag_collapse_gap"] = sum_absolute_gap / total_samples
+
+        metrics["diag_mean_pos_overlap"] = pos_sim.double().sum().item() / total_samples
+        metrics["diag_mean_neg_overlap"] = neg_sim.double().sum().item() / total_samples
+        metrics["diag_collapse_gap"] = (pos_sim - neg_sim).abs().double().sum().item() / total_samples
 
         return metrics
     
@@ -594,6 +594,7 @@ class MMEvaluator:
         self.image_model.eval()
         self.text_model.eval()
         metrics = {}
+        self._sims_cache = {}
         for task_name in tasks:
             eval_fn = getattr(self, task_name, None)
             if eval_fn is None:
@@ -607,5 +608,6 @@ class MMEvaluator:
                 task_metrics = out[0] if isinstance(out, tuple) else out
                 
             metrics.update(task_metrics)
-            
+
+        self._sims_cache = None
         return metrics
