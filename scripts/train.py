@@ -2,7 +2,7 @@ import torch, argparse
 import pandas as pd
 
 from modules.utils.factory import build_experiment
-from modules.utils.general import log_phase, setup_exp
+from modules.utils.general import log_phase, setup_exp, CheckpointManager
 from modules.data_pipeline.engine import DataEngine
 from modules.models.fusion.engine import ContrastiveTrainer, MMEvaluator, RunManager, adaptive_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
@@ -14,11 +14,14 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=None, help='Overrides the config seed')
     parser.add_argument("--run_name", type=str, default=None, help='Checkpoint directory name (default: generated from the config)')
     parser.add_argument("--epochs", type=int, default=None, help='Overrides the config epochs (smoke tests)')
+    parser.add_argument("--init_from", type=str, default=None,
+                        help='Initialise text+image weights from this checkpoint (.pt), e.g. a non-discard model')
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help='Override a config value, e.g. --set qlr=3e-3 --set text.layers=3 (repeatable)')
     args = parser.parse_args()
 
     config, DEV, SEED = setup_exp(args.config, seed=args.seed, overrides=args.set)
+    if args.init_from: config['init_from'] = args.init_from
     if args.run_name: config['run_name'] = args.run_name
     if args.epochs: config['epochs'] = args.epochs
     DATASET = config['dataset']['name']
@@ -46,19 +49,47 @@ if __name__ == "__main__":
     log_phase("Initializing Model Parameters")
     data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
     data_engine.image_init(image_model)
+    if args.init_from and config.get('init_by_symbol'):
+        # copy parameters by symbol name from a checkpoint of a DIFFERENT circuit family (e.g. post-selected -> discard with
+        # mixer/sinks): the source model is rebuilt from its own config; symbols the source lacks keep their init
+        import yaml as _yaml
+        from pathlib import Path as _Path
+        src_cfg = _yaml.safe_load(open(_Path(args.init_from).parent / 'config.yaml')); src_cfg['num_workers'] = 0
+        s_ansatz, s_img, s_txt, _ = build_experiment(src_cfg, DEV)
+        s_de = DataEngine(src_cfg, s_ansatz, DEV)
+        s_de.text_init(s_txt, pd.concat([s_de.compile_text('train'), s_de.compile_text('val')], ignore_index=True)); s_de.image_init(s_img)
+        ck = CheckpointManager.load_model(args.init_from, s_img, s_txt, DEV)
+        copied = 0
+        with torch.no_grad():
+            for sym, i in text_model.sym2param.items():
+                j = s_txt.sym2param.get(sym)
+                if j is not None:
+                    text_model.params[i].copy_(s_txt.params[j].to(text_model.params[i].device)); copied += 1
+                else:   # new symbols (identity-initialisable mixer, text.mixer_ansatz: cr) start at exactly 0 = identity gates
+                    text_model.params[i].zero_()
+        image_model.load_state_dict(s_img.state_dict())
+        print(f"Initialised by symbol from {args.init_from} (epoch {ck.get('epoch')}): {copied}/{len(text_model.symbols)} text symbols copied, "
+              f"{len(text_model.symbols) - copied} new (mixer/sinks) set to 0; image model copied")
+        del s_txt, s_img
+    elif args.init_from:
+        ck = CheckpointManager.load_model(args.init_from, image_model, text_model, DEV)
+        print(f"Initialised weights from {args.init_from} (epoch {ck.get('epoch')})")
     print(f"Model Parameter Counts: Image={sum(p.numel() for p in image_model.parameters()):,} | Text={sum(p.numel() for p in text_model.parameters()):,}")
 
     log_phase("Preparing Pipeline Execution")
     train_loader = data_engine.get_loader(compiled_train, split='train')
     val_loader = data_engine.get_loader(compiled_val, split='val')
 
+    loss_fn.to(DEV)
+    loss_params = [p for p in loss_fn.parameters() if p.requires_grad]   # e.g. a learnable logit scale
     quantum_params = list(text_model.parameters()) + list(image_model.params)
     classical_params = list(image_model.projector.parameters()) if config['vision']['method'] == 'mlp' else []
 
     # optimizer = adaptive_optimizer(text_model, image_model, base_qlr=config['qlr'], base_clr=config['clr'], weight_decay=1.8)
     optimizer = torch.optim.Adam(
         [{'params': quantum_params, 'lr': config['qlr']},
-         {'params': classical_params, 'lr': config['clr']}], 
+         {'params': classical_params, 'lr': config['clr']}]
+        + ([{'params': loss_params, 'lr': config.get('temperature_lr', 1e-3), 'weight_decay': 0.0}] if loss_params else []), 
         betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4)
     )
     warmup_epochs = config.get('warmup_epochs', 5)
@@ -74,6 +105,12 @@ if __name__ == "__main__":
     print(f"Training for {total_epochs} epochs with batch size {BATCH_SIZE}")
 
     trainer = ContrastiveTrainer(image_model, text_model, optimizer, loss_fn, DEV)
+    trainer.hard_negatives = bool(config.get('hard_negatives', False))   # add each caption's negative image to the softmax
+    trainer.swap_negatives = bool(config.get('swap_negatives', False))   # add swapped captions to the image->text softmax (train text_path from make_swap.py --keep_all)
+    if config.get('distill_from'):   # frozen post-selected teacher: match its scores (KD) and/or its states
+        from modules.models.fusion.distill import Teacher
+        trainer.teacher = Teacher(config['distill_from'], config, compiled_train, DEV, kd_weight=config.get('distill_kd_weight', 1.0),
+                                  kd_tau=config.get('distill_tau', 1.0), state_weight=config.get('distill_state_weight', 0.0))
     evaluator = MMEvaluator(image_model, text_model, DEV)
 
     manager = RunManager(config, trainer, evaluator, DEV, SEED, scheduler=scheduler)

@@ -27,6 +27,16 @@ class DataEngine:
             compile_kwargs["curry"] = self.config["text"].get("curry", False)
             compile_kwargs["discard"] = self.config["text"].get("discard", False)
             compile_kwargs["spider"] = self.config["text"].get("spider", False)
+            postselect = tuple(self.config["text"].get("postselect_types") or ())
+            if postselect and not compile_kwargs["discard"]:
+                raise ValueError("text.postselect_types only applies with text.discard: true")
+            compile_kwargs["postselect"] = postselect
+            compile_kwargs["mixer"] = int(self.config["text"].get("mixer_layers", 0) or 0)
+            compile_kwargs["sinks"] = int(self.config["text"].get("sinks", 0) or 0)
+            self.ansatz.mixer_type = self.config["text"].get("mixer_ansatz", "default")   # 'cr': identity-initialisable mixer
+            self.ansatz.phi_block = bool(self.config["text"].get("phi_block", False))   # Theorem A's Phi as a fixed discard block
+            if compile_kwargs["sinks"] and not compile_kwargs["mixer"]:
+                raise ValueError("text.sinks needs text.mixer_layers >= 1 (the sinks are coupled in by the mixer)")
             
         if split == 'train' or split == 'val':
             data = load_pkl(self.config["dataset"][split]["text_path"])
@@ -42,8 +52,8 @@ class DataEngine:
         if hasattr(text_model, "from_symbols"):
             sym_cols = [c for c in compiled_data.columns if c.endswith("_symbols")]
             symbol_arr = []
-            for col in sym_cols:
-                symbol_arr += compiled_data[col].tolist()
+            for col in sym_cols:   # skip NaN cells: a column only one split has (e.g. swapped training captions)
+                symbol_arr += [v for v in compiled_data[col].tolist() if not isinstance(v, float)]
             
             sym_kwargs = {"id_init": True} if self.config["model_type"] == "vqc" else {}
             text_model.from_symbols(symbol_arr, **sym_kwargs)
@@ -52,7 +62,7 @@ class DataEngine:
             cols = [col for col in compiled_data.columns if col.endswith('_einsum')]
             plan_stream = []
             for col in cols:
-                plan_stream += compiled_data[col].tolist()
+                plan_stream += [v for v in compiled_data[col].tolist() if not isinstance(v, float)]
             text_model.from_plans(list(plan_stream))
         
     def image_init(self, image_model):
@@ -70,7 +80,7 @@ class DataEngine:
             for einsum_col, sym_col in zip(einsum_cols, sym_cols):
                 symbol_arr += data[sym_col].tolist()
                 einsum_arr += data[einsum_col].tolist()
-            tn_arr = list(zip(einsum_arr, symbol_arr))
+            tn_arr = [(e, t) for e, t in zip(einsum_arr, symbol_arr) if not isinstance(e, float)]
             metrics = tn_metadata(tn_arr)
             print(f"Metrics for {model.__class__.__name__}:")
             print(f" (Max) Qubits: {metrics['max'][0]:.4f} | Gates: {metrics['max'][1]:.4f} | Depth: {metrics['max'][2]:.4f} | Rank: {metrics['max'][3]:.4f} | 2-Qubit Gates: {metrics['max'][4]:.4f}")
@@ -113,7 +123,7 @@ class DataEngine:
                 batch_size=self.config['batch_size'], 
                 collate_fn=self.collate_fn, 
                 shuffle=(split=='train'), 
-                num_workers=4, 
+                num_workers=self.config.get("num_workers", 0),  # workers deadlocked runs at start (2026-10-17); data is in memory
                 pin_memory=True
             )
             return loader
@@ -125,7 +135,7 @@ class DataEngine:
                 batch_size=self.config['batch_size'], 
                 collate_fn=collate_fn, 
                 shuffle=False, 
-                num_workers=4, 
+                num_workers=self.config.get("num_workers", 0),  # workers deadlocked runs at start (2026-10-17); data is in memory
                 pin_memory=True
             )
             return loader

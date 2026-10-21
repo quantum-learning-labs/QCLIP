@@ -98,13 +98,40 @@ class RunManager:
                 "text_layers": self.config['text']['layers'],
                 "vision_layers": self.config['vision']['layers'],
                 "overrides": " ".join(self.config.get('overrides', [])) or "none",
+                "postselect_types": ",".join(self.config['text'].get('postselect_types') or []) or "none",
+                "env_qubits": self.config['vision'].get('env_qubits', 0),
+                "mixer_layers": self.config['text'].get('mixer_layers', 0),
+                "spread_weight": getattr(self.trainer.loss_fn, 'spread_weight', getattr(self.trainer.loss_fn, 'lambda_reg', None)),
+                "init_from": self.config.get('init_from') or "none",
+                "hard_negatives": bool(self.config.get('hard_negatives', False)),
+                "learn_temperature": getattr(self.trainer.loss_fn, 'logit_scale', None) is not None,
+                "margin": self.config.get('margin', 0.0),
+                "uniformity_weight": self.config.get('uniformity_weight', 0.0),
+                "shot_weight": self.config.get('shot_weight', 0.0),
+                "purity_anneal_epochs": self.config.get('purity_anneal_epochs', 0),
+                "swap_negatives": bool(self.config.get('swap_negatives', False)),
+                "distill_from": self.config.get('distill_from') or "none",
+                "distill_kd_weight": self.config.get('distill_kd_weight', 1.0) if self.config.get('distill_from') else 0.0,
+                "distill_tau": self.config.get('distill_tau', 1.0),
+                "distill_state_weight": self.config.get('distill_state_weight', 0.0) if self.config.get('distill_from') else 0.0,
             })
 
+            if self.config.get('checkpoint_every'):   # the initialisation, as epoch -1
+                torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
+                            "epoch": -1, "train_loss": None, "val_metrics": {}}, self.checkpoint_dir / "epoch_init.pt")
+            if self.config.get('eval_init'):   # validation metrics of the initialisation (logged as init_*, not used for selection)
+                m0 = self.evaluator.eval_set(dataloader=val_loader, tasks=self.eval_tasks, eval_mapper=eval_mapper)
+                mlflow.log_metrics({f"init_{k}": v for k, v in m0.items()})
+                tqdm.write("\nInit | " + " | ".join(f"{k}: {v:.4f}" for k, v in m0.items()))
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
             current_lr = self.config.get('qlr', 1e-3)
             
+            anneal = int(self.config.get('purity_anneal_epochs', 0) or 0)
+            w0 = getattr(self.trainer.loss_fn, 'purity_weight', None)
             for epoch in epoch_pbar:
                 start_time = time.time()
+                if anneal and w0:   # purity penalty annealed linearly from purity_weight to 0 over purity_anneal_epochs
+                    self.trainer.loss_fn.purity_weight = w0 * max(0.0, 1.0 - epoch / anneal)
                 loss = self.trainer.train_epoch(train_loader, eval_mapper)
                 elapsed_time = time.time() - start_time
 
@@ -137,6 +164,13 @@ class RunManager:
                     is_best = False
 
                 self._save_checkpoint(epoch, loss, metrics, is_best=is_best)
+                mlflow.log_metric("train_loss", loss, step=epoch)
+                ls_ = getattr(self.trainer.loss_fn, 'logit_scale', None)
+                if ls_ is not None: mlflow.log_metric("logit_scale", float(ls_.exp().clamp(max=100)), step=epoch)
+                every = self.config.get('checkpoint_every')
+                if every and epoch % every == 0:   # per-epoch snapshots for training-dynamics analysis
+                    torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
+                                "epoch": epoch, "train_loss": loss, "val_metrics": metrics}, self.checkpoint_dir / f"epoch_{epoch:03d}.pt")
 
                 if patience_counter >= patience:
                     stopped_epoch = epoch
@@ -221,7 +255,16 @@ class ContrastiveTrainer:
             image_emb = self.image_model(images)
             text_emb = self.text_model(texts)
 
-            loss = self.loss_fn(text_emb, image_emb)
+            neg_emb = self.image_model(batch['neg_image'].to(self.device)) if getattr(self, 'hard_negatives', False) and 'neg_image' in batch else None
+            swap_kw = {}
+            if getattr(self, 'swap_negatives', False) and 'swap_caption' in batch:
+                swap_kw = {'neg_text_emb': self.text_model(batch['swap_caption']), 'neg_text_valid': batch['swap_valid'].to(self.device)}
+            if neg_emb is not None or swap_kw:
+                loss = self.loss_fn(text_emb, image_emb, neg_emb, **swap_kw)
+            else:
+                loss = self.loss_fn(text_emb, image_emb)
+            if getattr(self, 'teacher', None) is not None:
+                loss = loss + self.teacher.loss(batch['idx'].to(self.device), self.loss_fn, text_emb, image_emb)
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
 

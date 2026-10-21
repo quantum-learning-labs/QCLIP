@@ -8,7 +8,7 @@ from modules.compilation.quantum.gates import *
 from modules.utils.general import get_device
 
 class VQCModel(nn.Module):
-    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64):
+    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64, renorm=False):
         super().__init__()
         self.symbols: List[str] = []
         self.params = nn.ParameterList([])
@@ -18,6 +18,7 @@ class VQCModel(nn.Module):
         self.out_q: int = out_q
         self.precision: torch.dtype = precision
         self.discard = discard
+        self.renorm = renorm  # unit-trace density matrices (hybrid circuits post-select some wires)
 
         h_gate = torch.tensor([[1.0, 1.0], [1.0, -1.0]], dtype=precision) / (2.0**0.5)
         cx_gate = torch.block_diag(
@@ -30,6 +31,15 @@ class VQCModel(nn.Module):
         self.register_buffer('gate_CX', cx_gate, persistent=False)
         self.register_buffer('gate_0', zero_gate, persistent=False)
         self.register_buffer('gate_0_dag', zero_gate, persistent=False)
+        self.register_buffer('gate_bell', torch.eye(2, dtype=precision) / (2.0**0.5), persistent=False)   # (|00>+|11>)/sqrt2
+
+    def _cswap_gate(self, m):
+        # text.phi_block: on (m flag wires, s, a), identity if all flags are |0>, else SWAP(s, a). The matrix is a symmetric
+        # permutation, so its tensor reads the same with inputs or outputs first.
+        p0 = torch.zeros(2**m, 2**m, dtype=self.precision); p0[0, 0] = 1
+        swap = torch.eye(4, dtype=self.precision)[[0, 2, 1, 3]]
+        M = torch.kron(p0, torch.eye(4, dtype=self.precision)) + torch.kron(torch.eye(2**m, dtype=self.precision) - p0, swap)
+        return M.reshape(*[2] * (2 * (m + 2))).to(self.gate_0.device)
 
     @property
     def grad_norm(self):
@@ -133,6 +143,8 @@ class VQCModel(nn.Module):
             shapes, static, param_pos, by_type = [], [], [], defaultdict(list)
             for pos, gate in enumerate(tensors):
                 if gate['name'] is None:
+                    if gate['op_type'].startswith('cswap') and not hasattr(self, f"gate_{gate['op_type']}"):
+                        self.register_buffer(f"gate_{gate['op_type']}", self._cswap_gate(int(gate['op_type'][5:])), persistent=False)
                     buf = getattr(self, f"gate_{gate['op_type']}")
                     static.append((pos, f"gate_{gate['op_type']}"))
                     shapes.append((nominal_batch, *buf.shape))
@@ -188,6 +200,8 @@ class VQCModel(nn.Module):
                         traced_dim = 1
                     group_out = group_out.reshape(minibatch_size, sent_dim, traced_dim)
                     rho = torch.bmm(group_out, group_out.conj().transpose(1, 2))
+                    if self.renorm:
+                        rho = rho / rho.diagonal(dim1=1, dim2=2).sum(-1).real.clamp(min=1e-12)[:, None, None]
                     results[list(indices)] = rho
                 else:    
                     results[list(indices)] = group_out

@@ -5,14 +5,48 @@ from tqdm import tqdm
 
 from qiskit import transpile, QuantumCircuit
 from qiskit_aer import AerSimulator
-from qiskit_aer.noise import NoiseModel
+from qiskit_aer.noise import NoiseModel, coherent_unitary_error, RelaxationNoisePass
 from qiskit_ibm_runtime.fake_provider import FakeMiami
+from qiskit.circuit.library import RZZGate
+from qiskit.circuit import Delay
+from qiskit.transpiler import PassManager
+from qiskit.transpiler.passes import ALAPScheduleAnalysis, PadDelay
 from qiskit.transpiler import CouplingMap
 # from qiskit.qiskit_iqm import IQMProvider
 
 from modules.utils.tensor_ops import einsum2interleaved
 from modules.utils.quantum_ops import tn2qiskit, amplitude_encoding
 from modules.utils.general import gen_id, store_pkl
+
+# "honest" hardware noise (emulate.noise_profile: honest): the device calibration made worse where Aer's
+# from_backend model is known to be optimistic. Each knob is an assumption, see the CPTP report, section on E6.
+HONEST_DEFAULTS = {
+    "scale_2q": 3.0,     # 2q depolarising error x3: layered/crosstalk error exceeds isolated 2q error (McKay 2023, Sarovar 2020)
+    "scale_1q": 2.0,     # 1q error x2
+    "scale_ro": 1.5,     # readout assignment error x1.5 (drift between calibrations)
+    "scale_t": 0.5,      # T1, T2 halved (TLS fluctuations, Klimov 2018)
+    "zz_rad": 0.02,      # coherent RZZ over-rotation after every 2q gate (coherent errors add up, Harper 2020)
+    "idle": True,        # ALAP scheduling + thermal relaxation on idle delays (absent from from_backend)
+}
+
+def honest_backend(backend, knobs):
+    # a copy of the fake backend whose target carries the scaled error rates and coherence times
+    import copy
+    b = copy.deepcopy(backend); t = b.target
+    for name in t.operation_names:
+        props = t[name]
+        if not props: continue
+        nq = t.operation_from_name(name).num_qubits if name != 'measure' else 0
+        scale = knobs['scale_ro'] if name == 'measure' else knobs['scale_2q'] if nq == 2 else knobs['scale_1q']
+        for q, p in props.items():
+            if p is not None and p.error is not None:
+                p.error = min(p.error * scale, 0.5 if name == 'measure' else 0.75)
+    for qp in t.qubit_properties:
+        if qp is None: continue
+        if qp.t1: qp.t1 *= knobs['scale_t']
+        if qp.t2: qp.t2 *= knobs['scale_t']
+        if qp.t1 and qp.t2: qp.t2 = min(qp.t2, 1.99 * qp.t1)   # physical bound T2 <= 2 T1 (some snapshot qubits violate it)
+    return b
 
 class BackendManager:
     def __init__(self, config, qlimit=None, hardware_profile=FakeMiami()):
@@ -35,7 +69,7 @@ class BackendManager:
         #     server_url = self.cfg.get('server_url', 'https://cocos.resonance.meetiqm.com/garnet')
 
         devices = AerSimulator().available_devices()
-        qdev = 'GPU' if 'GPU' in devices else 'CPU'
+        qdev = 'GPU' if 'GPU' in devices and torch.cuda.is_available() else 'CPU'  # aer-gpu builds list GPU even on CPU-only nodes
         method = self.config['emulate'].get('backend', 'statevector')
         
         backend_options = {
@@ -60,8 +94,19 @@ class BackendManager:
             self.coupling_map = self.hardware_profile.coupling_map
         self.basis_gates = self.hardware_profile.basis_gates
 
+        self.noise_profile = self.config['emulate'].get('noise_profile', 'backend')
+        self.honest = {**HONEST_DEFAULTS, **(self.config['emulate'].get('honest') or {})}
+        if self.config['emulate'].get('noise') and self.noise_profile == 'honest':
+            self.hardware_profile = honest_backend(self.hardware_profile, self.honest)
         if self.config['emulate'].get('noise'):
             noise_model = NoiseModel.from_backend(self.hardware_profile)
+            if self.noise_profile == 'honest' and self.honest['zz_rad']:
+                # coherent ZZ over-rotation composed onto every 2q gate's local error
+                zz = coherent_unitary_error(RZZGate(self.honest['zz_rad']).to_matrix())
+                for gate, errs in noise_model._local_quantum_errors.items():
+                    for qubits, err in list(errs.items()):
+                        if len(qubits) == 2:
+                            errs[qubits] = err.compose(zz)
             backend_options["noise_model"] = noise_model 
             backend_options["seed_simulator"] = 42
             backend_options['shot_branching_enable'] = True
@@ -80,11 +125,16 @@ class BackendManager:
             backend_options["matrix_product_state_truncation_threshold"] = 1e-8
             backend_options["matrix_product_state_parallel_swap"] = True
 
-        print(f" Simulation: Profile {self.hardware_profile.name} ({self.qlimit} qubits), Device {qdev}, Method {method}, Noise {'Enabled' if self.config['emulate'].get('noise') else 'Disabled'}")
+        print(f" Simulation: Profile {self.hardware_profile.name} ({self.qlimit} qubits), Device {qdev}, Method {method}, Noise {'Enabled' if self.config['emulate'].get('noise') else 'Disabled'}"
+              + (f" | noise profile {self.noise_profile} {self.honest if self.noise_profile == 'honest' else ''}" if self.config['emulate'].get('noise') else ''))
+        backend_options.update(self.config['emulate'].get('aer_options') or {})   # emulate.py --aer key=value
+        custatevec = backend_options.pop('cuStateVec_enable', True)
+        if self.config['emulate'].get('aer_options'):
+            print(f" Aer option overrides: {self.config['emulate']['aer_options']}")
         if method == 'tensor_network':
             self._backend = AerSimulator(method=method, device=qdev)
         else:
-            self._backend = AerSimulator(method=method, device=qdev, cuStateVec_enable=True)
+            self._backend = AerSimulator(method=method, device=qdev, cuStateVec_enable=custatevec)
         self._backend.set_options(**backend_options)
 
     @property
@@ -100,6 +150,7 @@ class BackendManager:
         chunks = [circuits[i:i + batch_size] for i in range(0, len(circuits), batch_size)]
         
         for chunk in tqdm(chunks, desc="Transpiling", unit="batch"):
+            idle = self.config['emulate'].get('noise') and self.noise_profile == 'honest' and self.honest['idle']
             transpiled_chunk = transpile(
                 chunk, 
                 coupling_map=self.coupling_map,
@@ -107,8 +158,16 @@ class BackendManager:
                 optimization_level=optimization_level,
                 # layout_method='trivial',
                 seed_transpiler=self.config.get('seed'),
-                num_processes=4  # Kept strict to manage RAM limits
+                num_processes=4,  # Kept strict to manage RAM limits
             )
+            if idle:   # ALAP-schedule with the device's gate durations, then thermal relaxation on every idle delay
+                tgt = self.hardware_profile.target; qp = tgt.qubit_properties
+                t1s = [q.t1 if q and q.t1 else float('inf') for q in qp]
+                t2s = [min(q.t2, 1.99 * q.t1) if q and q.t1 and q.t2 else float('inf') for q in qp]
+                sched = PassManager([ALAPScheduleAnalysis(target=tgt), PadDelay(target=tgt)])
+                relax = PassManager([RelaxationNoisePass(t1s, t2s, dt=self.hardware_profile.dt, op_types=[Delay])])
+                transpiled_chunk = [relax.run(sched.run(c)) for c in transpiled_chunk]   # separate managers: the
+                # relaxation pass rewrites nodes the scheduler's start-time map refers to
             transpiled_circs.extend(transpiled_chunk)
         return transpiled_circs
     
@@ -126,49 +185,48 @@ class BackendManager:
         for idx in tqdm(range(data_size), desc="Compiling Qiskit DAGs", unit="pair"):
             try:
                 sample = dataset[idx]
-                image = sample["image"]
-                pos_einsum, pos_wires = sample["pos_caption"]
-                neg_einsum, neg_wires = sample["neg_caption"]
-                unknown_symbols.update(g['name'] for g in pos_wires + neg_wires
-                                       if g['name'] is not None and g['name'] not in txt_params)
+                to_f = lambda d: {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in d.items()}
 
-                qc_pos_txt, pos_out_q, pos_txt_p = tn2qiskit(
-                    einsum2interleaved(pos_einsum), pos_wires, txt_params, out_q=self.out_q, meas_output=False
-                )
-                qc_neg_txt, neg_out_q, neg_txt_p = tn2qiskit(
-                    einsum2interleaved(neg_einsum), neg_wires, txt_params, out_q=self.out_q, meas_output=False
-                )
+                def text_circ(recipe):
+                    einsum, wires = recipe
+                    unknown_symbols.update(g['name'] for g in wires if g['name'] is not None and g['name'] not in txt_params)
+                    qc, out_q, prm = tn2qiskit(einsum2interleaved(einsum), wires, txt_params, out_q=self.out_q, meas_output=False)
+                    qc.assign_parameters(to_f(prm), inplace=True)
+                    return qc, out_q
+
+                def image_circ(image):
+                    if self.amplitude_encode:
+                        img_vec = image if isinstance(image, np.ndarray) else image.detach().cpu().numpy()
+                        normed_img_vec = amplitude_encoding(img_vec)
+                        qc = QuantumCircuit(int(math.ceil(math.log2(len(normed_img_vec)))), 0)
+                        qc.initialize(normed_img_vec)
+                        return qc
+                    img_vars = img_params | image_model.encode_features(image)
+                    in_idx, out_idx = einsum2interleaved(image_model.einsum_expr.replace('b', ''))
+                    qc, _, img_p = tn2qiskit([in_idx, out_idx], image_model.gate_arr, img_vars, out_q=self.out_q, meas_output=False)
+                    if img_p: qc.assign_parameters(to_f(img_p), inplace=True)
+                    return qc
+
+                if "image" in sample:      # text choice (swap): one image, two captions
+                    qc_pos_txt, pos_out_q = text_circ(sample["pos_caption"])
+                    qc_neg_txt, neg_out_q = text_circ(sample["neg_caption"])
+                    qc_img_pos = qc_img_neg = image_circ(sample["image"])
+                else:                      # image choice (std): one caption, two images
+                    qc_pos_txt, pos_out_q = text_circ(sample["caption"])
+                    qc_neg_txt, neg_out_q = qc_pos_txt, pos_out_q
+                    qc_img_pos, qc_img_neg = image_circ(sample["pos_image"]), image_circ(sample["neg_image"])
 
                 if qc_pos_txt.num_qubits > self.qlimit or qc_neg_txt.num_qubits > self.qlimit:
                     failed_circuits += 1
                     continue
 
-                if self.amplitude_encode:
-                    img_vec = image if isinstance(image, np.ndarray) else image.detach().cpu().numpy()
-                    normed_img_vec = amplitude_encoding(img_vec)
-                    qc_img = QuantumCircuit(int(math.ceil(math.log2(len(normed_img_vec)))), 0)
-                    qc_img.initialize(normed_img_vec)
-                    img_p = {}
-                else:
-                    img_vars = img_params | image_model.encode_features(image)
-                    in_idx, out_idx = einsum2interleaved(image_model.einsum_expr.replace('b', ''))
-                    qc_img, _, img_p = tn2qiskit([in_idx, out_idx], image_model.gate_arr, img_vars, out_q=self.out_q, meas_output=False)
-
-                pos_txt_p = {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in pos_txt_p.items()}
-                neg_txt_p = {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in neg_txt_p.items()}
-                img_p = {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in img_p.items()}
-
-                qc_pos_txt.assign_parameters(pos_txt_p, inplace=True)
-                qc_neg_txt.assign_parameters(neg_txt_p, inplace=True)
-                if img_p: qc_img.assign_parameters(img_p, inplace=True)
-
                 # Assemble frames
                 if self.meas_method == 'compute_uncompute':
-                    qc_pos = self._compute_uncompute(qc_pos_txt, qc_img, pos_out_q)
-                    qc_neg = self._compute_uncompute(qc_neg_txt, qc_img, neg_out_q)
+                    qc_pos = self._compute_uncompute(qc_pos_txt, qc_img_pos, pos_out_q)
+                    qc_neg = self._compute_uncompute(qc_neg_txt, qc_img_neg, neg_out_q)
                 elif self.meas_method == 'destructive_swap':
-                    qc_pos = self._destructive_swap(qc_pos_txt, qc_img, pos_out_q)
-                    qc_neg = self._destructive_swap(qc_neg_txt, qc_img, neg_out_q)
+                    qc_pos = self._destructive_swap(qc_pos_txt, qc_img_pos, pos_out_q)
+                    qc_neg = self._destructive_swap(qc_neg_txt, qc_img_neg, neg_out_q)
 
                 qc_pos.metadata = {"output_qubits": pos_out_q}
                 qc_neg.metadata = {"output_qubits": neg_out_q}
@@ -253,6 +311,8 @@ class Emulator:
         self.backend = backend
         self.shots = 64
         self.discard = self.config.get('text', {}).get('discard', False)
+        if self.config['text'].get('postselect_types') or self.config['vision'].get('env_qubits'):
+            raise NotImplementedError("emulation of hybrid post-selection / image env_qubits is not implemented yet")
         self.meas_method = self.config.get('emulate', {}).get('measurement_method', 'compute_uncompute')
         self.dataset_name = config['dataset']['name']
         self.experiment_name = gen_id(config)
@@ -261,15 +321,34 @@ class Emulator:
         raw_shots = resolution * max(nq_ps, 1) * (2 ** nq_out)
         self.shots = min(int(math.ceil(raw_shots)), 1_000_000)
 
+    @staticmethod
+    def active_qubits(qc):
+        return len({q for inst in qc.data for q in inst.qubits})
+
+    def _run_counts(self, chunk, shots):
+        # hybrid (emulate.py --dm_max_qubits N): circuits with <= N active qubits run as exact density matrices
+        # (cost independent of shots), the rest on the main backend (statevector trajectories)
+        dm, nmax = getattr(self, 'dm_backend', None), getattr(self, 'dm_max_qubits', 0)
+        idx_dm = [i for i, qc in enumerate(chunk) if dm is not None and self.active_qubits(qc) <= nmax]
+        idx_sv = [i for i in range(len(chunk)) if i not in set(idx_dm)]
+        out = [None] * len(chunk)
+        for backend, idx in ((dm, idx_dm), (self.backend, idx_sv)):
+            if not idx: continue
+            res = backend.run([chunk[i] for i in idx], shots=shots).result()
+            for j, i in enumerate(idx): out[i] = res.get_counts(j)
+        return out
+
     def run_circuit(self, qc_array, shots=None, batch_size=24):
         result_array = []
         chunks = [qc_array[i:i + batch_size] for i in range(0, len(qc_array), batch_size)]
 
         for chunk in tqdm(chunks, desc="Running Circuits"):
-            job = self.backend.run(chunk, shots=shots)
-            result = job.result()
+            all_counts = self._run_counts(chunk, shots)
             for i, qc in enumerate(chunk):
-                counts = result.get_counts(i)
+                counts = all_counts[i]
+                if getattr(self, 'save_counts', False) and self._run_idx == 0:   # emulate.py --save_counts (first shot run only)
+                    self.counts_log.append({'counts': dict(counts), 'out_qs': list(qc.metadata.get('output_qubits', [])),
+                                            'num_clbits': qc.num_clbits, 'n_out': len(qc.metadata.get('output_qubits', []))})
                 
                 if self.meas_method == "compute_uncompute":
                     fidelity = self._eval_compute_uncompute(qc, counts)
@@ -291,14 +370,21 @@ class Emulator:
 
         if self.discard:
             target_str = "0" * num_clbits
+            self.accept_log.append(1.0)
+            self.circuit_log.append((1.0, counts.get(target_str, 0) / total_shots, counts.get(target_str, 0) / total_shots))
             return counts.get(target_str, 0) / total_shots
         else:
             accepted_shots = 0
+            out_zero_shots = 0   # output qubits all 0, whatever the post-selected qubits read (no post-selection)
             all_zero_shots = counts.get("0" * num_clbits, 0)
             for bstr, count in counts.items():
                 rev_bstr = bstr[::-1]  
                 if all(rev_bstr[q] == '0' for q in range(num_clbits) if q not in out_qs):
                     accepted_shots += count
+                if all(rev_bstr[q] == '0' for q in out_qs):
+                    out_zero_shots += count
+            self.accept_log.append(accepted_shots / total_shots)
+            self.circuit_log.append((accepted_shots / total_shots, all_zero_shots / total_shots, out_zero_shots / total_shots))
             if accepted_shots == 0:
                 return 0.0
             return all_zero_shots / accepted_shots
@@ -324,16 +410,21 @@ class Emulator:
             n_txt = qc.num_clbits - n_out
             aux_qs = [q for q in range(n_txt) if q not in out_qs]
 
+            parity_all = 0   # the same swap test over ALL shots = the traced (discard) readout of this circuit, no post-selection
             for bstr, count in counts.items():
                 rev_bstr = bstr[::-1]
+                k = sum(
+                    int(rev_bstr[out_qs[i]]) * int(rev_bstr[n_txt + i])
+                    for i in range(n_out)
+                )
+                parity_sign = 1 if k % 2 == 0 else -1
+                parity_all += count * parity_sign
                 if all(rev_bstr[q] == '0' for q in aux_qs):
-                    k = sum(
-                        int(rev_bstr[out_qs[i]]) * int(rev_bstr[n_txt + i])
-                        for i in range(n_out)
-                    )
-                    parity_sign = 1 if k % 2 == 0 else -1
                     weighted_parity_sum += count * parity_sign
                     accepted_shots += count
+        total = max(sum(counts.values()), 1)
+        self.accept_log.append(accepted_shots / total)  # post-selection acceptance (1 for discard)
+        self.circuit_log.append((accepted_shots / total, weighted_parity_sum / total, (weighted_parity_sum if self.discard else parity_all) / total))
         if accepted_shots == 0:
             return 0.0
 
@@ -386,6 +477,8 @@ class Emulator:
     def run_experiment(self, pos_circs, neg_circs, batch_size=24, shots=None, num_runs=5):
         shots = shots if shots is not None else self.shots
         torch.cuda.empty_cache()
+        self.accept_log = []
+        self.circuit_log = []   # per circuit (acceptance, accepted signal / all shots, unconditioned signal / all shots); order: per run, pos then neg
 
         all_accuracies = []
         all_pos_fidelities = []
@@ -394,13 +487,17 @@ class Emulator:
 
         base_seed = int(np.random.randint(0, 2**31 - 1))
 
+        self.counts_log = []
         for run_idx in range(num_runs):
+            self._run_idx = run_idx
             self.backend.set_options(seed_simulator=base_seed + run_idx) 
+            if getattr(self, 'dm_backend', None) is not None: self.dm_backend.set_options(seed_simulator=base_seed + run_idx)
 
             start_eval_time = time.time()
             pos_raw = self.run_circuit(pos_circs, shots=shots, batch_size=batch_size)
             neg_raw = self.run_circuit(neg_circs, shots=shots, batch_size=batch_size)
             elapsed = time.time() - start_eval_time
+            self.elapsed_log = (getattr(self, 'elapsed_log', None) or []) + [elapsed]
 
             correct = (pos_raw > neg_raw).float()
             accuracy = correct.mean().item()
@@ -451,4 +548,10 @@ class Emulator:
             "raw_accuracies": all_accuracies,
             "per_pair_pos_fidelities": per_pair_pos,
             "per_pair_neg_fidelities": per_pair_neg,
+            "shots": shots,
+            "accept_frac_mean": float(np.mean(self.accept_log)) if self.accept_log else None,
+            "accept_frac_median": float(np.median(self.accept_log)) if self.accept_log else None,
+            "per_circuit_counts": self.counts_log or None,   # --save_counts: run 0, pos then neg circuits
+            "elapsed_s_per_run": getattr(self, 'elapsed_log', None),
+            "per_circuit_log": self.circuit_log,   # (acceptance, accepted signal/shots, unconditioned signal/shots); per run: pos then neg circuits
         }

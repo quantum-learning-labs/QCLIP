@@ -14,19 +14,20 @@ class BaseAnsatz(ABC):
         self.id = type(self).__name__ + '_' + str(obmap['n']) + '_' + str(obmap['s']) + '_' + str(obmap['p']) + '_' + str(obmap['out'])
         self.char_idx = count(0)
 
-    def __call__(self, tn, curry=False, discard=False, spider=False):
+    def __call__(self, tn, curry=False, discard=False, spider=False, postselect=(), mixer=0, sinks=0):
         # spider() is placeholder code and not implemented properly yet
         if spider:
             raise NotImplementedError("spider ansatz is not implemented yet; set text.spider: false")
         if curry:
-            return self.tn2ansatz_curried(tn,  discard=discard)
+            return self.tn2ansatz_curried(tn,  discard=discard, postselect=postselect, mixer=mixer, sinks=sinks)
         elif spider:
             return self.spider(tn)
         else:
+            if postselect or mixer or sinks: raise NotImplementedError("text.postselect_types / text.mixer_layers / text.sinks need text.curry: true")
             return self.tn2ansatz(tn, discard=discard)
 
-    def tns2ansatze(self, tn_arr, curry=False, discard=False, spider=False):
-        return [self(tn, curry=curry, discard=discard, spider=spider) for tn in tn_arr]
+    def tns2ansatze(self, tn_arr, curry=False, discard=False, spider=False, postselect=(), mixer=0, sinks=0):
+        return [self(tn, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer, sinks=sinks) for tn in tn_arr]
 
     def reset_char(self):
         self.char_idx = count(0)
@@ -102,9 +103,29 @@ class BaseAnsatz(ABC):
         einsum_expr = self.gen_einsum_expr(input_indices, ccg_map)
         return einsum_expr, tensor_arr
     
-    def tn2ansatz_curried(self, tn, discard=False):
+    def mixer_cr(self, current_wires, base_symbol):
+        # one identity-initialisable mixer layer (text.mixer_ansatz: cr): Ry, Rz on every wire, a ring of CRy and a reverse
+        # ring of CRx. Every gate is the identity at angle 0, so a near-zero init leaves a warm-started circuit unchanged.
+        new_indices, new_tensors = [], []
+        N, op = len(current_wires), 0
+        for i in range(N):
+            for g in ('Ry', 'Rz'):
+                nxt = self.get_char(); new_indices.append(current_wires[i] + nxt)
+                new_tensors.append({'name': f"{base_symbol}_cr{op}", 'op_type': g}); current_wires[i] = nxt; op += 1
+        if N > 1:
+            for g, pairs in (('CRy', [(i, (i + 1) % N) for i in range(N)]), ('CRx', [((i + 1) % N, i) for i in range(N)])):
+                for c, t in pairs:
+                    c_out, t_out = self.get_char(), self.get_char()
+                    new_indices.append(current_wires[c] + current_wires[t] + c_out + t_out)
+                    new_tensors.append({'name': f"{base_symbol}_cr{op}", 'op_type': g})
+                    current_wires[c], current_wires[t] = c_out, t_out; op += 1
+        return current_wires, new_indices, new_tensors
+
+    def tn2ansatz_curried(self, tn, discard=False, postselect=(), mixer=0, sinks=0):
+        # discard: trace out every non-sentence wire, except wires of the atomic types in `postselect`,
+        # which are post-selected onto |0> as in the non-discard circuit (hybrid)
         self.reset_char()
-        ccg_map = {}
+        ccg_map, wire_type = {}, {}
         input_indices, tensor_arr = [], []
         tn_sorted = sort_tn(tn)
 
@@ -149,11 +170,59 @@ class BaseAnsatz(ABC):
             for idx, typ in zip(idx_arr, type_arr):
                 n = self.obmap.get(typ, 1)
                 ccg_map[idx] = current_wires[i:i+n]
+                wire_type[idx] = typ
                 i += n
 
-        if not discard:
+        if mixer:
+            # learnable "mixer" over every open wire (sentence wires first), applied before the
+            # non-sentence wires are traced out / post-selected; shared by all sentences with the same
+            # number m of non-sentence wires. Lets the circuit move information out of the wires that are
+            # about to be discarded (the partial trace can't read correlations with them).
+            others = [k for k in ccg_map if k != 0]
+            wires = list(ccg_map[0]) + [w for k in others for w in ccg_map[k]]
+            m = len(wires) - len(ccg_map[0])
+            # text.sinks = k: k extra |0> wires inside the mixer, traced with the noun wires at the end. They raise the
+            # discard channel's Kraus-rank cap from 2^m to 2^(m+k), so failure branches can be neutralised (report sec 22, C7)
+            if sinks:
+                if not discard: raise ValueError("text.sinks only applies with text.discard: true")
+                sink_wires = [self.get_char() for _ in range(sinks)]
+                input_indices.extend([[w] for w in sink_wires]); tensor_arr.extend([{'name': None, 'op_type': '0'}] * sinks)
+                wires = wires + sink_wires
+            tag = f"_k{sinks}" if sinks else ""
+            cr = getattr(self, 'mixer_type', 'default') == 'cr'
+            for l in range(mixer):
+                block = self.mixer_cr if cr else self.ansatz
+                wires, new_indices, new_tensors = block(wires, f"__mixer{l}_m{m}{tag}{'_cr' if cr else ''}")
+                input_indices.extend(new_indices); tensor_arr.extend(new_tensors)
+            pos = len(ccg_map[0]); ccg_map[0] = wires[:pos]
+            for k in others:
+                n = len(ccg_map[k]); ccg_map[k] = wires[pos:pos + n]; pos += n
+
+        if getattr(self, 'phi_block', False):
+            # text.phi_block (report sec 22, direction 2): Theorem A's channel as a fixed, parameter-free discard block.
+            # Per sentence wire S_i a Bell pair (A_i, B_i); if any non-sentence wire is not |0>, swap S_i with A_i.
+            # Tracing all but S gives Phi = K0 rho K0^+ + (1 - p0) I/d exactly: the all-|0> branch keeps the
+            # post-selected state, every other branch leaves S holding halves of Bell pairs (I/d).
+            if not discard or postselect or sinks:
+                raise ValueError("text.phi_block needs text.discard: true and no postselect_types / sinks")
+            others = [k for k in ccg_map if k != 0]
+            nw = [w for k in others for w in ccg_map[k]]; m = len(nw)
+            if m:
+                s = list(ccg_map[0])
+                for i in range(len(s)):
+                    a, b = self.get_char(), self.get_char()
+                    input_indices.append([a, b]); tensor_arr.append({'name': None, 'op_type': 'bell'})
+                    nw_out = [self.get_char() for _ in nw]; s_out, a_out = self.get_char(), self.get_char()
+                    input_indices.append(nw + [s[i], a] + nw_out + [s_out, a_out])
+                    tensor_arr.append({'name': None, 'op_type': f'cswap{m}'})
+                    nw, s[i] = nw_out, s_out
+                ccg_map[0] = s; pos = 0
+                for k in others:
+                    n = len(ccg_map[k]); ccg_map[k] = nw[pos:pos + n]; pos += n
+
+        if not discard or postselect:
             for virtual_idx, physical_wires in ccg_map.items():
-                if virtual_idx != 0:
+                if virtual_idx != 0 and (not discard or wire_type[virtual_idx] in postselect):
                     input_indices.extend([[w] for w in physical_wires])
                     # tensor_arr.extend([(None, '0_dag')] * len(physical_wires))
                     tensor_arr.extend([{'name': None, 'op_type': '0_dag'}] * len(physical_wires))
@@ -196,7 +265,7 @@ class BaseAnsatz(ABC):
         einsum_expr = f"{lhs}->{''.join(target_wires)}"
         return einsum_expr, tensor_arr
 
-    def compile_dataset(self, df, curry=False, discard=False, spider=False):
+    def compile_dataset(self, df, curry=False, discard=False, spider=False, postselect=(), mixer=0, sinks=0):
         #blueprint_df = pd.DataFrame(index=df.index)
         cols = [col for col in df.columns if col.endswith('_diagram')]
         for col in cols:
@@ -215,13 +284,13 @@ class BaseAnsatz(ABC):
                 if is_nested_list:
                     row_einsums, row_symbols = [], []
                     for tn in row_val:
-                        e_str, syms = self(tn, curry=curry, discard=discard, spider=spider)
+                        e_str, syms = self(tn, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer, sinks=sinks)
                         row_einsums.append(e_str)
                         row_symbols.append(syms)
                     einsum_arr.append(row_einsums)
                     symbols_arr.append(row_symbols)
                 else:
-                    e_str, syms = self(row_val, curry=curry, discard=discard, spider=spider)
+                    e_str, syms = self(row_val, curry=curry, discard=discard, spider=spider, postselect=postselect, mixer=mixer, sinks=sinks)
                     einsum_arr.append(e_str)
                     symbols_arr.append(syms)
             df[einsum_col] = einsum_arr
