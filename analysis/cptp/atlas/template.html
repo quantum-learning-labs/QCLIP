@@ -1,0 +1,676 @@
+<title>QCLIP Readout Atlas</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of numbered figures; each figure = a claim (heading), the drawing, a caption naming the source. */
+:root {
+  --bg: #f7f8fa; --panel: #ffffff; --ink: #14171c; --ink-2: #4a5160; --ink-3: #7a8191; --rule: #dde1e8; --grid: #eceff4;
+  --accent: #2a78d6;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #c98500; --s5: #6250d6;
+  --s1-soft: rgba(42,120,214,.14); --s2-soft: rgba(235,104,52,.14);
+  --font-display: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121418; --panel: #1a1d23; --ink: #eceef2; --ink-2: #b4bac6; --ink-3: #8a91a0; --rule: #2c313a; --grid: #23272f;
+  --accent: #3987e5; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #9085e9;
+  --s1-soft: rgba(57,135,229,.2); --s2-soft: rgba(217,89,38,.2); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #121418; --panel: #1a1d23; --ink: #eceef2; --ink-2: #b4bac6; --ink-3: #8a91a0; --rule: #2c313a; --grid: #23272f;
+  --accent: #3987e5; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #9085e9;
+  --s1-soft: rgba(57,135,229,.2); --s2-soft: rgba(217,89,38,.2); color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 920px; margin: 0 auto; padding-block: 40px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(30px, 5vw, 44px); line-height: 1.1; margin: 0 0 12px; text-wrap: balance; letter-spacing: -.01em; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px; }
+.lead { font-size: 17px; color: var(--ink-2); max-width: 68ch; margin: 0; }
+.key { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; font-size: 13px; color: var(--ink-2); }
+.key span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 26px 0 8px; }
+nav.toc a { font-size: 13px; color: var(--ink-2); text-decoration: none; padding: 4px 10px; border: 1px solid var(--rule); border-radius: 999px; background: var(--panel); }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--ink); border-color: var(--accent); outline: none; }
+section { margin-top: 56px; }
+section > h2 { font-family: var(--font-display); font-weight: 600; font-size: 26px; margin: 0 0 4px; text-wrap: balance; }
+section > .sub { color: var(--ink-2); margin: 0 0 18px; max-width: 70ch; }
+.badge { font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px; vertical-align: 4px; margin-left: 8px; }
+figure { margin: 0 0 22px; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 18px 14px; min-width: 0; }
+figure h3 { font-size: 15px; font-weight: 600; margin: 0 0 2px; text-wrap: balance; }
+figure .note { font-size: 13px; color: var(--ink-3); margin: 0 0 10px; }
+figcaption { font-size: 13px; color: var(--ink-2); margin-top: 10px; max-width: 75ch; }
+figcaption .src { color: var(--ink-3); font-family: var(--font-mono); font-size: 11.5px; display: block; margin-top: 4px; }
+.chart { width: 100%; position: relative; min-width: 0; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+.pair > div { min-width: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); margin: 2px 0 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.legend i.dot { width: 9px; height: 9px; border-radius: 50%; }
+.legend i.dash { background: none !important; border-top: 2px dashed var(--ink-3); height: 0; }
+svg text { font-family: var(--font-body); fill: var(--ink-2); font-size: 11.5px; }
+svg .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+svg .ax line, svg .ax path { stroke: var(--rule); }
+svg .grid line { stroke: var(--grid); }
+svg .lbl-strong { fill: var(--ink); font-weight: 600; }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12px; line-height: 1.4; padding: 6px 9px; border-radius: 6px; white-space: nowrap; z-index: 5; transform: translate(-50%, calc(-100% - 10px)); opacity: 0; transition: opacity .08s; }
+.tip b { font-weight: 600; }
+.tip.on { opacity: 1; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 0 0 18px; }
+.fact { border-left: 2px solid var(--rule); padding: 2px 0 2px 12px; }
+.fact .v { font-family: var(--font-display); font-size: 26px; font-weight: 600; line-height: 1.1; }
+.fact .k { font-size: 12.5px; color: var(--ink-2); }
+.scroll { overflow-x: auto; }
+footer { margin-top: 60px; font-size: 13px; color: var(--ink-3); border-top: 1px solid var(--rule); padding-top: 16px; }
+footer a, .sub a, figcaption a { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">QCLIP · SVO-probes · CPTP vs post-selected text readout</div>
+  <h1>QCLIP Readout Atlas</h1>
+  <p class="lead">The work so far, as figures. Each one states a finding, draws the evidence and names the report section behind it. The last section holds three new measurements made for this page: the dynamical Lie algebra of our circuits, the rank of their quantum Fisher information, and the magic and Rényi entropy of trained sentence states.</p>
+  <div class="key" aria-label="Colour key used on every chart">
+    <span><i class="sw" style="background:var(--s1)"></i>Post-selection</span>
+    <span><i class="sw" style="background:var(--s2)"></i>Discard, plain</span>
+    <span><i class="sw" style="background:var(--s3)"></i>Discard, warm start</span>
+    <span><i class="sw" style="background:var(--s4)"></i>Discard, distilled</span>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#mechanism">Two readouts</a><a href="#gap">The gap</a><a href="#mixing">Mixing</a><a href="#shots">Shots per decision</a>
+    <a href="#noise">Noise</a><a href="#branches">Branches</a><a href="#geometry">Circuit geometry (new)</a>
+  </nav>
+</header>
+
+<section id="mechanism">
+  <h2>One circuit, two readouts</h2>
+  <p class="sub">Both models run the same parametrised unitary U on 3 sentence qubits S and m other wires E (m = 4 for 90% of sentences). They differ only in what closes the E wires.</p>
+  <figure>
+    <h3>Post-selection keeps one branch and renormalises it; the partial trace keeps every branch, weighted by p<sub>k</sub></h3>
+    <div class="scroll"><svg id="diagram" viewBox="0 0 860 330" role="img" aria-label="Diagram: the circuit U acts on S and E. Post-selection projects E onto zero, keeping the branch psi_0 with probability p0. Discard traces E, giving the mixture rho = sum_k p_k psi_k."></svg></div>
+    <figcaption>|Ψ⟩ = Σ<sub>k</sub> √p<sub>k</sub> |ψ<sub>k</sub>⟩<sub>S</sub>|k⟩<sub>E</sub>. Bars show the branch weights p<sub>k</sub> of a typical trained 3-layer sentence (median p₀ ≈ 0.07, near the 1/16 a uniform spread would give). Post-selection scores with |⟨φ|ψ₀⟩|² and keeps a fraction p₀ of the shots; discard scores with ⟨φ|ρ|φ⟩ = p₀·s<sub>ps</sub> + Σ<sub>k≥1</sub> p<sub>k</sub>|⟨φ|ψ<sub>k</sub>⟩|² (identity D1) and keeps every shot.<span class="src">report §2, §2.1, A1</span></figcaption>
+  </figure>
+</section>
+
+<section id="gap">
+  <h2>Where the gap went</h2>
+  <p class="sub">Test std hard-negative accuracy, 3 text layers. Plain discard starts 6.1 points behind post-selection; supervision from the post-selected model recovers 3.7 of them.</p>
+  <figure>
+    <h3>Warm start and score distillation close 3.7 of 6.1 points; 2.4 remain</h3>
+    <div class="chart" id="c-waterfall"></div>
+    <figcaption>Points of test std accuracy behind post-selection (0.874 ± 0.011, 10 seeds); every model 10 seeds, mean ± sd under each bar. Each step keeps the previous one (distillation runs on a warm start).<span class="src">report §8, §17 · configs/final</span></figcaption>
+  </figure>
+  <figure>
+    <h3>Nothing else moved plain discard past 0.84</h3>
+    <div class="chart" id="c-noeffect"></div>
+    <figcaption>Range across the variants tried in each family (3 seeds each), against the plain-discard and post-selection references.<span class="src">report §13, §20, §22</span></figcaption>
+  </figure>
+  <figure>
+    <h3>The gap is almost entirely on subject negatives</h3>
+    <div class="legend" id="lg-negtype"></div>
+    <div class="chart" id="c-negtype"></div>
+    <figcaption>Test std split by which word differs in the negative image (3 seeds). Plain discard is 18.5 points behind on subjects and within 2 points on verbs and objects. The warm start and distillation work by repairing subjects.<span class="src">report §18</span></figcaption>
+  </figure>
+</section>
+
+<section id="mixing">
+  <h2>Mixing caps what discard can see</h2>
+  <p class="sub">The traced sentence state ρ is mixed because S is entangled with E. Its Rényi-2 entropy S₂ = −log₂ Tr ρ² measures that entanglement (0 for a pure state, 3 bits for I/8).</p>
+  <div class="pair">
+    <figure><h3>S–E entanglement grows with depth, for both trainings</h3>
+      <div class="legend" id="lg-depth"></div><div class="chart" id="c-depth"></div>
+      <figcaption>Median S₂ of the traced state, from median purity (val, readout swap). Discard-trained circuits stay nearly pure at 1 layer, then mix as much as post-selected ones.<span class="src">report E1</span></figcaption></figure>
+    <figure><h3>Each training reads well only through its own readout</h3>
+      <div class="legend" id="lg-swap"></div><div class="chart" id="c-swap"></div>
+      <figcaption>Validation accuracy of the same weights read both ways. Solid: own readout; dashed: the other one.<span class="src">report E1</span></figcaption></figure>
+  </div>
+  <figure>
+    <h3>Purity bounds the margin, and accuracy follows the bound</h3>
+    <div class="legend" id="lg-budget"></div>
+    <div class="chart" id="c-budget"></div>
+    <figcaption>Validation pairs split into quarters by their margin budget √(2(P − 1/d)(1 − F)) (P1). The bound held on all 18,290 pair × seed cases. Discard's median budget is half post-selection's, and it uses a fifth of it.<span class="src">report E3, A4</span></figcaption>
+  </figure>
+  <figure>
+    <h3>Discard training first purifies, then gives up and spreads the signal across branches</h3>
+    <div class="legend" id="lg-traj"></div>
+    <div class="pair"><div class="chart" id="c-traj-pur"></div><div class="chart" id="c-traj-acc"></div></div>
+    <figcaption>2 text layers, seed 0, validation. Left: purity of the traced state. Right: discard training's accuracy through the trace (solid) and through post-selection of the same weights (dashed). After epoch 3 the post-selected reading stalls while the traced one keeps rising.<span class="src">report E5</span></figcaption>
+  </figure>
+</section>
+
+<section id="shots">
+  <h2>Shots per correct decision</h2>
+  <p class="sub">On hardware each score is a swap-test estimate. Post-selection throws away all but p₀ of its shots, but its margins are 5–7× larger, so it still needs fewer shots per correct decision from about 70% accuracy up.</p>
+  <figure>
+    <h3>At m = 4, post-selection is more accurate for every budget from 128 shots up</h3>
+    <div class="legend" id="lg-shots"></div>
+    <div class="chart" id="c-shots"></div>
+    <figcaption>Noiseless Aer emulation, 600 std pairs, shots per circuit counted before post-selection (it keeps 8.1%). Bands ±1 sd over seeds. Discard wins only at 32 shots.<span class="src">report E6, §17</span></figcaption>
+  </figure>
+  <figure>
+    <h3>Doubling the discarded qubits multiplies everyone's shot cost by 5–7×, and the ratio stays put</h3>
+    <div class="legend" id="lg-stt"></div>
+    <div class="pair"><div class="chart" id="c-stt4"></div><div class="chart" id="c-stt8"></div></div>
+    <figcaption>Shots per circuit needed to reach each accuracy (log scale; log-interpolated from the sweeps). At m = 8 plain discard never reaches 80%. The per-decision ratio N<sub>ps</sub>/N<sub>discard</sub> ≈ (Δ<sub>d</sub>/Δ<sub>ps</sub>)²/p₀ is 0.44 at m = 4 and 0.41 at m = 8: p₀ fell 3.5×, and the discard margin squared fell 4.7× (conjecture C6).<span class="src">report §16, §17, A7</span></figcaption>
+  </figure>
+</section>
+
+<section id="noise">
+  <h2>Under realistic noise the order flips at m = 8</h2>
+  <p class="sub">The honest profile (FakeMiami errors ×1.5–3, halved T1/T2, ZZ over-rotation, idle decay) matches unscaled 2025–26 IBM calibrations.</p>
+  <figure>
+    <h3>At m = 8 plain discard beats post-selection under noise: 0.648 against 0.582</h3>
+    <div class="legend" id="lg-noise"></div>
+    <div class="pair"><div class="chart" id="c-noise4"></div><div class="chart" id="c-noise8"></div></div>
+    <figcaption>Each line runs from the noiseless score (hollow) to the honest-noise score (filled), 2048 shots, 300 std pairs, 2 seeds (about 2.5 points of standard error). Post-selection loses 25 points at m = 8: noise shrinks every margin to 18–22%, and it keeps only 38 shots per circuit.<span class="src">report E6, §16</span></figcaption>
+  </figure>
+  <figure>
+    <h3>Unscaled device snapshots land where the honest profile does</h3>
+    <div class="legend" id="lg-dev"></div>
+    <div class="chart" id="c-dev"></div>
+    <figcaption>m = 4, density-matrix emulation, 300 pairs, 2048 shots, 2 seeds. Post-selection still leads at m = 4 on every device.<span class="src">report §20</span></figcaption>
+  </figure>
+</section>
+
+<section id="branches">
+  <h2>The failure branches carry discard's decision</h2>
+  <p class="sub">Theorem A: a CPTP channel Φ reproduces every post-selected image-choice decision. Trained discard models do not find it; they use the k ≥ 1 branches instead.</p>
+  <figure>
+    <h3>The success branch alone decides only 59–63% of pairs in trained discard models; distillation brings it to 79%</h3>
+    <div class="legend" id="lg-branch"></div>
+    <div class="chart" id="c-branch"></div>
+    <figcaption>Test std. "Success branch alone" = the same weights' unnormalised k = 0 term. Ranges over seeds. The labels give the median ratio of failure-branch to success-branch margin.<span class="src">report §22, branch_eval.py</span></figcaption>
+  </figure>
+  <figure>
+    <h3>The loss prefers Φ once its logit scale is free, so the objective is not what blocks discard</h3>
+    <div class="legend" id="lg-obj"></div>
+    <div class="chart" id="c-obj"></div>
+    <figcaption>Validation Pauli-InfoNCE loss at the training scale (14.3, T = 0.07) and at each model's own best fixed scale (labelled). Lower is better. At T = 0.07 Φ looks worst; at its own scale (7.4) it is best.<span class="src">report §22, objective test</span></figcaption>
+  </figure>
+</section>
+
+<section id="geometry">
+  <h2>Circuit geometry <span class="badge">new</span></h2>
+  <p class="sub" id="geo-sub">Measured for this page (next_steps X6.1, X6.2, X4.1): exact, on sampled validation sentences, 3-layer checkpoints, both readouts of the same weights.</p>
+  <div class="facts" id="geo-facts"></div>
+  <figure>
+    <h3 id="h-dla">Every word box and sentence circuit generates the full su(2ⁿ); the parameters cover a sliver of it</h3>
+    <div class="legend" id="lg-dla"></div>
+    <div class="pair"><div class="chart" id="c-dla-box"></div><div class="chart" id="c-dla-sent"></div></div>
+    <figcaption id="cap-dla"></figcaption>
+  </figure>
+  <figure>
+    <h3 id="h-qfi">Fisher rank: how many directions the parameters can move each state</h3>
+    <div class="legend" id="lg-qfi"></div>
+    <div class="chart" id="c-qfi"></div>
+    <figcaption id="cap-qfi"></figcaption>
+  </figure>
+  <figure>
+    <h3 id="h-spec">Fisher spectrum of a typical sentence</h3>
+    <div class="legend" id="lg-spec"></div>
+    <div class="chart" id="c-spec"></div>
+    <figcaption id="cap-spec"></figcaption>
+  </figure>
+  <figure>
+    <h3 id="h-ent">Rényi-2 entropy of the traced sentence state</h3>
+    <div class="legend" id="lg-ent"></div>
+    <div class="chart" id="c-ent"></div>
+    <figcaption id="cap-ent"></figcaption>
+  </figure>
+  <figure>
+    <h3 id="h-magic">Stabiliser Rényi entropy (magic) of the sentence states</h3>
+    <div class="legend" id="lg-magic"></div>
+    <div class="chart" id="c-magic"></div>
+    <figcaption id="cap-magic"></figcaption>
+  </figure>
+</section>
+
+<footer>
+  Sources: the report <a href="https://claude.ai/artifact/LwXvmUwPwLRYhJXbuY1knH">CPTP vs Post-selected Training in QCLIP</a>, the <a href="https://claude.ai/artifact/NmAD77HdgWkh9zrkacMVwc">next steps</a> doc, and the geometry run (__GEO_SRC__). Built __BUILT__.
+</footer>
+</div>
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+const REPORT = __REPORT__;
+const GEO = __GEO__;
+const NS = 'http://www.w3.org/2000/svg';
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = { ps: 'var(--s1)', plain: 'var(--s2)', ws: 'var(--s3)', kd: 'var(--s4)', other: 'var(--s5)' };
+function colFor(label) {
+  const l = label.toLowerCase();
+  if (l.startsWith('post') || l.startsWith('φ')) return COL.ps;
+  if (l.includes('distil')) return COL.kd;
+  if (l.includes('warm')) return COL.ws;
+  if (l.includes('2 layers')) return COL.other;
+  return COL.plain;
+}
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function txt(parent, x, y, s, attrs = {}) { const t = el('text', { x, y, ...attrs }, parent); t.textContent = s; return t; }
+const lin = (d0, d1, r0, r1) => { const f = v => r0 + (v - d0) / (d1 - d0) * (r1 - r0); f.inv = p => d0 + (p - r0) / (r1 - r0) * (d1 - d0); return f; };
+const logs = (d0, d1, r0, r1) => { const a = Math.log10(d0), b = Math.log10(d1); return v => r0 + (Math.log10(v) - a) / (b - a) * (r1 - r0); };
+const fmt = (v, d = 3) => v == null ? '–' : (+v).toFixed(d);
+const fmtN = v => v >= 10000 ? (v / 1000).toFixed(0) + 'k' : v >= 1000 ? (v / 1000).toFixed(1).replace('.0', '') + 'k' : String(Math.round(v));
+
+// ---------- tooltip ----------
+const tip = document.getElementById('tip');
+function bindTip(node, html) {
+  const show = ev => {
+    tip.innerHTML = html; tip.classList.add('on');
+    const host = document.querySelector('.wrap').getBoundingClientRect();
+    const r = node.getBoundingClientRect();
+    let x = r.left + r.width / 2 - host.left + document.querySelector('.wrap').offsetLeft;
+    const y = r.top + window.scrollY;
+    const w = tip.offsetWidth, vw = document.documentElement.clientWidth;
+    x = Math.max(w / 2 + 8, Math.min(vw - w / 2 - 8, r.left + r.width / 2));
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  };
+  node.addEventListener('pointerenter', show); node.addEventListener('focus', show);
+  node.addEventListener('pointerleave', () => tip.classList.remove('on')); node.addEventListener('blur', () => tip.classList.remove('on'));
+  node.setAttribute('tabindex', '0');
+}
+
+// ---------- frame ----------
+function frame(id, h, m = {}) {
+  const host = document.getElementById(id); host.innerHTML = '';
+  const W = Math.max(280, host.clientWidth || 600);
+  const M = { t: 26, r: 16, b: 34, l: 48, ...m };
+  const svg = el('svg', { viewBox: `0 0 ${W} ${h}`, role: 'img' }, host);
+  return { svg, W, H: h, M, iw: W - M.l - M.r, ih: h - M.t - M.b, g: el('g', { transform: `translate(${M.l},${M.t})` }, svg) };
+}
+function yAxis(f, y, ticks, fmtf = v => v, label) {
+  const ax = el('g', { class: 'ax' }, f.g), gr = el('g', { class: 'grid' }, f.g);
+  for (const t of ticks) { const yy = y(t); el('line', { x1: 0, x2: f.iw, y1: yy, y2: yy }, gr); txt(ax, -8, yy + 4, fmtf(t), { 'text-anchor': 'end', class: 'num' }); }
+  if (label) txt(ax, -f.M.l + 2, -14, label, { 'text-anchor': 'start', 'font-size': 11 });
+}
+function xAxis(f, x, ticks, fmtf = v => v, label) {
+  const ax = el('g', { class: 'ax' }, f.g);
+  el('line', { x1: 0, x2: f.iw, y1: f.ih, y2: f.ih }, ax);
+  for (const t of ticks) txt(ax, x(t), f.ih + 16, fmtf(t), { 'text-anchor': 'middle', class: 'num' });
+  if (label) txt(ax, f.iw, f.ih + 30, label, { 'text-anchor': 'end', 'font-size': 11 });
+}
+function legend(id, items) {
+  const L = document.getElementById(id); if (!L) return; L.innerHTML = '';
+  for (const it of items) {
+    const s = document.createElement('span'); const i = document.createElement('i');
+    i.style.background = it.color; if (it.kind) i.className = it.kind; s.append(i, document.createTextNode(it.label)); L.append(s);
+  }
+}
+function line(g, pts, attrs) { return el('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(''), fill: 'none', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', ...attrs }, g); }
+function dot(g, x, y, c, tipHtml, r = 4.5, hollow = false) {
+  const d = el('circle', { cx: x, cy: y, r, fill: hollow ? 'var(--panel)' : c, stroke: hollow ? c : 'var(--panel)', 'stroke-width': 2 }, g);
+  if (tipHtml) { const hit = el('circle', { cx: x, cy: y, r: 11, fill: 'transparent' }, g); bindTip(hit, tipHtml); }
+  return d;
+}
+function barTop(g, x, y, w, h, fill) {   // vertical bar, 4px rounded data end, anchored at the baseline
+  const r = Math.min(4, w / 2, Math.abs(h));
+  const d = `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+  return el('path', { d, fill }, g);
+}
+function barRight(g, x, y, w, h, fill) {  // horizontal bar from x, rounded at the right end
+  const r = Math.min(4, h / 2, w);
+  const d = `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`;
+  return el('path', { d, fill }, g);
+}
+
+// ---------- diagram ----------
+function drawDiagram() {
+  const s = document.getElementById('diagram'); s.innerHTML = '';
+  const fg = 'currentColor';
+  s.style.color = css('--ink-2');
+  const defs = el('defs', {}, s);
+  const mk = el('marker', { id: 'arr', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
+  el('path', { d: 'M0,0L10,5L0,10z', fill: css('--ink-3') }, mk);
+  const T = (x, y, t, a = {}) => txt(s, x, y, t, a);
+  // wires into U
+  const wy = [52, 76, 100, 150, 174, 198, 222];
+  wy.forEach((y, i) => { el('line', { x1: 30, x2: 120, y1: y, y2: y, stroke: css('--ink-3'), 'stroke-width': 1.5 }, s); T(24, y + 4, '|0⟩', { 'text-anchor': 'end', 'font-size': 11 }); });
+  T(64, 40, 'S: 3 sentence qubits', { 'text-anchor': 'middle', 'font-size': 11 });
+  T(64, 140, 'E: m other wires', { 'text-anchor': 'middle', 'font-size': 11 });
+  el('rect', { x: 120, y: 34, width: 110, height: 206, rx: 8, fill: 'var(--panel)', stroke: css('--ink-2'), 'stroke-width': 1.5 }, s);
+  T(175, 132, 'U(θ)', { 'text-anchor': 'middle', 'font-size': 20, class: 'lbl-strong', style: 'font-family:var(--font-display)' });
+  T(175, 152, 'words + verb', { 'text-anchor': 'middle', 'font-size': 11 });
+  T(175, 166, '(curried DisCoCat)', { 'text-anchor': 'middle', 'font-size': 11 });
+  wy.forEach(y => el('line', { x1: 230, x2: 290, y1: y, y2: y, stroke: css('--ink-3'), 'stroke-width': 1.5 }, s));
+  T(260, 270, '|Ψ⟩ = Σₖ √pₖ |ψₖ⟩|k⟩', { 'text-anchor': 'middle', 'font-size': 12, class: 'lbl-strong' });
+  // split arrows
+  el('path', { d: 'M296,136 C330,136 330,72 372,72', fill: 'none', stroke: css('--ink-3'), 'stroke-width': 1.5, 'marker-end': 'url(#arr)' }, s);
+  el('path', { d: 'M296,136 C330,136 330,226 372,226', fill: 'none', stroke: css('--ink-3'), 'stroke-width': 1.5, 'marker-end': 'url(#arr)' }, s);
+  // post-selection panel
+  const ps = css('--s1'), di = css('--s2');
+  el('rect', { x: 380, y: 18, width: 300, height: 112, rx: 8, fill: 'none', stroke: ps, 'stroke-width': 1.5 }, s);
+  T(392, 38, 'Post-selection', { fill: ps, 'font-weight': 600, 'font-size': 13 });
+  T(392, 58, 'cap every E wire with ⟨0|', { 'font-size': 11.5 });
+  T(392, 76, 'keep branch k = 0: |ψ₀⟩ / √p₀', { 'font-size': 11.5 });
+  T(392, 94, 'shots kept: p₀ ≈ 7–13%', { 'font-size': 11.5 });
+  T(392, 116, 'score |⟨φ|ψ₀⟩|² / p₀', { 'font-size': 11.5, class: 'num' });
+  // discard panel
+  el('rect', { x: 380, y: 170, width: 300, height: 112, rx: 8, fill: 'none', stroke: di, 'stroke-width': 1.5 }, s);
+  T(392, 190, 'Discard (partial trace, CPTP)', { fill: di, 'font-weight': 600, 'font-size': 13 });
+  T(392, 210, 'join each E wire to its mirror (trace)', { 'font-size': 11.5 });
+  T(392, 228, 'ρ = Σₖ pₖ |ψₖ⟩⟨ψₖ|: every branch', { 'font-size': 11.5 });
+  T(392, 246, 'shots kept: all', { 'font-size': 11.5 });
+  T(392, 268, 'score ⟨φ|ρ|φ⟩ = p₀·s₀ + Σₖ₌₁ pₖ sₖ', { 'font-size': 11.5, class: 'num' });
+  // branch weights (illustrative: a spread with p0 = 0.07)
+  const pk = [0.07, 0.11, 0.05, 0.09, 0.04, 0.08, 0.06, 0.10, 0.03, 0.07, 0.05, 0.06, 0.04, 0.05, 0.06, 0.04];
+  const bx = 700, bw = 9, base = 260, sc = 900;
+  T(bx, 40, 'branch weights pₖ', { 'font-size': 11.5, 'font-weight': 600 });
+  T(bx, 56, 'k = 0 … 15 (m = 4)', { 'font-size': 11 });
+  pk.forEach((p, k) => {
+    const h = p * sc;
+    // top panel: only k=0 survives
+    const top = 120;
+    el('rect', { x: bx + k * (bw + 1), y: top - (k === 0 ? 0.07 * sc * 0.6 : 2), width: bw, height: k === 0 ? 0.07 * sc * 0.6 : 2, rx: 1.5, fill: k === 0 ? ps : css('--rule') }, s);
+    el('rect', { x: bx + k * (bw + 1), y: base - h * 0.6, width: bw, height: h * 0.6, rx: 1.5, fill: di, opacity: k === 0 ? 1 : 0.75 }, s);
+  });
+  T(bx, 136, 'only k = 0 kept', { 'font-size': 11 });
+  T(bx, 276, 'all 16 mixed', { 'font-size': 11 });
+}
+
+// ---------- charts: report ----------
+function drawWaterfall() {
+  const D = REPORT.gap, ref = D[0].value, f = frame('c-waterfall', 250, { l: 52, b: 40 });
+  const g0 = (ref - D[1].value) * 100, g1 = (ref - D[2].value) * 100, g2 = (ref - D[3].value) * 100;
+  const steps = [
+    { label: 'Plain discard', sub: '0.813 ± 0.013', lo: 0, hi: g0, c: COL.plain, v: g0.toFixed(1), tip: `plain discard ${fmt(D[1].value)} ± ${fmt(D[1].sd)} (10 seeds)<br>${g0.toFixed(1)} pts behind post-selection (${fmt(ref)})` },
+    { label: '+ warm start', sub: '0.843 ± 0.010', lo: g1, hi: g0, c: COL.ws, v: '−' + (g0 - g1).toFixed(1), tip: `warm start from post-selected weights: ${fmt(D[2].value)} ± ${fmt(D[2].sd)}<br>closes ${(g0 - g1).toFixed(1)} pts` },
+    { label: '+ score distillation', sub: '0.850 ± 0.011', lo: g2, hi: g1, c: COL.kd, v: '−' + (g1 - g2).toFixed(1), tip: `warm start + score distillation: ${fmt(D[3].value)} ± ${fmt(D[3].sd)}<br>closes ${(g1 - g2).toFixed(1)} more pts (10/10 paired wins)` },
+    { label: 'Gap left', sub: 'no lever moved it', lo: 0, hi: g2, c: 'var(--ink-3)', v: g2.toFixed(1), tip: `remaining gap ${g2.toFixed(1)} pts: sinks, losses, schedules and the logit scale did not move it` }];
+  const y = lin(0, 7, f.ih, 0), step = f.iw / steps.length, bw = Math.min(90, step * 0.55);
+  yAxis(f, y, [0, 1, 2, 3, 4, 5, 6, 7], v => v, 'points behind post-selection (0.874)');
+  steps.forEach((d, i) => {
+    const cx = step * (i + 0.5), x0 = cx - bw / 2, top = y(d.hi), h = y(d.lo) - y(d.hi);
+    if (d.lo === 0) barTop(f.g, x0, top, bw, h, d.c); else el('rect', { x: x0, y: top, width: bw, height: h, rx: 3, fill: d.c }, f.g);
+    if (i < steps.length - 1) { const nx = step * (i + 1.5) - bw / 2, ly = y(i === 0 ? d.hi : d.lo); el('line', { x1: x0 + bw, x2: nx, y1: ly, y2: ly, stroke: 'var(--ink-3)', 'stroke-dasharray': '2 3' }, f.g); }
+    txt(f.g, cx, top - 6, d.v, { 'text-anchor': 'middle', class: 'num lbl-strong' });
+    txt(f.g, cx, f.ih + 16, d.label, { 'text-anchor': 'middle', 'font-size': 11.5 });
+    txt(f.g, cx, f.ih + 30, d.sub, { 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--ink-3)', class: 'num' });
+    const hit = el('rect', { x: x0, y: top, width: bw, height: Math.max(h, 8), fill: 'transparent' }, f.g); bindTip(hit, '<b>' + d.label + '</b><br>' + d.tip);
+  });
+}
+function drawNoEffect() {
+  const D = REPORT.no_effect, rowH = 30, f = frame('c-noeffect', D.length * rowH + 46, { l: 230, r: 24, b: 34 });
+  const x = lin(0.77, 0.89, 0, f.iw);
+  const gr = el('g', { class: 'grid' }, f.g);
+  [0.78, 0.80, 0.82, 0.84, 0.86, 0.88].forEach(t => el('line', { x1: x(t), x2: x(t), y1: 0, y2: f.ih }, gr));
+  xAxis(f, x, [0.78, 0.80, 0.82, 0.84, 0.86, 0.88], v => v.toFixed(2), 'test std acc.');
+  for (const [v, c, l] of [[0.813, COL.plain, 'plain discard 0.813'], [0.874, COL.ps, 'post-selection 0.874']]) {
+    el('line', { x1: x(v), x2: x(v), y1: -2, y2: f.ih, stroke: c, 'stroke-dasharray': '4 4', 'stroke-width': 1.2 }, f.g);
+  }
+  txt(f.g, x(0.813) + 4, -8, 'plain 0.813', { 'font-size': 10.5 });
+  txt(f.g, x(0.874) - 4, -8, 'post-sel. 0.874', { 'font-size': 10.5, 'text-anchor': 'end' });
+  D.forEach((d, i) => {
+    const yy = i * rowH + rowH / 2;
+    txt(f.g, -10, yy + 4, d.label, { 'text-anchor': 'end', 'font-size': 12 });
+    if (d.hi > d.lo) el('line', { x1: x(d.lo), x2: x(d.hi), y1: yy, y2: yy, stroke: 'var(--ink-3)', 'stroke-width': 3, 'stroke-linecap': 'round' }, f.g);
+    dot(f.g, x(d.value), yy, COL.plain, `<b>${d.label}</b><br>${d.hi > d.lo ? 'range ' + fmt(d.lo) + '–' + fmt(d.hi) + ', ' : ''}typical ${fmt(d.value)}<br>${d.seeds} seeds per variant`);
+  });
+}
+function drawGrouped(id, lgid, cats, models, y0, y1, ticks, yl) {   // dots, not bars: the accuracy axis does not start at 0
+  const f = frame(id, 260, { l: 46, b: 36 });
+  const y = lin(y0, y1, f.ih, 0), gw = f.iw / cats.length, nb = models.length, sp = Math.min(22, gw * 0.7 / nb);
+  yAxis(f, y, ticks, v => v.toFixed(2), yl);
+  cats.forEach((c, ci) => {
+    const cx = gw * ci + gw / 2, x0 = cx - sp * (nb - 1) / 2;
+    if (ci) el('line', { x1: gw * ci, x2: gw * ci, y1: 0, y2: f.ih, stroke: 'var(--grid)' }, f.g);
+    models.forEach((m, mi) => {
+      const v = m.vals[ci]; if (v == null) return; const xx = x0 + mi * sp, col = colFor(m.label);
+      dot(f.g, xx, y(v), col, `<b>${m.label}</b><br>${c}: ${fmt(v)}`, 5.5);
+    });
+    txt(f.g, cx, f.ih + 18, c, { 'text-anchor': 'middle', 'font-size': 12 });
+  });
+  legend(lgid, models.map(m => ({ label: m.label, color: colFor(m.label), kind: 'dot' })));
+  return { f, y, gw, sp, nb };
+}
+function drawNegtype() {
+  const N = REPORT.negtype, r = drawGrouped('c-negtype', 'lg-negtype', N.types, N.models, 0.6, 0.92, [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9], 'test std acc.');
+  const x0 = r.gw / 2 - r.sp * (r.nb - 1) / 2 + r.sp;   // plain discard, subject negatives
+  txt(r.f.g, x0 + 10, r.y(0.664) + 4, '0.664: −18.5 pts', { class: 'num lbl-strong', 'font-size': 11.5 });
+}
+function drawLines(id, opts) {
+  const f = frame(id, opts.h || 240, opts.m || {});
+  const x = opts.xlog ? logs(opts.x0, opts.x1, 0, f.iw) : lin(opts.x0, opts.x1, 0, f.iw);
+  const y = opts.ylog ? logs(opts.y0, opts.y1, f.ih, 0) : lin(opts.y0, opts.y1, f.ih, 0);
+  yAxis(f, y, opts.yt, opts.yf || (v => v), opts.yl); xAxis(f, x, opts.xt, opts.xf || (v => v), opts.xl);
+  const ends = [];
+  for (const s of opts.series) {
+    const pts = s.x.map((xx, i) => [xx, s.y[i], s.sd ? s.sd[i] : null]).filter(p => p[1] != null);
+    if (s.band) {
+      const up = pts.map(p => [x(p[0]), y(p[1] + (p[2] || 0))]), dn = pts.map(p => [x(p[0]), y(p[1] - (p[2] || 0))]).reverse();
+      el('path', { d: 'M' + up.concat(dn).map(p => p.map(v => v.toFixed(1)).join(',')).join('L') + 'Z', fill: s.color, opacity: 0.12 }, f.g);
+    }
+    line(f.g, pts.map(p => [x(p[0]), y(p[1])]), { stroke: s.color, 'stroke-dasharray': s.dash ? '5 4' : null });
+    pts.forEach(p => dot(f.g, x(p[0]), y(p[1]), s.color, `<b>${s.label}</b><br>${opts.tipx ? opts.tipx(p[0]) : p[0]}: ${opts.tipy ? opts.tipy(p[1]) : fmt(p[1])}${p[2] ? ' ± ' + fmt(p[2]) : ''}`, s.dash ? 3.5 : 4.5, s.dash));
+    if (s.end) { const p = pts[pts.length - 1]; ends.push({ x: x(p[0]) + 8, y: y(p[1]) + 4, t: s.end }); }
+  }
+  ends.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
+  ends.forEach(e => txt(f.g, e.x, e.y, e.t, { 'font-size': 11, fill: 'var(--ink-2)' }));
+  if (opts.after) opts.after(f, x, y);
+  return { f, x, y };
+}
+function drawDepth() {
+  const D = REPORT.depth, s2 = a => a.map(p => -Math.log2(p));
+  drawLines('c-depth', { x0: 0.8, x1: 3.2, y0: 0, y1: 3, xt: [1, 2, 3], yt: [0, 1, 2, 3], xf: v => v + (v === 1 ? ' layer' : ' layers'), yl: 'S₂ (bits)', yf: v => v,
+    m: { r: 70 }, tipx: v => v + ' layers', tipy: v => v.toFixed(2) + ' bits',
+    series: [{ label: 'Post-selection-trained, traced', x: D.layers, y: s2(D.purity_ps_trained), color: COL.ps, end: 'post-sel.' },
+             { label: 'Discard-trained', x: D.layers, y: s2(D.purity_discard_trained), color: COL.plain, end: 'discard' }],
+    after: (f, x, y) => { el('line', { x1: 0, x2: f.iw, y1: y(3), y2: y(3), stroke: 'var(--ink-3)', 'stroke-dasharray': '2 3' }, f.g); txt(f.g, f.iw, y(3) + 14, 'max: I/8', { 'text-anchor': 'end', 'font-size': 10.5 }); } });
+  legend('lg-depth', [{ label: 'Post-selection-trained weights', color: COL.ps }, { label: 'Discard-trained weights', color: COL.plain }]);
+}
+function drawSwap() {
+  const D = REPORT.depth;
+  drawLines('c-swap', { x0: 0.8, x1: 3.2, y0: 0.55, y1: 0.9, xt: [1, 2, 3], yt: [0.6, 0.7, 0.8, 0.9], xf: v => v + (v === 1 ? ' layer' : ' layers'), yf: v => v.toFixed(1), yl: 'val acc.',
+    m: { r: 70 }, tipx: v => v + ' layers',
+    series: [{ label: 'Post-sel.-trained, read by post-selection', x: D.layers, y: D.acc_ps_ps, color: COL.ps, end: 'own' },
+             { label: 'Post-sel.-trained, read by trace', x: D.layers, y: D.acc_ps_tr, color: COL.ps, dash: true, end: 'traced' },
+             { label: 'Discard-trained, read by trace', x: D.layers, y: D.acc_di_tr, color: COL.plain, end: 'own' },
+             { label: 'Discard-trained, read by post-selection', x: D.layers, y: D.acc_di_ps, color: COL.plain, dash: true, end: 'post-sel.' }] });
+  legend('lg-swap', [{ label: 'own readout', color: 'var(--ink-2)' }, { label: 'other readout', color: 'var(--ink-3)', kind: 'dash' }, { label: 'post-selection-trained', color: COL.ps, kind: 'dot' }, { label: 'discard-trained', color: COL.plain, kind: 'dot' }]);
+}
+function drawBudget() {
+  const B = REPORT.budget, f = frame('c-budget', 250, { l: 46, b: 50 });
+  const y = lin(0, 1.3, f.ih, 0), gw = f.iw / 4, bw = Math.min(28, gw / 5), gap = 2;
+  yAxis(f, y, [0, 0.25, 0.5, 0.75, 1, 1.25], v => v.toFixed(2), 'trace units');
+  const series = [['Post-selection budget', B.ps_budget, COL.ps, 1], ['Discard budget', B.discard_budget, COL.plain, 1], ['Discard median margin', B.discard_margin, COL.plain, 0.45]];
+  B.quartiles.forEach((q, i) => {
+    const gx = gw * i + gw / 2 - (3 * bw + 2 * gap) / 2;
+    series.forEach(([lab, v, c, op], j) => {
+      const top = y(v[i]); const b = barTop(f.g, gx + j * (bw + gap), top, bw, f.ih - top, c); b.setAttribute('opacity', op);
+      const hit = el('rect', { x: gx + j * (bw + gap), y: top, width: bw, height: f.ih - top, fill: 'transparent' }, f.g);
+      bindTip(hit, `<b>${q}: ${lab}</b><br>${fmt(v[i])}`);
+    });
+    txt(f.g, gw * i + gw / 2, f.ih + 16, q + (i === 0 ? ' (smallest budget)' : i === 3 ? ' (largest)' : ''), { 'text-anchor': 'middle', 'font-size': 11.5 });
+    txt(f.g, gw * i + gw / 2, f.ih + 32, `acc ${fmt(B.ps_acc[i], 2)} / ${fmt(B.discard_acc[i], 2)}`, { 'text-anchor': 'middle', 'font-size': 10.5, class: 'num', fill: 'var(--ink-3)' });
+  });
+  txt(f.g, -f.M.l + 2, f.ih + 32, 'ps / disc.', { 'font-size': 10.5, fill: 'var(--ink-3)' });
+  legend('lg-budget', [{ label: 'post-selection budget', color: COL.ps }, { label: 'discard budget', color: COL.plain }, { label: 'discard median |margin|', color: 'var(--s2-soft)' }]);
+}
+function drawTraj() {
+  const T = REPORT.traj;
+  drawLines('c-traj-pur', { h: 220, x0: 0, x1: 40, y0: 0, y1: 1, xt: [0, 10, 20, 30, 40], yt: [0, 0.25, 0.5, 0.75, 1], yf: v => v.toFixed(2), yl: 'purity Tr ρ²', xl: 'epoch', tipx: v => 'epoch ' + v,
+    series: [{ label: 'Post-selection training (traced)', x: T.ps.epoch, y: T.ps.purity, color: COL.ps }, { label: 'Discard training', x: T.discard.epoch, y: T.discard.purity, color: COL.plain }],
+    after: (f, x, y) => txt(f.g, x(1) + 6, y(0.80) - 6, 'purifies at epoch 1', { 'font-size': 10.5 }) });
+  drawLines('c-traj-acc', { h: 220, x0: 0, x1: 40, y0: 0.45, y1: 0.85, xt: [0, 10, 20, 30, 40], yt: [0.5, 0.6, 0.7, 0.8], yf: v => v.toFixed(1), yl: 'val acc.', xl: 'epoch', tipx: v => 'epoch ' + v,
+    series: [{ label: 'Discard training, read by trace', x: T.discard.epoch, y: T.discard.acc_tr, color: COL.plain, end: 'trace' },
+             { label: 'Discard training, read by post-selection', x: T.discard.epoch, y: T.discard.acc_ps, color: COL.plain, dash: true, end: 'post-sel.' }], m: { r: 56 } });
+  legend('lg-traj', [{ label: 'post-selection training', color: COL.ps }, { label: 'discard training', color: COL.plain }, { label: 'read through the other readout', color: 'var(--ink-3)', kind: 'dash' }]);
+}
+function drawShots() {
+  const S = REPORT.shots_m4;
+  drawLines('c-shots', { h: 270, xlog: true, x0: 24, x1: 11000, y0: 0.42, y1: 0.9, xt: S.shots, yt: [0.5, 0.6, 0.7, 0.8, 0.9], yf: v => v.toFixed(1), yl: 'test std acc.', xl: 'shots per circuit', xf: fmtN,
+    tipx: v => fmtN(v) + ' shots', m: { r: 20 },
+    series: S.models.map(m => ({ label: m.label, x: S.shots, y: m.acc, sd: m.sd, band: true, color: colFor(m.label) })),
+    after: (f, x, y) => { txt(f.g, x(32) + 8, y(0.456) + 14, 'post-sel. keeps ~3 of 32', { 'font-size': 10.5 }); } });
+  legend('lg-shots', S.models.map(m => ({ label: m.label, color: colFor(m.label) })));
+}
+function drawSTT(id, key, title) {
+  const S = REPORT.shots_to_target;
+  const r = drawLines(id, { h: 250, x0: 0.575, x1: 0.825, ylog: true, y0: 40, y1: 40000, xt: S.targets, yt: [50, 100, 300, 1000, 3000, 10000, 30000], yf: fmtN, xf: v => Math.round(v * 100) + '%',
+    yl: 'shots per circuit (log)', xl: 'target accuracy · ' + title, tipx: v => 'to ' + Math.round(v * 100) + '%', tipy: v => fmtN(v) + ' shots', m: { l: 50 },
+    series: S[key].map(m => ({ label: m.label, x: S.targets, y: m.shots, color: colFor(m.label) })) });
+  if (key === 'm8') txt(r.f.g, r.x(0.8) - 4, r.y(30000) + 4, 'plain: not reached', { 'text-anchor': 'end', 'font-size': 10.5 });
+}
+function drawDumbbell(id, rows, title) {
+  const f = frame(id, rows.length * 34 + 58, { l: 132, r: 18, b: 34, t: 22 });
+  const x = lin(0.5, 0.88, 0, f.iw);
+  const gr = el('g', { class: 'grid' }, f.g); [0.6, 0.7, 0.8].forEach(t => el('line', { x1: x(t), x2: x(t), y1: 0, y2: f.ih }, gr));
+  xAxis(f, x, [0.6, 0.7, 0.8], v => v.toFixed(1), 'test std acc.');
+  txt(f.g, -f.M.l + 2, -8, title, { 'font-weight': 600, fill: 'var(--ink)', 'font-size': 12 });
+  rows.forEach((d, i) => {
+    const yy = i * 34 + 18, c = colFor(d.label);
+    txt(f.g, -10, yy + 4, d.label, { 'text-anchor': 'end', 'font-size': 12 });
+    el('line', { x1: x(d.clean), x2: x(d.honest), y1: yy, y2: yy, stroke: c, 'stroke-width': 2, opacity: 0.6 }, f.g);
+    dot(f.g, x(d.clean), yy, c, `<b>${d.label}</b><br>noiseless ${fmt(d.clean)}`, 4.5, true);
+    dot(f.g, x(d.honest), yy, c, `<b>${d.label}</b><br>honest noise ${fmt(d.honest)} (${((d.honest - d.clean) * 100).toFixed(1)} pts)`);
+    txt(f.g, x(d.honest) - 8, yy + 4, fmt(d.honest), { 'text-anchor': 'end', class: 'num', 'font-size': 11 });
+  });
+}
+function drawDevices() {
+  const D = REPORT.noise.devices;
+  drawGrouped('c-dev', 'lg-dev', D.cols, D.rows, 0.7, 0.87, [0.7, 0.75, 0.8, 0.85], 'test std acc.');
+}
+function drawBranch() {
+  const B = REPORT.branch, rowH = 42, f = frame('c-branch', B.length * rowH + 50, { l: 178, r: 70, b: 34 });
+  const x = lin(0.5, 0.9, 0, f.iw);
+  const gr = el('g', { class: 'grid' }, f.g); [0.5, 0.6, 0.7, 0.8, 0.9].forEach(t => el('line', { x1: x(t), x2: x(t), y1: 0, y2: f.ih }, gr));
+  xAxis(f, x, [0.5, 0.6, 0.7, 0.8, 0.9], v => v.toFixed(1), 'test std acc.');
+  el('line', { x1: x(0.874), x2: x(0.874), y1: -4, y2: f.ih, stroke: COL.ps, 'stroke-dasharray': '4 4' }, f.g);
+  txt(f.g, x(0.874), -6, 'post-sel. 0.874', { 'text-anchor': 'middle', 'font-size': 10.5 });
+  B.forEach((d, i) => {
+    const yy = i * rowH + rowH / 2, c = colFor(d.label);
+    txt(f.g, -10, yy + 4, d.label, { 'text-anchor': 'end', 'font-size': 12 });
+    const mid = a => (a[0] + a[1]) / 2;
+    el('line', { x1: x(mid(d.success)), x2: x(mid(d.full)), y1: yy, y2: yy, stroke: 'var(--ink-3)', 'stroke-width': 1.5, 'stroke-dasharray': '2 3' }, f.g);
+    for (const [k, hollow, lab] of [['success', true, 'success branch alone'], ['full', false, 'full traced readout']]) {
+      const a = d[k];
+      if (a[1] > a[0]) el('line', { x1: x(a[0]), x2: x(a[1]), y1: yy, y2: yy, stroke: c, 'stroke-width': 5, 'stroke-linecap': 'round', opacity: 0.35 }, f.g);
+      dot(f.g, x(mid(a)), yy, c, `<b>${d.label}</b><br>${lab}: ${a[0] === a[1] ? fmt(a[0]) : fmt(a[0]) + '–' + fmt(a[1])}`, 5, hollow);
+    }
+    txt(f.g, f.iw + 8, yy + 4, (d.ratio[0] === d.ratio[1] ? d.ratio[0] : d.ratio[0] + '–' + d.ratio[1]) + '×', { class: 'num', 'font-size': 11 });
+  });
+  txt(f.g, f.iw + 8, -6, 'fail/succ.', { 'font-size': 10.5 });
+  legend('lg-branch', [{ label: 'success branch alone', color: 'var(--ink-3)', kind: 'dot' }, { label: 'full traced readout (filled)', color: 'var(--ink-2)', kind: 'dot' }]);
+}
+function drawObjective() {
+  const O = REPORT.objective, f = frame('c-obj', 250, { l: 50, r: 190, b: 34 });
+  const x = lin(0, 1, 0, f.iw), y = lin(2.95, 3.85, f.ih, 0);
+  yAxis(f, y, [3.0, 3.2, 3.4, 3.6, 3.8], v => v.toFixed(1), 'val loss');
+  txt(f.g, x(0), f.ih + 18, 'scale 14.3 (T = 0.07)', { 'text-anchor': 'start', 'font-size': 11.5 });
+  txt(f.g, x(1), f.ih + 18, 'own best scale', { 'text-anchor': 'end', 'font-size': 11.5 });
+  O.forEach(d => {
+    const c = colFor(d.label);
+    line(f.g, [[x(0), y(d.loss_T07)], [x(1), y(d.loss_best)]], { stroke: c });
+    dot(f.g, x(0), y(d.loss_T07), c, `<b>${d.label}</b><br>loss at T = 0.07: ${d.loss_T07}<br>val acc ${fmt(d.acc)}`);
+    dot(f.g, x(1), y(d.loss_best), c, `<b>${d.label}</b><br>loss at scale ${d.best_scale}: ${d.loss_best}`);
+    txt(f.g, x(1) + 10, y(d.loss_best) + 4, `${d.label} (×${d.best_scale})`, { 'font-size': 11 });
+  });
+  legend('lg-obj', O.map(d => ({ label: `${d.label}, val acc ${fmt(d.acc)}`, color: colFor(d.label) })));
+}
+
+// ---------- charts: geometry ----------
+const q = (a, p) => { const s = a.filter(v => v != null && isFinite(v)).sort((u, v) => u - v); if (!s.length) return null; const i = (s.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i); return s[lo] + (s[hi] - s[lo]) * (i - lo); };
+function rangeRows(id, rows, opts) {   // one row per group: median dot + IQR bar + 5-95% whisker
+  const rowH = 30, f = frame(id, rows.length * rowH + 48, { l: opts.l || 200, r: 24, b: 36 });
+  const x = lin(opts.x0, opts.x1, 0, f.iw);
+  const gr = el('g', { class: 'grid' }, f.g); opts.xt.forEach(t => el('line', { x1: x(t), x2: x(t), y1: 0, y2: f.ih }, gr));
+  xAxis(f, x, opts.xt, opts.xf || (v => v), opts.xl);
+  (opts.refs || []).forEach(r => { el('line', { x1: x(r.v), x2: x(r.v), y1: -4, y2: f.ih, stroke: 'var(--ink-3)', 'stroke-dasharray': '2 3' }, f.g); txt(f.g, x(r.v) + 3, -4, r.label, { 'font-size': 10.5 }); });
+  rows.forEach((r, i) => {
+    const yy = i * rowH + rowH / 2, v = r.vals, med = q(v, 0.5);
+    if (med == null) return;
+    txt(f.g, -10, yy + 4, r.label, { 'text-anchor': 'end', 'font-size': 12, fill: r.sub ? 'var(--ink-3)' : 'var(--ink-2)' });
+    el('line', { x1: x(q(v, 0.05)), x2: x(q(v, 0.95)), y1: yy, y2: yy, stroke: r.color, 'stroke-width': 1.5, opacity: 0.6 }, f.g);
+    el('rect', { x: x(q(v, 0.25)), y: yy - 5, width: Math.max(2, x(q(v, 0.75)) - x(q(v, 0.25))), height: 10, rx: 3, fill: r.color, opacity: 0.3 }, f.g);
+    dot(f.g, x(med), yy, r.color, `<b>${r.label}</b><br>median ${med.toFixed(3)}<br>IQR ${q(v, .25).toFixed(3)}–${q(v, .75).toFixed(3)}<br>${v.length} sentences`, 5, !!r.hollow);
+  });
+}
+function drawGeometry() {
+  if (!GEO || !GEO.models) { document.getElementById('geo-sub').textContent += ' (results pending)'; return; }
+  const G = GEO;
+  // facts
+  const F = document.getElementById('geo-facts'); F.innerHTML = '';
+  for (const fa of G.facts) { const d = document.createElement('div'); d.className = 'fact'; d.innerHTML = `<div class="v">${fa.v}</div><div class="k">${fa.k}</div>`; F.append(d); }
+  // DLA: boxes
+  const boxes = G.dla.boxes;
+  const r1 = drawLines('c-dla-box', { h: 250, x0: 0.7, x1: 7.3, ylog: true, y0: 2, y1: 30000, xt: [1, 2, 3, 4, 5, 6, 7], yt: [3, 10, 100, 1000, 10000], yf: fmtN, xl: 'wires in one word box (N)', yl: 'dimension (log)',
+    tipx: v => 'N = ' + v, tipy: v => fmtN(v), m: { r: 20 },
+    series: [{ label: 'dim of the DLA, 3 layers', x: boxes.filter(b => b.L === 3).map(b => b.N), y: boxes.filter(b => b.L === 3).map(b => b.dim), color: COL.ps },
+             { label: 'dim su(2^N) = 4^N − 1', x: boxes.filter(b => b.L === 3).map(b => b.N), y: boxes.filter(b => b.L === 3).map(b => b.full), color: 'var(--ink-3)', dash: true },
+             { label: 'trainable angles, 3 layers', x: boxes.filter(b => b.L === 3).map(b => b.N), y: boxes.filter(b => b.L === 3).map(b => b.params), color: COL.kd }] });
+  txt(r1.f.g, 4, 12, 'one word box', { 'font-weight': 600, fill: 'var(--ink)', 'font-size': 12 });
+  // DLA: sentence structures: coverage = params / dim
+  const st = G.dla.structures.filter(s => s.dim);
+  const f2 = frame('c-dla-sent', 250, { l: 50, r: 20, b: 36 });
+  const ns = [...new Set(st.map(s => s.n))].sort((a, b) => a - b);
+  const x2 = lin(Math.min(...ns) - 0.6, Math.max(...ns) + 0.6, 0, f2.iw), y2 = logs(0.0001, 1, f2.ih, 0);
+  yAxis(f2, y2, [0.0001, 0.001, 0.01, 0.1, 1], v => (v * 100) + '%', 'angles / dim g (log)');
+  xAxis(f2, x2, ns, v => v, 'qubits in the sentence circuit (3 + m)');
+  txt(f2.g, 4, 12, 'sentence circuits', { 'font-weight': 600, fill: 'var(--ink)', 'font-size': 12 });
+  st.forEach((s, i) => {
+    const jitter = ((i * 37) % 11 - 5) * 2.2;
+    const full = s.dim === s.full;
+    dot(f2.g, x2(s.n) + jitter, y2(s.params / s.dim), full ? COL.ps : COL.plain,
+      `<b>${s.n} qubits (m = ${s.m})</b><br>${s.params} angles, dim g = ${s.dim.toLocaleString()}${full ? ' = full su(2ⁿ)' : ' (not full: ' + s.full.toLocaleString() + ')'}<br>${s.count} val sentences`, Math.min(7, 3 + Math.sqrt(s.count) / 4));
+  });
+  legend('lg-dla', [{ label: 'DLA dimension', color: COL.ps }, { label: '4ⁿ − 1 (full su(2ⁿ))', color: 'var(--ink-3)', kind: 'dash' }, { label: 'trainable angles', color: COL.kd }]);
+  document.getElementById('h-dla').textContent = G.dla.headline;
+  document.getElementById('cap-dla').innerHTML = G.dla.caption + '<span class="src">geometry.py · next_steps X6.1</span>';
+  // QFI rank / ceiling
+  const M = G.models;
+  const rows = [];
+  for (const m of M) {
+    rows.push({ label: m.label + ': full 7+ qubit state', vals: m.frac_full, color: m.color });
+    rows.push({ label: '… post-selected |φ⟩', vals: m.frac_ps, color: m.color, sub: true, hollow: true });
+    rows.push({ label: '… traced ρ', vals: m.frac_tr, color: m.color, sub: true });
+  }
+  rangeRows('c-qfi', rows, { x0: 0, x1: 1.02, xt: [0, 0.25, 0.5, 0.75, 1], xf: v => (v * 100) + '%', xl: 'Fisher rank / its ceiling', l: 230 });
+  legend('lg-qfi', [{ label: 'median (dot), IQR (bar), 5–95% (line)', color: 'var(--ink-3)', kind: 'dot' }].concat(M.map(m => ({ label: m.label, color: m.color }))));
+  document.getElementById('h-qfi').textContent = G.qfi.headline;
+  document.getElementById('cap-qfi').innerHTML = G.qfi.caption + '<span class="src">geometry.py · next_steps X6.2</span>';
+  // spectrum of a typical sentence
+  const sp = G.spectrum;
+  const r3 = drawLines('c-spec', { h: 250, x0: 0, x1: sp.P + 1, ylog: true, y0: 1e-8, y1: 2, xt: sp.xt, yt: [1e-8, 1e-6, 1e-4, 1e-2, 1], yf: v => v === 1 ? '1' : '1e' + Math.round(Math.log10(v)), xl: 'eigenvalue index (sorted)', yl: 'QFI eigenvalue / largest (log)',
+    tipx: v => '#' + v, tipy: v => v.toExponential(1), m: { r: 20 },
+    series: sp.series.map(s => ({ label: s.label, x: s.y.map((_, i) => i + 1), y: s.y.map(v => v >= 1e-8 ? v : null), color: s.color, dash: s.dash })),
+    after: (f, x, y) => { sp.marks.forEach(mk => { el('line', { x1: x(mk.at + 0.5), x2: x(mk.at + 0.5), y1: 0, y2: f.ih, stroke: 'var(--ink-3)', 'stroke-dasharray': '2 3' }, f.g); txt(f.g, x(mk.at + 0.5) + 3, 12, mk.label, { 'font-size': 10.5 }); }); } });
+  legend('lg-spec', sp.series.map(s => ({ label: s.label, color: s.color, kind: s.dash ? 'dash' : undefined })));
+  document.getElementById('h-spec').textContent = sp.headline;
+  document.getElementById('cap-spec').innerHTML = sp.caption + '<span class="src">geometry.py</span>';
+  // entropy
+  rangeRows('c-ent', G.entropy.rows.map(r => ({ ...r, color: r.color })), { x0: 0, x1: 3.05, xt: [0, 0.5, 1, 1.5, 2, 2.5, 3], xl: 'S₂ = −log₂ Tr ρ² (bits)', refs: [{ v: 3, label: 'I/8' }], l: 230 });
+  legend('lg-ent', G.entropy.legend);
+  document.getElementById('h-ent').textContent = G.entropy.headline;
+  document.getElementById('cap-ent').innerHTML = G.entropy.caption + '<span class="src">geometry.py · next_steps X4.1</span>';
+  // magic
+  rangeRows('c-magic', G.magic.rows, { x0: 0, x1: 2.3, xt: [0, 0.5, 1, 1.5, 2], xl: 'stabiliser Rényi entropy M₂ (bits)', refs: G.magic.refs, l: 230 });
+  legend('lg-magic', G.magic.legend);
+  document.getElementById('h-magic').textContent = G.magic.headline;
+  document.getElementById('cap-magic').innerHTML = G.magic.caption + '<span class="src">geometry.py · next_steps X4.1</span>';
+}
+
+function drawAll() {
+  drawDiagram(); drawWaterfall(); drawNoEffect(); drawNegtype(); drawDepth(); drawSwap(); drawBudget(); drawTraj(); drawShots();
+  drawSTT('c-stt4', 'm4', 'm = 4'); drawSTT('c-stt8', 'm8', 'm = 8');
+  legend('lg-stt', [{ label: 'Post-selection', color: COL.ps }, { label: 'Discard, plain', color: COL.plain }, { label: 'Discard, warm start', color: COL.ws }, { label: 'Discard, distilled (m = 4)', color: COL.kd }]);
+  drawDumbbell('c-noise4', REPORT.noise.m4, 'm = 4 (4 discarded qubits)'); drawDumbbell('c-noise8', REPORT.noise.m8, 'm = 8');
+  legend('lg-noise', [{ label: 'noiseless', color: 'var(--ink-3)', kind: 'dot' }, { label: 'honest noise (filled)', color: 'var(--ink-2)', kind: 'dot' }, { label: 'Discard, 2 layers', color: COL.other }]);
+  drawDevices(); drawBranch(); drawObjective(); drawGeometry();
+}
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(drawAll, 120); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawAll);
+new MutationObserver(drawAll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+document.fonts && document.fonts.ready.then(drawAll);
+drawAll();
+</script>
