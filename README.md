@@ -1,4 +1,4 @@
-# QuLIP: compositional vision-language models as variational quantum circuits
+# QCLIP: compositional vision-language models as variational quantum circuits
 
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?logo=PyTorch&logoColor=white)](https://pytorch.org/)
