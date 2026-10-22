@@ -75,7 +75,7 @@ class RunManager:
             "val_metrics": metrics
         }
         torch.save(payload, self.checkpoint_path)
-        if is_best:
+        if is_best and self.config.get('save_best', True):   # fixed-budget runs report last.pt and can skip best.pt
             torch.save(payload, self.best_checkpoint_path)
 
     def fit(self, train_loader, val_loader, eval_mapper):
