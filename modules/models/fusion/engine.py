@@ -1,4 +1,4 @@
-import torch, yaml, mlflow, time, socket, math
+import torch, yaml, mlflow, time, socket, math, json, csv
 from collections import defaultdict
 from typing import Callable
 import torch.nn.functional as F
@@ -30,6 +30,7 @@ class RunManager:
         self.best_checkpoint_path = self.checkpoint_dir / f"best.pt"
 
         self.eval_tasks = config['dataset']['val'].get('diagnostics', ['global_retrieval'])
+        self.perf = []
 
     def _setup_environment(self):
         # never reuse a run directory (runs started in the same minute used to share one)
@@ -46,6 +47,24 @@ class RunManager:
         mlflow.pytorch.autolog(log_models=False)
         mlflow.set_tracking_uri(f"sqlite:///{mlf_db_path}")
         mlflow.set_experiment(self.dataset_name+'_train')
+
+    def _log_perf(self, epoch, train_s, n_samples, val_s):
+        # steps.csv: per-step losses (the curve a speed-up must reproduce); run_meta.json: speed, memory, parameter counts
+        with open(self.checkpoint_dir / "steps.csv", 'a', newline='') as f:
+            w = csv.writer(f)
+            if epoch == 0: w.writerow(["epoch", "step", "loss", "step_s"])
+            for i, (l, dt) in enumerate(self.trainer.step_log): w.writerow([epoch, i, repr(l), f"{dt:.4f}"])
+        self.trainer.step_log = []
+        self.perf.append({"epoch": epoch, "train_s": train_s, "train_samples_per_s": n_samples / train_s, "val_eval_s": val_s,
+                          "peak_mem_gb": torch.cuda.max_memory_allocated() / 2**30 if torch.cuda.is_available() else None})
+        tm, im = self.trainer.text_model, self.trainer.image_model
+        meta = {"run_name": self.run_name, "seed": self.seed, "git_commit": self.config['git_commit'], "host": socket.gethostname(),
+                "gpu": torch.cuda.get_device_name() if torch.cuda.is_available() else None,
+                "params_text": sum(p.numel() for p in tm.parameters()),
+                "params_text_by_order": tm.param_breakdown() if hasattr(tm, 'param_breakdown') else None,
+                "params_image_trainable": sum(p.numel() for p in im.parameters() if p.requires_grad), "epochs": self.perf}
+        with open(self.checkpoint_dir / "run_meta.json", 'w') as f:
+            json.dump(meta, f, indent=1)
 
     def _save_checkpoint(self, epoch, loss, metrics, is_best=False):
         payload = {
@@ -76,8 +95,8 @@ class RunManager:
             mlflow.log_params({
                 "epochs": self.config['epochs'],
                 "batch_size": self.config['batch_size'],
-                "learning_rate_quantum": self.config['qlr'],
-                "learning_rate_classical": self.config['clr'],
+                "learning_rate_quantum": self.config.get('qlr', self.config.get('lr')),
+                "learning_rate_classical": self.config.get('clr'),
                 "embedding_qubits": self.config.get('embedding_qubits', 0),
                 "temperature_parameter": self.trainer.loss_fn.temperature,
                 "device_target": str(self.device),
@@ -95,8 +114,8 @@ class RunManager:
                 "weight_decay": self.config.get('weight_decay', 1e-4),
                 "warmup_epochs": self.config.get('warmup_epochs', 5),
                 "purity_weight": getattr(self.trainer.loss_fn, 'purity_weight', None),
-                "text_layers": self.config['text']['layers'],
-                "vision_layers": self.config['vision']['layers'],
+                "text_layers": self.config['text'].get('layers'),
+                "vision_layers": self.config['vision'].get('layers'),
                 "overrides": " ".join(self.config.get('overrides', [])) or "none",
                 "postselect_types": ",".join(self.config['text'].get('postselect_types') or []) or "none",
                 "env_qubits": self.config['vision'].get('env_qubits', 0),
@@ -132,6 +151,7 @@ class RunManager:
                 start_time = time.time()
                 if anneal and w0:   # purity penalty annealed linearly from purity_weight to 0 over purity_anneal_epochs
                     self.trainer.loss_fn.purity_weight = w0 * max(0.0, 1.0 - epoch / anneal)
+                if torch.cuda.is_available(): torch.cuda.reset_peak_memory_stats()
                 loss = self.trainer.train_epoch(train_loader, eval_mapper)
                 elapsed_time = time.time() - start_time
 
@@ -142,11 +162,13 @@ class RunManager:
                     current_lr = self.scheduler.get_last_lr()[0]
                     mlflow.log_metric("learning_rate", current_lr, step=epoch)
 
+                t_eval = time.time()
                 metrics = self.evaluator.eval_set(
                     dataloader=val_loader,
                     tasks=self.eval_tasks,
                     eval_mapper=eval_mapper
                 )
+                self._log_perf(epoch, elapsed_time, len(train_loader.dataset), time.time() - t_eval)
 
                 mlflow.log_metrics(metrics, step=epoch)
                 for k, v in grad_norm_dict.items():
@@ -190,6 +212,7 @@ class ContrastiveTrainer:
         self.optimizer = optimizer
         self.loss_fn = loss_fn
         self.device = device
+        self.step_log = []   # (loss, seconds) per optimiser step, flushed to steps.csv each epoch
 
     @torch.no_grad()
     def grad_norm(self):
@@ -208,6 +231,12 @@ class ContrastiveTrainer:
 
         sym2param = getattr(self.text_model, 'sym2param', {})
         param2sym = {idx: sym for sym, idx in sym2param.items()}
+        if not sym2param:   # parameters keyed by name (ParameterDict): group by tensor order instead
+            sq = defaultdict(float)
+            for name, param in self.text_model.named_parameters():
+                if param.grad is not None:
+                    sq[f"order{param.dim()}" if name.startswith("params.") else "other"] += param.grad.norm(2).item() ** 2
+            return {**{k: v ** 0.5 for k, v in sorted(sq.items())}, "total_text": sum(sq.values()) ** 0.5}
 
         for name, param in self.text_model.named_parameters():
             if param.grad is None:
@@ -248,6 +277,7 @@ class ContrastiveTrainer:
         self.text_model.train()
         epoch_loss = 0.0
 
+        t_step = time.time()
         for batch in dataloader:
             images, texts = batch_mapper(batch)
             images = images.to(self.device)
@@ -270,7 +300,9 @@ class ContrastiveTrainer:
 
             # torch.nn.utils.clip_grad_norm_(self.text_model.parameters(), max_norm=1.0)
             self.optimizer.step()
-            epoch_loss += loss.item() * images.shape[0]
+            l = loss.item()
+            epoch_loss += l * images.shape[0]
+            now = time.time(); self.step_log.append((l, now - t_step)); t_step = now
         
         return epoch_loss / len(dataloader.dataset)
 
@@ -326,6 +358,14 @@ class MMEvaluator:
         self.text_model = text_model.to(device)
         self.device = device
         self._sims_cache = None  # set by eval_set so several tasks share one encoding pass
+        self.abs_scores = not getattr(text_model, 'real_scores', False)   # |<a|b>| unless the model's embeddings are real
+
+    def _readout(self, s):
+        return s.abs() if self.abs_scores else s.real
+
+    def _score(self, a, b):
+        # row-wise score of paired embeddings
+        return self._readout(torch.sum(a.conj() * b, dim=1))
 
     @torch.no_grad()
     def _pair_sims(self, dataloader, choice):
@@ -349,11 +389,11 @@ class MMEvaluator:
                 m1_emb = self._encode_txt(batch["caption"])
                 pos_m2_emb = self._encode_img(batch["pos_image"])
                 neg_m2_emb = self._encode_img(batch["neg_image"])
-            pos_arr.append(torch.sum(m1_emb.conj() * pos_m2_emb, dim=1).abs())
-            neg_arr.append(torch.sum(m1_emb.conj() * neg_m2_emb, dim=1).abs())
+            pos_arr.append(self._score(m1_emb, pos_m2_emb))
+            neg_arr.append(self._score(m1_emb, neg_m2_emb))
             m1_u = unit(m1_emb)
-            pos_n_arr.append(torch.sum(m1_u.conj() * unit(pos_m2_emb), dim=1).abs())
-            neg_n_arr.append(torch.sum(m1_u.conj() * unit(neg_m2_emb), dim=1).abs())
+            pos_n_arr.append(self._score(m1_u, unit(pos_m2_emb)))
+            neg_n_arr.append(self._score(m1_u, unit(neg_m2_emb)))
         sims = tuple(torch.cat(a).cpu() for a in (pos_arr, neg_arr, pos_n_arr, neg_n_arr))
         if self._sims_cache is not None:
             self._sims_cache[key] = sims
@@ -410,7 +450,7 @@ class MMEvaluator:
             txt_emb = self._encode_txt(text_payload_batch)
             all_txt.append(txt_emb.cpu())
 
-        similarity = (torch.cat(all_img, dim=0) @ torch.cat(all_txt, dim=0).conj().T).abs()
+        similarity = self._readout(torch.cat(all_img, dim=0) @ torch.cat(all_txt, dim=0).conj().T)
         n_imgs, m_txts = similarity.shape
 
         mask = torch.zeros((n_imgs, m_txts), dtype=torch.bool, device=similarity.device)
@@ -471,22 +511,23 @@ class MMEvaluator:
 
     @torch.no_grad()
     def evaluate_sugarcrepe_pp(self, dataloader: torch.utils.data.DataLoader) -> float:
-        correct = total = 0
+        correct = p1 = p2 = total = 0
         for batch in dataloader:
             img_emb = self._encode_img(batch["image"])
             pos1_emb = self._encode_txt(batch["pos_caption1"])
             pos2_emb = self._encode_txt(batch["pos_caption2"])
             neg_emb = self._encode_txt(batch["neg_caption"])
             
-            sim_pos1 = torch.sum(img_emb.conj() * pos1_emb, dim=1).abs()
-            sim_pos2 = torch.sum(img_emb.conj() * pos2_emb, dim=1).abs()
-            sim_neg  = torch.sum(img_emb.conj() * neg_emb, dim=1).abs()
+            sim_pos1 = self._score(img_emb, pos1_emb)
+            sim_pos2 = self._score(img_emb, pos2_emb)
+            sim_neg  = self._score(img_emb, neg_emb)
             
             match = (sim_pos1 > sim_neg) & (sim_pos2 > sim_neg)
             correct += match.sum().item()
+            p1 += (sim_pos1 > sim_neg).sum().item(); p2 += (sim_pos2 > sim_neg).sum().item()
             total += img_emb.size(0)
             
-        return {"acc": correct / total}
+        return {"acc": correct / total, "acc_pos1": p1 / total, "acc_pos2": p2 / total}
 
     @torch.no_grad()
     def evaluate_winoground(self, dataloader) -> dict:
@@ -495,10 +536,10 @@ class MMEvaluator:
             i0, c0 = self._encode_img(batch["image_0"]), self._encode_txt(batch["caption_0"])
             i1, c1 = self._encode_img(batch["image_1"]), self._encode_txt(batch["caption_1"])
             
-            s_i0_c0 = torch.sum(i0.conj() * c0, dim=1).abs()
-            s_i0_c1 = torch.sum(i0.conj() * c1, dim=1).abs()
-            s_i1_c0 = torch.sum(i1.conj() * c0, dim=1).abs()
-            s_i1_c1 = torch.sum(i1.conj() * c1, dim=1).abs()
+            s_i0_c0 = self._score(i0, c0)
+            s_i0_c1 = self._score(i0, c1)
+            s_i1_c0 = self._score(i1, c0)
+            s_i1_c1 = self._score(i1, c1)
 
             t_match = (s_i0_c0 > s_i0_c1) & (s_i1_c1 > s_i1_c0)
             i_match = (s_i0_c0 > s_i1_c0) & (s_i1_c1 > s_i0_c1)

@@ -240,6 +240,7 @@ class InfoNCE(nn.Module):
     def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0):
         super().__init__()
         self.temperature = temperature
+        self.label_smoothing = label_smoothing
         self.cross_entropy = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
     def forward(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
@@ -248,12 +249,15 @@ class InfoNCE(nn.Module):
         text_emb = text_emb.flatten(start_dim=1)
         image_emb = image_emb.flatten(start_dim=1)
 
-        logits = (text_emb @ image_emb.conj().T).abs() / self.temperature
+        logits = (text_emb @ image_emb.T) / self.temperature   # classical embeddings: cosine logits (unit-norm inputs)
 
         loss_t2i = self.cross_entropy(logits, labels)
         loss_i2t = self.cross_entropy(logits.T, labels)
         
         return 0.5 * (loss_t2i + loss_i2t)
+
+    def describe(self) -> None:
+        print(f"{self.__class__.__name__} temperature: {self.temperature} | label_smoothing: {self.label_smoothing}")
 
 class HS_InfoNCE(BaseInfoNCELoss):
     # similarity = Tr(rho sigma) / sqrt(P_rho P_sigma): Hilbert-Schmidt cosine *including* the identity component
