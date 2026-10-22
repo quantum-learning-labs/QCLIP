@@ -16,6 +16,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=None, help='Overrides the config epochs (smoke tests)')
     parser.add_argument("--init_from", type=str, default=None,
                         help='Initialise text+image weights from this checkpoint (.pt), e.g. a non-discard model')
+    parser.add_argument("--train_frac", type=float, default=None, help='Train on a fixed random fraction of the train split (smoke tests)')
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help='Override a config value, e.g. --set qlr=3e-3 --set text.layers=3 (repeatable)')
     args = parser.parse_args()
@@ -24,6 +25,7 @@ if __name__ == "__main__":
     if args.init_from: config['init_from'] = args.init_from
     if args.run_name: config['run_name'] = args.run_name
     if args.epochs: config['epochs'] = args.epochs
+    if args.train_frac: config['train_frac'] = args.train_frac
     DATASET = config['dataset']['name']
     BATCH_SIZE = config['batch_size']
 
@@ -32,9 +34,9 @@ if __name__ == "__main__":
 
     log_phase("Setting Up Experiment Components")
     ansatz, image_model, text_model, loss_fn = build_experiment(config, DEV)
-    print(f"Model type: {config['model_type']} | CPTP: {config['text'].get('discard', False)} | Latent Qubits: {config['embedding_qubits']}")
-    print(f"Text Model: {text_model.__class__.__name__} ansatz: {ansatz.__class__.__name__} | qubits: (n: {config['text']['n']}, s: {config['text']['s']}, p: {config['text']['p']}) | layers: {config['text']['layers']} | curry: {config['text']['curry']}")
-    print(f"Image Model: {image_model.__class__.__name__} img_dim: {config['out_dim']} | method: {config['vision']['method']} | layers: {config['vision']['layers']}")
+    print(f"Model type: {config['model_type']} | CPTP: {config['text'].get('discard', False)} | Latent: {config.get('embedding_qubits', config.get('embedding_dim'))}")
+    print(f"Text Model: {text_model.__class__.__name__} ansatz: {ansatz.__class__.__name__} | dims: (n: {config['text']['n']}, s: {config['text']['s']}, p: {config['text']['p']}) | layers: {config['text'].get('layers')} | curry: {config['text'].get('curry')}")
+    print(f"Image Model: {image_model.__class__.__name__} img_dim: {config.get('out_dim', config.get('embedding_dim'))} | method: {config['vision']['method']} | layers: {config['vision'].get('layers')}")
 
     log_phase("Compiling Symbolic Datasets")
     data_engine = DataEngine(config, ansatz, DEV)
@@ -74,7 +76,9 @@ if __name__ == "__main__":
     elif args.init_from:
         ck = CheckpointManager.load_model(args.init_from, image_model, text_model, DEV)
         print(f"Initialised weights from {args.init_from} (epoch {ck.get('epoch')})")
-    print(f"Model Parameter Counts: Image={sum(p.numel() for p in image_model.parameters()):,} | Text={sum(p.numel() for p in text_model.parameters()):,}")
+    text_model.to(DEV)   # text_init creates the parameters on the CPU
+    print(f"Model Parameter Counts: Image={sum(p.numel() for p in image_model.parameters()):,} | Text={sum(p.numel() for p in text_model.parameters()):,}"
+          + (f" {text_model.param_breakdown()}" if hasattr(text_model, 'param_breakdown') else ""))
 
     log_phase("Preparing Pipeline Execution")
     train_loader = data_engine.get_loader(compiled_train, split='train')
@@ -82,13 +86,16 @@ if __name__ == "__main__":
 
     loss_fn.to(DEV)
     loss_params = [p for p in loss_fn.parameters() if p.requires_grad]   # e.g. a learnable logit scale
-    quantum_params = list(text_model.parameters()) + list(image_model.params)
+    # image towers with a `params` list keep their projector in a second group; others train all their parameters
+    image_params = list(image_model.params) if hasattr(image_model, 'params') else [p for p in image_model.parameters() if p.requires_grad]
+    quantum_params = list(text_model.parameters()) + image_params
     classical_params = list(image_model.projector.parameters()) if config['vision']['method'] == 'mlp' else []
+    lr = config.get('qlr', config.get('lr'))
 
     # optimizer = adaptive_optimizer(text_model, image_model, base_qlr=config['qlr'], base_clr=config['clr'], weight_decay=1.8)
     optimizer = torch.optim.Adam(
-        [{'params': quantum_params, 'lr': config['qlr']},
-         {'params': classical_params, 'lr': config['clr']}]
+        [{'params': quantum_params, 'lr': lr},
+         {'params': classical_params, 'lr': config.get('clr', lr)}]
         + ([{'params': loss_params, 'lr': config.get('temperature_lr', 1e-3), 'weight_decay': 0.0}] if loss_params else []), 
         betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4)
     )
@@ -99,8 +106,8 @@ if __name__ == "__main__":
     scheduler_cosine = CosineAnnealingLR(optimizer, T_max=total_epochs - warmup_epochs, eta_min=1e-6)
     scheduler = SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_epochs])
 
-    print(f"Optimizer: {optimizer.__class__.__name__} | Quantum LR: {config['qlr']} | Classical LR: {config['clr']} | Weight Decay: {config.get('weight_decay', 1e-4)}")
-    print(f"Scheduler: {scheduler.__class__.__name__} | Warmup Epochs: {warmup_epochs} | Total Epochs: {total_epochs} | Patience : {config['patience']} | Delta : {config['min_delta']}")
+    print(f"Optimizer: {optimizer.__class__.__name__} | LR: {lr} | Classical LR: {config.get('clr', lr)} | Weight Decay: {config.get('weight_decay', 1e-4)}")
+    print(f"Scheduler: {scheduler.__class__.__name__} | Warmup Epochs: {warmup_epochs} | Total Epochs: {total_epochs} | Patience : {config.get('patience', 15)} | Delta : {config.get('min_delta', 1e-3)}")
     loss_fn.describe()
     print(f"Training for {total_epochs} epochs with batch size {BATCH_SIZE}")
 

@@ -69,12 +69,16 @@ class BaseDatasetRetriever():
     def retrieve(self):
         """Unified execution execution method with validation checks."""
         self.raw_dir.mkdir(parents=True, exist_ok=True)
+        if self.dataset_url is None:   # local-only datasets (svo-probes, aro): raw pickles must already be in raw/
+            if not self.data:
+                raise FileNotFoundError(f"{self.dataset_name} has no download source and {self.raw_dir} has no .pkl files")
+            return self.data
         ds = {}
         if self.subsets is not None:
             for subset in self.subsets:
                 tmp_ds = load_dataset(self.dataset_url, subset, cache_dir=str(self.data_root / ".hf-cache")) 
                 if len(tmp_ds) == 1:
-                    ds[subset] = tmp_ds.values()[0]
+                    ds[subset] = list(tmp_ds.values())[0]
                 else:
                     raise ValueError(f"Expected a single split for subset {subset}, but got {len(tmp_ds)} splits.")
             splits = self.subsets

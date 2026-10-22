@@ -12,7 +12,7 @@ class DataEngine:
         self.device = device
         
         self.DatasetClass, self.collate_fn, self.eval_mapper = build_dataset(config)
-        if config['vision']['method'] == 'amp':
+        if config['vision']['method'] in ('amp', 'ttn'):   # pixel towers (TTN) need 64x64 tensors; .pt stores ignore it
             self.img_transform = v2.Compose([
                 v2.ToImage(),               
                 v2.ToDtype(torch.float32, scale=True),
@@ -40,6 +40,8 @@ class DataEngine:
             
         if split == 'train' or split == 'val':
             data = load_pkl(self.config["dataset"][split]["text_path"])
+            if split == 'train' and self.config.get('train_frac'):   # fixed random subset (smoke tests); saved in the run config
+                data = data.sample(frac=self.config['train_frac'], random_state=0).reset_index(drop=True)
             return self.ansatz.compile_dataset(data, **compile_kwargs)
         elif split not in ['train', 'val']:
             data = load_pkl(self.config["dataset"]["test"][split]["text_path"])
@@ -81,6 +83,12 @@ class DataEngine:
                 symbol_arr += data[sym_col].tolist()
                 einsum_arr += data[einsum_col].tolist()
             tn_arr = [(e, t) for e, t in zip(einsum_arr, symbol_arr) if not isinstance(e, float)]
+            first = tn_arr[0][1] if tn_arr else None
+            if isinstance(first, list) and first and isinstance(first[0], list): first = first[0]
+            if first and 'op_type' not in first[0]:   # plain tensors (no gates): count sentences and contraction structures
+                exprs = [x for e, _ in tn_arr for x in (e if isinstance(e, list) else [e])]
+                print(f"{model.__class__.__name__}: {len(exprs)} sentences | {len(set(exprs))} distinct contraction structures")
+                return None
             metrics = tn_metadata(tn_arr)
             print(f"Metrics for {model.__class__.__name__}:")
             print(f" (Max) Qubits: {metrics['max'][0]:.4f} | Gates: {metrics['max'][1]:.4f} | Depth: {metrics['max'][2]:.4f} | Rank: {metrics['max'][3]:.4f} | 2-Qubit Gates: {metrics['max'][4]:.4f}")
@@ -90,7 +98,8 @@ class DataEngine:
             print(f"Metrics for {model.__class__.__name__}:")
             print(f" Qubits: {metrics[0]:.4f} | Gates: {metrics[1]:.4f} | Depth: {metrics[2]:.4f} | Rank: {metrics[3]:.4f} | 2-Qubit Gates: {metrics[4]:.4f}")
         else:
-            raise ValueError(f"Model {model.__class__.__name__} does not support einsum description.")
+            print(f"{model.__class__.__name__}: no einsum description")
+            return None
         if return_metrics:
             return metrics
 

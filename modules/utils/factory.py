@@ -40,13 +40,16 @@ def build_experiment(config, device):
         mps_proc = MPS(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'])
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc)
         
-        if config['vision']['method'] == 'amp':
-            image_model = FrozenCLIP().to(device)
-        else:
+        method = config['vision']['method']
+        if method == 'clip':   # precomputed, L2-normalised CLIP ViT-B/32 vectors (embeddings.embed_images)
+            image_model = FrozenCLIP(normalize=True).to(device)
+        elif method == 'ttn':
             image_model = TTNImageModel(embedding_dim=config['embedding_dim']).to(device)
+        else:
+            raise ValueError(f"tn: vision.method must be 'clip' or 'ttn', got '{method}'")
 
         text_model = TNModel(out_dim=config['embedding_dim']).to(device)
-        loss_fn = InfoNCE()
+        loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
         
     elif model_type == "vqc":
         compiler = config['text']

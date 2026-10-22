@@ -71,7 +71,7 @@ def embed_images(data_generator, out_path, df_path = None, device: str = 'cpu'):
                 emb = model.encode_image(img_t).squeeze(0).cpu().float()
             if df_store:
                 idx_str, col, img_hash = key.split('::')
-                cache_key = int(img_hash)
+                cache_key = int(img_hash, 16)   # md5 hex digest
                 df.at[int(idx_str), f'{col}_id'] = cache_key
             else:
                 cache_key = int(key)

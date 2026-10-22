@@ -74,7 +74,7 @@ def serialise_subsapce(sub_config):
     return "_".join(parts)
 
 def gen_id(config):
-    q = str(config['embedding_qubits'])
+    q = str(config.get('embedding_qubits', config.get('embedding_dim')))
     if config.get('text', {}).get('discard', False):
         q += 'd'
     else:
@@ -133,7 +133,7 @@ def setup_exp(config_path: str, seed=None, overrides=None):
     return config, device, seed
 
 # keys that define the model: an eval config must agree with the training config on these
-MODEL_KEYS = ['model_type', 'embedding_qubits', 'out_dim', 'text', 'vision']
+MODEL_KEYS = ['model_type', 'embedding_qubits', 'embedding_dim', 'out_dim', 'text', 'vision']
 
 def resolve_eval_config(config_arg, checkpoint_path):
     saved = Path(checkpoint_path).parent / 'config.yaml' if checkpoint_path is not None else None

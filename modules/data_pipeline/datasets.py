@@ -37,8 +37,8 @@ class BaseDataset(Dataset):
         if pd.isna(image_input) or image_input is None:
             raise ValueError("Encountered empty or missing image identifier reference row.")
         
-        if self.img_store == 'pt':
-            return self.embeddings[int(image_input)]
+        if self.img_store == 'pt':   # keys are int image ids; file names like 000000391895.jpg map to 391895
+            return self.embeddings[int(Path(str(image_input)).stem)]
         elif self.img_store == 'df':
             img = image_input.convert("RGB")
         elif self.img_store == 'zip':
