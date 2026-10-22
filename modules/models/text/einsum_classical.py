@@ -5,7 +5,7 @@ import torch.nn as nn
 from opt_einsum import contract_expression
 from opt_einsum import parser as oe_parser
 from tqdm import tqdm
-import os
+import os, zlib
 
 # TN_LEGACY_PATH_CACHE=1 restores the old cache key (incl. group size); only for the equivalence check
 LEGACY_PATH_CACHE = os.environ.get('TN_LEGACY_PATH_CACHE') == '1'
@@ -61,48 +61,50 @@ class TNModel(nn.Module):
             return res
         return []
 
-    def init_params(self, generator=None):
+    @staticmethod
+    def _init_tensor(shape, generator=None):
+        param = nn.Parameter(torch.empty(shape))
+        order = len(shape)
+        if order == 0:
+            nn.init.constant_(param, 1.0)
+        elif order == 1:
+            nn.init.normal_(param, mean=0.0, std=1.0 / math.sqrt(shape[0]), generator=generator)
+        else:
+            fan_out = shape[0]
+            fan_in = math.prod(shape[1:])
+            std = math.sqrt(2.0 / (fan_in + fan_out))
+            nn.init.normal_(param, mean=0.0, std=std, generator=generator)
+        return param
+
+    def init_params(self):
         if not self.symbols:
             raise ValueError('Symbols not initialised. Instantiate through ')
-        
-        # self.params = nn.ParameterList([nn.Parameter(torch.empty(shape)) for shape in self.shapes])
-        # self.sym2param = nn.ParameterDict({sym: param for sym, param in zip(self.symbols, self.params)})
         for symbol, shape in zip(self.symbols, self.shapes):
-            if symbol in self.params:   # extend_symbols: keep trained tensors
-                continue
-            param = nn.Parameter(torch.empty(shape))
-            order = len(shape)
-
-            if order == 0:
-                nn.init.constant_(param, 1.0)
-            elif order == 1:
-                nn.init.normal_(param, mean=0.0, std=1.0 / math.sqrt(shape[0]), generator=generator)
-            else:
-                fan_out = shape[0]
-                fan_in = math.prod(shape[1:])
-                std = math.sqrt(2.0 / (fan_in + fan_out))
-                nn.init.normal_(param, mean=0.0, std=std, generator=generator)
-            self.params[symbol] = param
+            self.params[symbol] = self._init_tensor(shape)
 
     def extend_symbols(self, tn_arr, seed: int = 0):
-        # eval-time out-of-vocabulary word@type tensors: initialised (untrained) from a seeded generator so reruns
-        # are identical. Returns OOV stats: fraction of sentences with any unseen tensor, fraction of unseen tensors.
+        # eval-time out-of-vocabulary word@type tensors, initialised (untrained) from a generator seeded by (seed, name):
+        # the same tensor gets the same values whichever test sets ran before. OOV rates are relative to the trained
+        # vocabulary (the symbols present when this is first called).
+        if not hasattr(self, 'trained_symbols'):
+            self.trained_symbols = frozenset(self.symbols)
         known = set(self.symbols)
         n_sent = n_oov_sent = n_tensors = n_oov_tensors = 0
         new = {}
         for tensor_arr in tn_arr:
             flat = self._flatten_symbols(tensor_arr)
-            unseen = [s for s in flat if s['name'] not in known]
+            unseen = [s for s in flat if s['name'] not in self.trained_symbols]
             n_sent += 1; n_oov_sent += bool(unseen)
             n_tensors += len(flat); n_oov_tensors += len(unseen)
             for s in unseen:
-                new.setdefault(s['name'], tuple(s['shape']))
-        for name in sorted(new):
-            self.symbols.append(name); self.shapes.append(new[name])
+                if s['name'] not in known:
+                    new.setdefault(s['name'], tuple(s['shape']))
         if new:
             device = next(self.params.parameters()).device
-            self.init_params(generator=torch.Generator().manual_seed(seed))
-            self.params.to(device)
+            for name in sorted(new):
+                self.symbols.append(name); self.shapes.append(new[name])
+                gen = torch.Generator().manual_seed(seed * 1_000_003 + zlib.crc32(name.encode()))
+                self.params[name] = nn.Parameter(self._init_tensor(new[name], gen).data.to(device))
         return {"oov_sentence_frac": n_oov_sent / max(n_sent, 1), "oov_tensor_frac": n_oov_tensors / max(n_tensors, 1),
                 "oov_new_symbols": len(new)}
 
