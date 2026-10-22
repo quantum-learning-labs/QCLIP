@@ -103,7 +103,7 @@ if __name__ == "__main__":
     total_epochs = config['epochs']
 
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
-    scheduler_cosine = CosineAnnealingLR(optimizer, T_max=total_epochs - warmup_epochs, eta_min=1e-6)
+    scheduler_cosine = CosineAnnealingLR(optimizer, T_max=max(total_epochs - warmup_epochs, 1), eta_min=1e-6)
     scheduler = SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_epochs])
 
     print(f"Optimizer: {optimizer.__class__.__name__} | LR: {lr} | Classical LR: {config.get('clr', lr)} | Weight Decay: {config.get('weight_decay', 1e-4)}")

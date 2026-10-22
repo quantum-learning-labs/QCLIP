@@ -47,20 +47,26 @@ def coco_clip(device):
     torch.save(merged, final)
     print(f" wrote {final} ({len(merged)} images)")
 
-def parse(name, device, rename=None):
+# gated on HF: read the parquet of the downloaded snapshot directly
+WINOGROUND_PARQUET = DATA / '.hf-cache/hub/datasets--facebook--winoground/snapshots/b400e173549071916ad1b3d449293bc8d8b4b763/data/test-00000-of-00001.parquet'
+
+def parse(name, device, data=None):
     # HF download (BaseDatasetRetriever) + Bobcat parse (TextProcessor) into data/<name>/processed/_parsed/<split>.pkl
-    from modules.data_pipeline.retrieval import BaseDatasetRetriever
+    from modules.data_pipeline.retrieval import BaseDatasetRetriever, DATASET_SOURCES
     from modules.symbolic.text_processor import TextProcessor
-    retriever = BaseDatasetRetriever(name, data_root=str(DATA))
-    retriever.retrieve()
+    if data is None:
+        retriever = BaseDatasetRetriever(name, data_root=str(DATA))
+        retriever.retrieve()
+        data = retriever.data
+    text_labels = DATASET_SOURCES[name]['text_label']
     parsed = DATA / name / 'processed/_parsed'
-    todo = {k: v for k, v in retriever.data.items() if not (parsed / f'{k}.pkl').exists()}
-    for k, v in retriever.data.items():
+    todo = {k: v for k, v in data.items() if not (parsed / f'{k}.pkl').exists()}
+    for k, v in data.items():
         print(f" {name}/{k}: {len(v)} rows, columns {list(v.column_names if hasattr(v, 'column_names') else v.columns)}")
     if todo:
-        TextProcessor(PARSER_PATH, 64, device).text2diagram(path=parsed, dataset=todo, text_labels=retriever.text_labels)
+        TextProcessor(PARSER_PATH, 64, device).text2diagram(path=parsed, dataset=todo, text_labels=text_labels)
     stats = {}
-    for k, v in retriever.data.items():
+    for k, v in data.items():
         n_parsed = len(load_pkl(parsed / f'{k}.pkl'))
         stats[k] = {"rows": len(v), "parsed": n_parsed, "coverage": n_parsed / len(v)}
     print(f" {name} parse coverage: {stats}")
@@ -78,7 +84,9 @@ def sugarcrepe(device):
 def winoground(device):
     from modules.data_pipeline.embeddings import ImgStream, embed_images
     out = DATA / 'winoground/processed'
-    parsed, stats = parse('winoground', device)
+    import pandas as pd
+    raw = pd.read_parquet(WINOGROUND_PARQUET)
+    parsed, stats = parse('winoground', device, data={'test': raw[['id', 'image_0', 'image_1', 'caption_0', 'caption_1', 'tag']]})
     zpath = DATA / 'winoground/raw/images.zip'
     df = load_pkl(parsed / 'test.pkl')
     if not zpath.exists():
