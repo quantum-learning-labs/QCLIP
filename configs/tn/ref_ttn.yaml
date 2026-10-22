@@ -1,4 +1,4 @@
-# Step-1 reference, trainable tree-TN image tower on 64x64 pixels + TN text encoder (tn.yaml dims).
+# Step-1 reference, trainable tree-TN image tower on 64x64 pixels + TN text encoder (tn.yaml wire dims, strong MPS: bond 8, max_order 1 -> 0.54B params on full MSCOCO; bond 32/max_order 2 is 7.7B).
 # Fixed budget: last.pt is reported; val = 5k images held out of train2017; coco5k = val2017. Seeds 0,1,2.
 model_type: tn
 batch_size: 512
@@ -14,8 +14,8 @@ text:
   n: 128
   s: 128
   p: 128
-  bond_dim: 32
-  max_order: 2
+  bond_dim: 8
+  max_order: 1
 vision:
   method: ttn
 dataset:
