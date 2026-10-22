@@ -1,0 +1,107 @@
+# Step-1 reference, trainable tree-TN image tower on 64x64 pixels + TN text encoder (tn.yaml dims).
+# Fixed budget: last.pt is reported; val = 5k images held out of train2017; coco5k = val2017. Seeds 0,1,2.
+model_type: tn
+batch_size: 512
+lr: 0.001
+weight_decay: 0.0001
+warmup_epochs: 1
+epochs: 4
+patience: 1000
+min_delta: 0.0
+temperature: 0.07
+embedding_dim: 512
+text:
+  n: 128
+  s: 128
+  p: 128
+  bond_dim: 32
+  max_order: 2
+vision:
+  method: ttn
+dataset:
+  name: mscoco
+  class: modules.data_pipeline.datasets.CocoDataset
+  collate_fn: modules.data_pipeline.datasets.coco_collate_fn
+  eval_mapper: modules.models.fusion.engine.mscoco_mapper
+  train:
+    text_path: data/mscoco/processed/tn/train.pkl
+    img_path: data/mscoco/raw/images/train2017.zip
+  val:
+    text_path: data/mscoco/processed/tn/val_holdout.pkl
+    img_path: data/mscoco/raw/images/train2017.zip
+    diagnostics:
+    - global_retrieval
+  test:
+    coco5k:
+      class: modules.data_pipeline.datasets.CocoDataset
+      collate_fn: modules.data_pipeline.datasets.coco_collate_fn
+      text_path: data/mscoco/processed/validation.pkl
+      img_path: data/mscoco/raw/images/val2017.zip
+      task: global_retrieval
+      eval_mapper: modules.models.fusion.engine.mscoco_mapper
+    aro_rel:
+      class: modules.data_pipeline.datasets.ARODataset
+      collate_fn: modules.data_pipeline.datasets.aro_collate_fn
+      text_path: data/aro/processed/test_rel.pkl
+      img_path: data/aro/raw/images.zip
+      task: evaluate_text_choice
+    aro_att:
+      class: modules.data_pipeline.datasets.ARODataset
+      collate_fn: modules.data_pipeline.datasets.aro_collate_fn
+      text_path: data/aro/processed/test_att.pkl
+      img_path: data/aro/raw/images.zip
+      task: evaluate_text_choice
+    svo_std:
+      class: modules.data_pipeline.datasets.SVODataset
+      collate_fn: modules.data_pipeline.datasets.svo_collate_fn
+      text_path: data/svo-probes/processed/test.pkl
+      img_path: data/svo-probes/raw/images.zip
+      task: evaluate_image_choice
+    svo_swap_full:
+      class: modules.data_pipeline.datasets.SwapDataset
+      collate_fn: modules.data_pipeline.datasets.swap_collate_fn
+      text_path: data/svo-probes/processed/swap_full.pkl
+      img_path: data/svo-probes/raw/images.zip
+      task: evaluate_text_choice
+    svo_swap_animate:
+      class: modules.data_pipeline.datasets.SwapDataset
+      collate_fn: modules.data_pipeline.datasets.swap_collate_fn
+      text_path: data/svo-probes/processed/swap_animate.pkl
+      img_path: data/svo-probes/raw/images.zip
+      task: evaluate_text_choice
+    sugarcrepe_swap_object:
+      class: modules.data_pipeline.datasets.SugarCrepePPDataset
+      collate_fn: modules.data_pipeline.datasets.sugarcrepe_collate_fn
+      text_path: data/sugarcrepe/processed/swap_object.pkl
+      img_path: data/mscoco/raw/images/val2017.zip
+      task: evaluate_sugarcrepe_pp
+    sugarcrepe_swap_atribute:
+      class: modules.data_pipeline.datasets.SugarCrepePPDataset
+      collate_fn: modules.data_pipeline.datasets.sugarcrepe_collate_fn
+      text_path: data/sugarcrepe/processed/swap_atribute.pkl
+      img_path: data/mscoco/raw/images/val2017.zip
+      task: evaluate_sugarcrepe_pp
+    sugarcrepe_replace_object:
+      class: modules.data_pipeline.datasets.SugarCrepePPDataset
+      collate_fn: modules.data_pipeline.datasets.sugarcrepe_collate_fn
+      text_path: data/sugarcrepe/processed/replace_object.pkl
+      img_path: data/mscoco/raw/images/val2017.zip
+      task: evaluate_sugarcrepe_pp
+    sugarcrepe_replace_attribute:
+      class: modules.data_pipeline.datasets.SugarCrepePPDataset
+      collate_fn: modules.data_pipeline.datasets.sugarcrepe_collate_fn
+      text_path: data/sugarcrepe/processed/replace_attribute.pkl
+      img_path: data/mscoco/raw/images/val2017.zip
+      task: evaluate_sugarcrepe_pp
+    sugarcrepe_replace_relation:
+      class: modules.data_pipeline.datasets.SugarCrepePPDataset
+      collate_fn: modules.data_pipeline.datasets.sugarcrepe_collate_fn
+      text_path: data/sugarcrepe/processed/replace_relation.pkl
+      img_path: data/mscoco/raw/images/val2017.zip
+      task: evaluate_sugarcrepe_pp
+    winoground:
+      class: modules.data_pipeline.datasets.WinoGroundDataset
+      collate_fn: modules.data_pipeline.datasets.winoground_collate_fn
+      text_path: data/winoground/processed/test.pkl
+      img_path: data/winoground/raw/images.zip
+      task: evaluate_winoground
