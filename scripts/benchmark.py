@@ -14,6 +14,8 @@ if __name__ == "__main__":
     parser.add_argument("-cp", "--checkpoint", type=str, required=True, help="Path to model checkpoint (.pt file)")
     parser.add_argument("--only", type=str, default=None, help="Comma-separated test blocks (default: all)")
     parser.add_argument("-o", "--out", type=str, default=None, help="Results JSON (default: benchmark_<checkpoint>.json next to the checkpoint); never overwritten")
+    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                        help="Override a config value for evaluation, e.g. --set text.tn_engine=levelwise (repeatable)")
     args = parser.parse_args()
 
     checkpoint_path = Path(args.checkpoint)
@@ -21,7 +23,7 @@ if __name__ == "__main__":
     out_path = Path(args.out) if args.out else checkpoint_path.parent / f"benchmark_{checkpoint_path.stem}.json"
     if out_path.exists():
         raise FileExistsError(f"{out_path} already exists")
-    config, DEV, SEED = setup_exp(config_path)
+    config, DEV, SEED = setup_exp(config_path, overrides=args.set)
 
     log_phase("Evaluation Environment")
     print(f" Target Device   : {DEV} | Weights : {checkpoint_path} | Config : {config_path}")

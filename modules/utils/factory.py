@@ -49,7 +49,7 @@ def build_experiment(config, device):
         else:
             raise ValueError(f"tn: vision.method must be 'clip' or 'ttn', got '{method}'")
 
-        text_model = TNModel(out_dim=config['embedding_dim']).to(device)
+        text_model = TNModel(out_dim=config['embedding_dim'], engine=config['text'].get('tn_engine', 'grouped')).to(device)
         loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
         
     elif model_type == "vqc":

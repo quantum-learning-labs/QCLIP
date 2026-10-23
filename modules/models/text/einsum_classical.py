@@ -4,6 +4,7 @@ import torch, math
 import torch.nn as nn
 from opt_einsum import contract_expression
 from opt_einsum import parser as oe_parser
+from opt_einsum.parser import convert_to_valid_einsum_chars
 from tqdm import tqdm
 import os, zlib
 import numpy as np
@@ -11,8 +12,15 @@ import numpy as np
 class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
-    def __init__(self, out_dim: int = 512):
+    def __init__(self, out_dim: int = 512, engine: str = 'grouped'):
         super().__init__()
+        # 'grouped': one batched contraction per sentence structure (step-1 reference engine). 'levelwise': the same
+        # pairwise steps (opt_einsum path of each structure), executed step by step for all sentences at once, one
+        # batched einsum per distinct (equation, operand shapes): far fewer kernel launches, same maths up to float
+        # rounding of differently batched kernels
+        if engine not in ('grouped', 'levelwise'):
+            raise ValueError(f"text.tn_engine must be 'grouped' or 'levelwise', got {engine!r}")
+        self.engine = engine
         self.symbols: List[str] = []
         self.shapes: List[Tuple[int, ...]] = []
         # word/core tensors packed in one bank per distinct shape (parameters bank0, bank1, ...): a step gathers the rows
@@ -253,6 +261,11 @@ class TNModel(nn.Module):
             sid, rows = self._plan(einsum_expr, tensor_arr)
             groups[sid].append((i, rows))
 
+        if self.engine == 'levelwise':
+            output = self._levelwise(groups)
+            output = self.norm_head(output)
+            return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
+
         # one gather per bank for the whole batch: requests[b] = the row lists of every (group, slot) on bank b
         requests, refs = defaultdict(list), []
         for sid, items in groups.items():
@@ -276,23 +289,128 @@ class TNModel(nn.Module):
                 src = self._bank(b)
             pieces[b] = src.index_select(0, torch.from_numpy(idx.reshape(-1)).to(device)).split([len(l) for l in lists])
 
+        output = self._grouped(groups, refs, pieces)
+        output = self.norm_head(output)
+        return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
+
+    def _expression(self, struct, tensor_shapes):
+        # contraction expression of a structure; path cached without the group size: the batch index is on every
+        # tensor and the output, so it scales every pairwise cost equally and the path doesn't depend on it
+        if struct[2] is None:
+            cache_key = (struct[0], struct[1])
+            if cache_key not in self.path_cache:
+                self.path_cache[cache_key] = contract_expression(struct[0], *tensor_shapes)
+            struct[2] = self.path_cache[cache_key]
+        return struct[2]
+
+    def _grouped(self, groups, refs, pieces):
         rows, outs = [], []
         for (sid, items), ref in zip(groups.items(), refs):
             tensors = [pieces[b][k] for b, k in ref]
-            struct = self._structs[sid]
-            if struct[2] is None:
-                # path cached without the group size: the batch index is on every tensor and the output, so it scales
-                # every pairwise cost equally and the contraction path doesn't depend on it
-                cache_key = (struct[0], struct[1])
-                if cache_key not in self.path_cache:
-                    self.path_cache[cache_key] = contract_expression(struct[0], *[t.shape for t in tensors])
-                struct[2] = self.path_cache[cache_key]
-            outs.append(struct[2](*tensors))
+            outs.append(self._expression(self._structs[sid], [t.shape for t in tensors])(*tensors))
             rows.extend(i for i, _ in items)
         # one gather puts the group outputs back in batch order (each row is written once, so values are exact)
         inverse = torch.empty(len(rows), dtype=torch.long)
         inverse[torch.tensor(rows)] = torch.arange(len(rows))
-        output = torch.cat(outs, dim=0).index_select(0, inverse.to(outs[0].device))
+        return torch.cat(outs, dim=0).index_select(0, inverse.to(outs[0].device))
 
-        output = self.norm_head(output)
-        return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
+    def _steps(self, sid, n):
+        # the structure's pairwise steps as replayed by _levelwise: [(key, operand refs, output shape)], key =
+        # (equation as the torch backend receives it, operand shapes without the batch index); refs are ('leaf', slot)
+        # or ('tmp', earlier step). Same contraction list as the grouped engine's expression.
+        struct = self._structs[sid]
+        if len(struct) > 4:
+            return struct[4]
+        expr = self._expression(struct, [(n, *shape) for shape in struct[1]])
+        inputs = struct[0].split('->')[0].split(',')
+        dim = {c: d for sub, shape in zip(inputs, struct[1]) for c, d in zip(sub[1:], shape)}   # sub[0] = batch index
+        ops, steps = [('leaf', j) for j in range(len(inputs))], []
+        for inds, _, einsum_str, _, blas_flag in expr.contraction_list:
+            if blas_flag and 'EINSUM' not in blas_flag:
+                raise NotImplementedError(f"levelwise engine: tensordot step in {struct[0]}")
+            operands = [ops.pop(x) for x in inds]
+            ins, out = einsum_str.split('->')
+            shapes = tuple(tuple(dim[c] for c in sub[1:]) for sub in ins.split(','))
+            steps.append(((convert_to_valid_einsum_chars(einsum_str), shapes), operands, tuple(dim[c] for c in out[1:])))
+            ops.append(('tmp', len(steps) - 1))
+        assert len(ops) == 1
+        struct.append((steps, ops[0]))
+        return struct[4]
+
+    def _levelwise(self, groups):
+        # Pools: shape -> rows of every tensor of that shape in this batch (the gathered bank rows first, then each
+        # round's results, appended in order); a row is addressed by its offset in the pool. Round t runs step t of
+        # every sentence; steps with the same key run as one batched einsum. The schedule depends only on counts, so
+        # it is planned on the CPU first and all its indices move to the GPU in one copy.
+        device = self._bank(0).device
+        plans = [(sid, np.array([r for _, r in items], dtype=np.int64).reshape(len(items), -1), self._steps(sid, len(items)))
+                 for sid, items in groups.items()]
+        chunks, pos = [], [0]
+        def put(a):   # index array -> its slice in the single transfer
+            chunks.append(a); pos[0] += len(a); return (pos[0] - len(a), pos[0])
+
+        # leaves: the unique rows of each bank; slot rows -> pool offsets via the inverse
+        by_bank = defaultdict(list)
+        for g, (sid, mat, _) in enumerate(plans):
+            for j, b in enumerate(self._structs[sid][3]):
+                by_bank[b].append((g, j, mat[:, j]))
+        pool_rows, leaf_rows, leaves = defaultdict(int), {}, []
+        for b, items in by_bank.items():
+            uniq, inv = np.unique(np.concatenate([r for _, _, r in items]), return_inverse=True)
+            leaves.append((b, put(uniq)))
+            pool_rows[self.bank_shapes[b]] = len(uniq)
+            o = 0
+            for g, j, r in items:
+                leaf_rows[(g, j)] = inv[o:o + len(r)]; o += len(r)
+
+        tmp = [[None] * len(st[0]) for _, _, st in plans]
+        def rows_of(g, ref):
+            return leaf_rows[(g, ref[1])] if ref[0] == 'leaf' else tmp[g][ref[1]]
+        rounds = []
+        for t in range(max(len(st[0]) for _, _, st in plans)):
+            buckets = defaultdict(list)
+            for g, (_, _, (st, _)) in enumerate(plans):
+                if t < len(st):
+                    buckets[st[t][0]].append((g, st[t][1], st[t][2]))
+            ops, added = [], defaultdict(int)
+            for (eq, shapes), members in buckets.items():
+                ins = [(shape, put(np.concatenate([rows_of(g, refs[p]) for g, refs, _ in members])))
+                       for p, shape in enumerate(shapes)]
+                out_shape = members[0][2]
+                o = pool_rows[out_shape] + added[out_shape]
+                for g, _, _ in members:
+                    n = len(plans[g][1]); tmp[g][t] = np.arange(o, o + n); o += n
+                added[out_shape] = o - pool_rows[out_shape]
+                ops.append((eq, ins, out_shape))
+            for shape, n in added.items():
+                pool_rows[shape] += n
+            rounds.append(ops)
+        final = put(np.concatenate([rows_of(g, st[1]) for g, (_, _, st) in enumerate(plans)]))
+        order = np.concatenate([[i for i, _ in items] for items in groups.values()])
+        inverse = np.empty(len(order), dtype=np.int64); inverse[order] = np.arange(len(order))
+        back = put(inverse)
+
+        idx = torch.from_numpy(np.concatenate(chunks))
+        if device.type == 'cuda':
+            idx = idx.pin_memory().to(device, non_blocking=True)
+        sl = lambda span: idx[span[0]:span[1]]
+
+        pieces, cat = defaultdict(list), {}
+        def pool(shape):
+            if shape not in cat:
+                ps = pieces[shape]
+                cat[shape] = torch.cat(ps) if len(ps) > 1 else ps[0]
+            return cat[shape]
+        for b, span in leaves:
+            if torch.is_grad_enabled():   # training: RowAdam updates exactly these rows from the leaf's gradient
+                leaf = self._bank(b).detach().index_select(0, sl(span)).requires_grad_()
+                self._active.append((b, sl(span), leaf))
+            else:
+                leaf = self._bank(b).index_select(0, sl(span))
+            pieces[self.bank_shapes[b]].append(leaf)
+        for ops in rounds:
+            results = [(out_shape, torch.einsum(eq, [pool(shape).index_select(0, sl(span)) for shape, span in ins]))
+                       for eq, ins, out_shape in ops]
+            for shape, res in results:   # appended in planning order, so the planned offsets hold
+                pieces[shape].append(res); cat.pop(shape, None)
+        return pool((self.out_dim,)).index_select(0, sl(final)).index_select(0, sl(back))
