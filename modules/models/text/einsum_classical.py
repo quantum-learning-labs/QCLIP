@@ -331,8 +331,9 @@ class TNModel(nn.Module):
 
     def _steps(self, sid, n):
         # the structure's pairwise steps as replayed by _levelwise: [(key, operand refs, output shape)], key =
-        # (equation as the torch backend receives it, operand shapes without the batch index); refs are ('leaf', slot)
-        # or ('tmp', earlier step). Same contraction list as the grouped engine's expression.
+        # (equation relabelled by first appearance, operand shapes without the batch index), so steps that contract
+        # the same axis positions share a key; refs are ('leaf', slot) or ('tmp', earlier step). Same contraction list
+        # as the grouped engine's expression. levels[d] = the steps at dependency depth d+1 (independent of each other).
         struct = self._structs[sid]
         if len(struct) > 4:
             return struct[4]
@@ -346,16 +347,21 @@ class TNModel(nn.Module):
             operands = [ops.pop(x) for x in inds]
             ins, out = einsum_str.split('->')
             shapes = tuple(tuple(dim[c] for c in sub[1:]) for sub in ins.split(','))
-            steps.append(((convert_to_valid_einsum_chars(einsum_str), shapes), operands, tuple(dim[c] for c in out[1:])))
+            steps.append(((_positional(einsum_str), shapes), operands, tuple(dim[c] for c in out[1:])))
             ops.append(('tmp', len(steps) - 1))
         assert len(ops) == 1
-        struct.append((steps, ops[0]))
+        depth = []
+        for _, operands, _ in steps:
+            depth.append(1 + max((depth[r[1]] for r in operands if r[0] == 'tmp'), default=0))
+        levels = [[k for k, d in enumerate(depth) if d == level] for level in range(1, max(depth, default=0) + 1)]
+        struct.append((steps, ops[0], levels))
         return struct[4]
 
     def _levelwise(self, groups):
         # Every tensor of the batch is a row of a pool piece: per bank, one piece with a row per use of a word tensor
         # (expanded once from the bank's unique rows), then one piece per (round, output shape) of results. Each row is
-        # read exactly once. Round t runs step t of every sentence; steps with the same key run as one batched einsum,
+        # read exactly once. Round t runs the steps at dependency depth t+1 of every sentence (they only need earlier
+        # rounds); steps with the same key run as one batched einsum,
         # and all its operands of one shape come from one gather (_Take). The schedule depends only on counts, so it
         # is planned on the CPU first and all its indices move to the GPU in one copy.
         device = self._bank(0).device
@@ -395,16 +401,17 @@ class TNModel(nn.Module):
             return (shape, used, put(np.concatenate([off[pid] + rows for pid, rows in refs])))
 
         rounds = []
-        for t in range(max(len(st[0]) for _, _, st in plans)):
-            buckets = defaultdict(list)
-            for g, (_, _, (st, _)) in enumerate(plans):
-                if t < len(st):
-                    buckets[st[t][0]].append((g, st[t][1], st[t][2]))
+        for t in range(max(len(st[2]) for _, _, st in plans)):
+            buckets = defaultdict(list)   # key -> [(group, step, operand refs, out shape)]
+            for g, (_, _, (st, _, levels)) in enumerate(plans):
+                if t < len(levels):
+                    for k in levels[t]:
+                        buckets[st[k][0]].append((g, k, st[k][1], st[k][2]))
             # operands grouped by shape: requests[shape] = [(bucket, position, (piece, rows) per member)]
             requests = defaultdict(list)
             for k, ((eq, shapes), members) in enumerate(buckets.items()):
                 for p, shape in enumerate(shapes):
-                    requests[shape].append((k, p, [ref_of(g, refs[p]) for g, refs, _ in members]))
+                    requests[shape].append((k, p, [ref_of(g, refs[p]) for g, _, refs, _ in members]))
             gathers = []
             for shape, reqs in requests.items():
                 flat = [r for _, _, rs in reqs for r in rs]
@@ -413,20 +420,20 @@ class TNModel(nn.Module):
             # results: one piece per output shape, buckets in order
             out_pieces, ops = {}, []
             for (eq, shapes), members in buckets.items():
-                out_shape = members[0][2]
+                out_shape = members[0][3]
                 if out_shape not in out_pieces:
                     out_pieces[out_shape] = [len(piece_sizes[out_shape]), 0]
                     piece_sizes[out_shape].append(0)
                 pid, o = out_pieces[out_shape]
-                for g, _, _ in members:
-                    n = len(plans[g][1]); tmp[g][t] = (pid, np.arange(o, o + n)); o += n
+                for g, k, _, _ in members:
+                    n = len(plans[g][1]); tmp[g][k] = (pid, np.arange(o, o + n)); o += n
                 out_pieces[out_shape][1] = o
                 piece_sizes[out_shape][pid] = o
                 ops.append((eq, len(shapes), out_shape))
             rounds.append((gathers, ops, list(out_pieces)))
         # final outputs straight into batch order
         order = np.concatenate([[i for i, _ in items] for items in groups.values()])
-        finals = [ref_of(g, st[1]) for g, (_, _, st) in enumerate(plans)]
+        finals = [ref_of(g, st[1]) for g, (_, _, st) in enumerate(plans)]   # st = (steps, final ref, levels)
         inverse = np.empty(len(order), dtype=np.int64); inverse[order] = np.arange(len(order))
         per_row = [(pid, rows[k:k + 1]) for pid, rows in finals for k in range(len(rows))]
         final = take((self.out_dim,), [per_row[i] for i in inverse])
@@ -460,6 +467,11 @@ class TNModel(nn.Module):
                 pieces[shape].append(torch.cat(rs) if len(rs) > 1 else rs[0])
         return run_take(final)
 
+
+def _positional(einsum_str):
+    # relabel indices by first appearance: equations that contract the same axis positions become identical
+    labels = {}
+    return ''.join(labels.setdefault(c, oe_parser.get_symbol(len(labels))) if c not in ',->' else c for c in einsum_str)
 
 def _batched(einsum_expr):
     # the batch index (first unused symbol) in front of every input and of the output
