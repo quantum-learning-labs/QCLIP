@@ -7,9 +7,6 @@ from opt_einsum import parser as oe_parser
 from tqdm import tqdm
 import os, zlib
 
-# TN_LEGACY_PATH_CACHE=1 restores the old cache key (incl. group size); only for the equivalence check
-LEGACY_PATH_CACHE = os.environ.get('TN_LEGACY_PATH_CACHE') == '1'
-
 class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
@@ -145,33 +142,50 @@ class TNModel(nn.Module):
             if cache_key not in self.path_cache: 
                 self.path_cache[cache_key] = contract_expression(batched_str, *shapes)
 
-    def forward(self, batch: List[tuple[str, List[str]]]) -> torch.Tensor:
-        groups = defaultdict(list)
-        for i, (einsum_expr, tensor_arr) in enumerate(batch):
-            shapes, _ = zip(*[(tuple(sym_dict['shape']), sym_dict['name']) for sym_dict in tensor_arr])
-            groups[(einsum_expr, shapes)].append((i, tensor_arr))
-
-        output = torch.zeros(len(batch), self.out_dim, device=next(self.params.parameters()).device)
-        for (einsum_expr, _), items in groups.items():
-            indices, symbols_arr =  zip(*items)
-            symbol_columns = zip(*symbols_arr)
-            shapes, tensors = [], []
-            for col in symbol_columns:
-                tensor_batch = torch.stack([self.params[sym_dict['name']] for sym_dict in col], dim=0)
-                shapes.append(tensor_batch.shape)
-                tensors.append(tensor_batch)
-            
+    def _plan(self, einsum_expr, tensor_arr):
+        # per-sentence plan, built once per sentence object (keyed by id, the entry keeps the object alive so ids are
+        # never reused): structure id (einsum + shapes) and the symbol names in tensor order
+        hit = self._plans.get(id(tensor_arr))
+        if hit is not None:
+            return hit[1], hit[2]
+        key = (einsum_expr, tuple(tuple(d['shape']) for d in tensor_arr))
+        sid = self._struct_ids.get(key)
+        if sid is None:
+            sid = self._struct_ids[key] = len(self._structs)
             input_subscripts, output_subscript = einsum_expr.split('->')
             batch_symbol = next(oe_parser.gen_unused_symbols(einsum_expr, 1))
             batched_inputs = [batch_symbol + s for s in input_subscripts.split(',')]
-            batched_str = f"{','.join(batched_inputs)}->{batch_symbol}{output_subscript}"
+            self._structs.append([f"{','.join(batched_inputs)}->{batch_symbol}{output_subscript}", key[1], None])
+        names = tuple(d['name'] for d in tensor_arr)
+        self._plans[id(tensor_arr)] = (tensor_arr, sid, names)
+        return sid, names
 
-            # key without the group size: the batch index is on every tensor and the output, so it scales every
-            # pairwise cost equally and the contraction path doesn't depend on it
-            cache_key = (batched_str, tuple(shapes) if LEGACY_PATH_CACHE else tuple(s[1:] for s in shapes))
-            if cache_key not in self.path_cache:
-                self.path_cache[cache_key] = contract_expression(batched_str, *shapes)
-            output[list(indices)] = self.path_cache[cache_key](*tensors)
-        
+    def forward(self, batch: List[tuple[str, List[str]]]) -> torch.Tensor:
+        if not hasattr(self, '_plans'):
+            self._plans, self._struct_ids, self._structs = {}, {}, []
+        groups = defaultdict(list)   # structure id -> [(row, names)], in order of first appearance (as before)
+        for i, (einsum_expr, tensor_arr) in enumerate(batch):
+            sid, names = self._plan(einsum_expr, tensor_arr)
+            groups[sid].append((i, names))
+
+        rows, outs = [], []
+        for sid, items in groups.items():
+            indices, names_arr = zip(*items)
+            tensors = [torch.stack([self.params[name] for name in col], dim=0) for col in zip(*names_arr)]
+            struct = self._structs[sid]
+            if struct[2] is None:
+                # path cached without the group size: the batch index is on every tensor and the output, so it scales
+                # every pairwise cost equally and the contraction path doesn't depend on it
+                cache_key = (struct[0], struct[1])
+                if cache_key not in self.path_cache:
+                    self.path_cache[cache_key] = contract_expression(struct[0], *[t.shape for t in tensors])
+                struct[2] = self.path_cache[cache_key]
+            outs.append(struct[2](*tensors))
+            rows.extend(indices)
+        # one gather puts the group outputs back in batch order (each row is written once, so values are exact)
+        inverse = torch.empty(len(rows), dtype=torch.long)
+        inverse[torch.tensor(rows)] = torch.arange(len(rows))
+        output = torch.cat(outs, dim=0).index_select(0, inverse.to(outs[0].device))
+
         output = self.norm_head(output)
         return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
