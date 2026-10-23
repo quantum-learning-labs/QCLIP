@@ -1,11 +1,10 @@
 import torch, argparse
 import pandas as pd
 
-from modules.utils.factory import build_experiment
+from modules.utils.factory import build_experiment, build_optimizer
 from modules.utils.general import log_phase, setup_exp, CheckpointManager
 from modules.data_pipeline.engine import DataEngine
 from modules.models.fusion.engine import ContrastiveTrainer, MMEvaluator, RunManager, adaptive_optimizer
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
 # uv run python train.py --config configs/tensor_network.yaml
 if __name__ == "__main__":
@@ -85,26 +84,10 @@ if __name__ == "__main__":
     val_loader = data_engine.get_loader(compiled_val, split='val')
 
     loss_fn.to(DEV)
-    loss_params = [p for p in loss_fn.parameters() if p.requires_grad]   # e.g. a learnable logit scale
-    # image towers with a `params` list keep their projector in a second group; others train all their parameters
-    image_params = list(image_model.params) if hasattr(image_model, 'params') else [p for p in image_model.parameters() if p.requires_grad]
-    quantum_params = list(text_model.parameters()) + image_params
-    classical_params = list(image_model.projector.parameters()) if config['vision']['method'] == 'mlp' else []
+    optimizer, scheduler = build_optimizer(config, text_model, image_model, loss_fn)
     lr = config.get('qlr', config.get('lr'))
-
-    # optimizer = adaptive_optimizer(text_model, image_model, base_qlr=config['qlr'], base_clr=config['clr'], weight_decay=1.8)
-    optimizer = torch.optim.Adam(
-        [{'params': quantum_params, 'lr': lr},
-         {'params': classical_params, 'lr': config.get('clr', lr)}]
-        + ([{'params': loss_params, 'lr': config.get('temperature_lr', 1e-3), 'weight_decay': 0.0}] if loss_params else []), 
-        betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4)
-    )
     warmup_epochs = config.get('warmup_epochs', 5)
     total_epochs = config['epochs']
-
-    scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
-    scheduler_cosine = CosineAnnealingLR(optimizer, T_max=max(total_epochs - warmup_epochs, 1), eta_min=1e-6)
-    scheduler = SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_epochs])
 
     print(f"Optimizer: {optimizer.__class__.__name__} | LR: {lr} | Classical LR: {config.get('clr', lr)} | Weight Decay: {config.get('weight_decay', 1e-4)}")
     print(f"Scheduler: {scheduler.__class__.__name__} | Warmup Epochs: {warmup_epochs} | Total Epochs: {total_epochs} | Patience : {config.get('patience', 15)} | Delta : {config.get('min_delta', 1e-3)}")

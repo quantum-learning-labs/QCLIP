@@ -30,16 +30,21 @@ if __name__ == "__main__":
     ansatz, image_model, text_model, _ = build_experiment(config, DEV)
 
     data_engine = DataEngine(config, ansatz, DEV)
+    startup, t0 = {}, time.time()   # seconds per startup phase (step-2 efficiency report)
     compiled_train = data_engine.compile_text('train')
     compiled_val = data_engine.compile_text('val')
 
+    startup['compile_train_val'] = time.time() - t0; t0 = time.time()
     log_phase("Restoring Dynamic Parameter Spaces")
     data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
     data_engine.image_init(image_model)
 
+    startup['text_init'] = time.time() - t0; t0 = time.time()
     log_phase("Loading Model Checkpoint Weights")
     checkpoint = CheckpointManager.load_model(checkpoint_path, image_model, text_model, DEV)
     text_model.to(DEV)
+    startup['load_checkpoint'] = time.time() - t0
+    print(f" Startup (s): {startup}")
     print(f" Recovered from Epoch: {checkpoint.get('epoch', 'N/A')} | Historical Loss: {checkpoint.get('train_loss', 'N/A')}")
 
     image_model.eval()
@@ -52,6 +57,7 @@ if __name__ == "__main__":
         test_sets = {k: v for k, v in test_sets.items() if k in args.only.split(',')}
     results, details = {}, {}
     for split_name, split_info in test_sets.items():
+        t0 = time.time()
         compiled_eval = data_engine.compile_text(split_name)
         data_engine.describe_einsum(text_model, compiled_eval)
         if hasattr(text_model, 'extend_symbols'):   # word@type tensors unseen in training: seeded, untrained init
@@ -60,6 +66,7 @@ if __name__ == "__main__":
             for key, val in oov.items(): results[f"{split_name}_{key}"] = val
             print(f" OOV '{split_name}': {oov}")
         eval_loader = data_engine.get_loader(compiled_eval, split=split_name)
+        startup[f'prepare_{split_name}'] = time.time() - t0
         eval_fn = getattr(evaluator, split_info['task'], None)
         eval_args = (load_obj(split_info.get('eval_mapper', config['dataset']['eval_mapper'])),) if split_info['task'] == 'global_retrieval' else ()
 
@@ -87,7 +94,7 @@ if __name__ == "__main__":
 
     payload = {"checkpoint": str(checkpoint_path), "config": config_path, "epoch": checkpoint.get('epoch'),
                "seed": SEED, "discard": config['text'].get('discard', False), "git_commit": git_state(),
-               "train_git_commit": config.get('git_commit'), "results": results, "details": details}
+               "train_git_commit": config.get('git_commit'), "startup_s": startup, "results": results, "details": details}
     with open(out_path, 'x') as f:
         json.dump(payload, f, indent=1, default=float)
     print(f" Results written to {out_path}")

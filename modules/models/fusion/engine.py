@@ -276,14 +276,26 @@ class ContrastiveTrainer:
         self.image_model.train()
         self.text_model.train()
         epoch_loss = 0.0
+        # profiling (tools/tn/profile_train.py): `timing` dict gets cuda-synchronised seconds per phase, `max_steps` stops early
+        timing, max_steps = getattr(self, 'timing', None), getattr(self, 'max_steps', None)
+        t_ph = [time.time()]
+        def tick(phase):
+            if timing is None: return
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            now = time.time(); timing[phase] = timing.get(phase, 0.0) + now - t_ph[0]; t_ph[0] = now
 
         t_step = time.time()
-        for batch in dataloader:
+        for step, batch in enumerate(dataloader):
+            if max_steps is not None and step >= max_steps:
+                break
+            tick('data')
             images, texts = batch_mapper(batch)
             images = images.to(self.device)
 
             image_emb = self.image_model(images)
+            tick('fwd_image')
             text_emb = self.text_model(texts)
+            tick('fwd_text')
 
             neg_emb = self.image_model(batch['neg_image'].to(self.device)) if getattr(self, 'hard_negatives', False) and 'neg_image' in batch else None
             swap_kw = {}
@@ -295,14 +307,18 @@ class ContrastiveTrainer:
                 loss = self.loss_fn(text_emb, image_emb)
             if getattr(self, 'teacher', None) is not None:
                 loss = loss + self.teacher.loss(batch['idx'].to(self.device), self.loss_fn, text_emb, image_emb)
+            tick('loss')
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            tick('backward')
 
             # torch.nn.utils.clip_grad_norm_(self.text_model.parameters(), max_norm=1.0)
             self.optimizer.step()
+            tick('optimizer')
             l = loss.item()
             epoch_loss += l * images.shape[0]
             now = time.time(); self.step_log.append((l, now - t_step)); t_step = now
+            t_ph[0] = time.time()
         
         return epoch_loss / len(dataloader.dataset)
 

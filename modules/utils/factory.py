@@ -109,3 +109,27 @@ def build_experiment(config, device):
         raise ValueError(f"Unknown model_type: {model_type}")
 
     return ansatz, image_model, text_model, loss_fn
+
+def build_optimizer(config, text_model, image_model, loss_fn):
+    # Adam over text + image (+ learnable loss) parameters, linear warmup then cosine (per epoch); shared by
+    # scripts/train.py and tools/tn/profile_train.py so both build the identical optimiser
+    from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+    loss_params = [p for p in loss_fn.parameters() if p.requires_grad]   # e.g. a learnable logit scale
+    # image towers with a `params` list keep their projector in a second group; others train all their parameters
+    image_params = list(image_model.params) if hasattr(image_model, 'params') else [p for p in image_model.parameters() if p.requires_grad]
+    quantum_params = list(text_model.parameters()) + image_params
+    classical_params = list(image_model.projector.parameters()) if config['vision']['method'] == 'mlp' else []
+    lr = config.get('qlr', config.get('lr'))
+
+    optimizer = torch.optim.Adam(
+        [{'params': quantum_params, 'lr': lr},
+         {'params': classical_params, 'lr': config.get('clr', lr)}]
+        + ([{'params': loss_params, 'lr': config.get('temperature_lr', 1e-3), 'weight_decay': 0.0}] if loss_params else []),
+        betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4)
+    )
+    warmup_epochs = config.get('warmup_epochs', 5)
+    total_epochs = config['epochs']
+    scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
+    scheduler_cosine = CosineAnnealingLR(optimizer, T_max=max(total_epochs - warmup_epochs, 1), eta_min=1e-6)
+    scheduler = SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_epochs])
+    return optimizer, scheduler
