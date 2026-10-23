@@ -313,9 +313,12 @@ class TNModel(nn.Module):
                 todo[key] = None
         if not todo:
             return 0
-        workers = workers or len(os.sched_getaffinity(0))
-        with multiprocessing.get_context('fork').Pool(workers) as pool:
-            found = pool.map(_search_path, list(todo), chunksize=512)
+        if len(todo) < 4000:   # forking the (large) training process costs ~1 s: small sets are searched in-process
+            found = [_search_path(key) for key in todo]
+        else:
+            workers = workers or len(os.sched_getaffinity(0))
+            with multiprocessing.get_context('fork').Pool(workers) as pool:
+                found = pool.map(_search_path, list(todo), chunksize=512)
         for key, (path, plan) in zip(todo, found):
             self.path_cache[key] = path; self.level_cache[key] = plan
         return len(todo)
