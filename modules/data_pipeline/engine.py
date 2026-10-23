@@ -59,6 +59,12 @@ class DataEngine:
             
             sym_kwargs = {"id_init": True} if self.config["model_type"] == "vqc" else {}
             text_model.from_symbols(symbol_arr, **sym_kwargs)
+            if hasattr(text_model, "precompute_paths"):
+                ein_cols = [c[:-len("_symbols")] + "_einsum" for c in sym_cols]
+                pairs = [(e, s) for ec, sc in zip(ein_cols, sym_cols) for es, ss in zip(compiled_data[ec], compiled_data[sc])
+                         if not isinstance(ss, float) for e, s in (zip(es, ss) if isinstance(es, list) else [(es, ss)])]
+                n = text_model.precompute_paths([e for e, _ in pairs], [s for _, s in pairs])
+                print(f"Contraction paths searched up front: {n} structures")
 
         if hasattr(text_model, "from_plans"):
             cols = [col for col in compiled_data.columns if col.endswith('_einsum')]
@@ -133,7 +139,7 @@ class DataEngine:
                 collate_fn=self.collate_fn, 
                 shuffle=(split=='train'), 
                 num_workers=self.config.get("num_workers", 0),  # workers deadlocked runs at start (2026-10-17); data is in memory
-                pin_memory=True
+                pin_memory=self.config['model_type'] != 'tn'   # TN batches are nested caption dicts + one small tensor: pinning only walks the dicts
             )
             return loader
         elif split not in ['train', 'val']:
@@ -145,7 +151,7 @@ class DataEngine:
                 collate_fn=collate_fn, 
                 shuffle=False, 
                 num_workers=self.config.get("num_workers", 0),  # workers deadlocked runs at start (2026-10-17); data is in memory
-                pin_memory=True
+                pin_memory=self.config['model_type'] != 'tn'   # TN batches are nested caption dicts + one small tensor: pinning only walks the dicts
             )
             return loader
         else:

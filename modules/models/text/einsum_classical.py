@@ -2,11 +2,12 @@ from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 import torch, math
 import torch.nn as nn
-from opt_einsum import contract_expression
+from opt_einsum import contract_expression, contract_path
+from opt_einsum.contract import ContractExpression
 from opt_einsum import parser as oe_parser
 from opt_einsum.parser import convert_to_valid_einsum_chars
 from tqdm import tqdm
-import os, zlib
+import os, zlib, multiprocessing
 import numpy as np
 
 class TNModel(nn.Module):
@@ -244,11 +245,8 @@ class TNModel(nn.Module):
         sid = self._struct_ids.get(key)
         if sid is None:
             sid = self._struct_ids[key] = len(self._structs)
-            input_subscripts, output_subscript = einsum_expr.split('->')
-            batch_symbol = next(oe_parser.gen_unused_symbols(einsum_expr, 1))
-            batched_inputs = [batch_symbol + s for s in input_subscripts.split(',')]
             banks = tuple(self.sym_loc[d['name']][0] for d in tensor_arr)   # a slot's bank is fixed by its shape
-            self._structs.append([f"{','.join(batched_inputs)}->{batch_symbol}{output_subscript}", key[1], None, banks])
+            self._structs.append([_batched(einsum_expr), key[1], None, banks])
         rows = tuple(self.sym_loc[d['name']][1] for d in tensor_arr)
         self._plans[id(tensor_arr)] = (tensor_arr, sid, rows)
         return sid, rows
@@ -298,10 +296,27 @@ class TNModel(nn.Module):
         # tensor and the output, so it scales every pairwise cost equally and the path doesn't depend on it
         if struct[2] is None:
             cache_key = (struct[0], struct[1])
-            if cache_key not in self.path_cache:
-                self.path_cache[cache_key] = contract_expression(struct[0], *tensor_shapes)
-            struct[2] = self.path_cache[cache_key]
+            hit = self.path_cache.get(cache_key)
+            if not isinstance(hit, ContractExpression):   # missing, or a path from precompute_paths
+                hit = self.path_cache[cache_key] = contract_expression(struct[0], *tensor_shapes, optimize=hit or 'auto')
+            struct[2] = hit
         return struct[2]
+
+    def precompute_paths(self, einsum_arr, symbols_arr, workers=None):
+        # contraction paths of every structure, searched up front by a fork pool (the same deterministic opt_einsum
+        # search as on first use, so the same paths): ~89k structures in MSCOCO train cost ~0.4-1 ms each serially
+        todo = {}
+        for e, syms in zip(einsum_arr, symbols_arr):
+            key = (_batched(e), tuple(tuple(d['shape']) for d in syms))
+            if key not in self.path_cache:
+                todo[key] = None
+        if not todo:
+            return 0
+        workers = workers or len(os.sched_getaffinity(0))
+        with multiprocessing.get_context('fork').Pool(workers) as pool:
+            paths = pool.map(_search_path, list(todo), chunksize=512)
+        self.path_cache.update(zip(todo, paths))
+        return len(todo)
 
     def _grouped(self, groups, refs, pieces):
         rows, outs = [], []
@@ -445,6 +460,17 @@ class TNModel(nn.Module):
                 pieces[shape].append(torch.cat(rs) if len(rs) > 1 else rs[0])
         return run_take(final)
 
+
+def _batched(einsum_expr):
+    # the batch index (first unused symbol) in front of every input and of the output
+    input_subscripts, output_subscript = einsum_expr.split('->')
+    batch_symbol = next(oe_parser.gen_unused_symbols(einsum_expr, 1))
+    return f"{','.join(batch_symbol + s for s in input_subscripts.split(','))}->{batch_symbol}{output_subscript}"
+
+def _search_path(key):
+    # path of a batched structure; batch size 64 stands in for the group size (the path doesn't depend on it)
+    batched_str, shapes = key
+    return contract_path(batched_str, *[(64, *shape) for shape in shapes], shapes=True)[0]
 
 class _Take(torch.autograd.Function):
     # rows idx of the concatenated pieces. Every pool row is read once, so idx has no repeats and the backward is one
