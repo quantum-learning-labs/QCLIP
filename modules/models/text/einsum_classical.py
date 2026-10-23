@@ -31,6 +31,7 @@ class TNModel(nn.Module):
         self.bank_shapes: List[Tuple[int, ...]] = []
         self._active = []   # (bank, unique rows, leaf) gathered by training forwards since the last optimiser step
         self.path_cache = {}
+        self.level_cache = {}   # (batched einsum, shapes) -> levelwise plan (precompute_paths)
         self.out_dim: int = out_dim
         self.norm_head = nn.LayerNorm(out_dim)
     
@@ -314,8 +315,9 @@ class TNModel(nn.Module):
             return 0
         workers = workers or len(os.sched_getaffinity(0))
         with multiprocessing.get_context('fork').Pool(workers) as pool:
-            paths = pool.map(_search_path, list(todo), chunksize=512)
-        self.path_cache.update(zip(todo, paths))
+            found = pool.map(_search_path, list(todo), chunksize=512)
+        for key, (path, plan) in zip(todo, found):
+            self.path_cache[key] = path; self.level_cache[key] = plan
         return len(todo)
 
     def _grouped(self, groups, refs, pieces):
@@ -337,24 +339,10 @@ class TNModel(nn.Module):
         struct = self._structs[sid]
         if len(struct) > 4:
             return struct[4]
-        expr = self._expression(struct, [(n, *shape) for shape in struct[1]])
-        inputs = struct[0].split('->')[0].split(',')
-        dim = {c: d for sub, shape in zip(inputs, struct[1]) for c, d in zip(sub[1:], shape)}   # sub[0] = batch index
-        ops, steps = [('leaf', j) for j in range(len(inputs))], []
-        for inds, _, einsum_str, _, blas_flag in expr.contraction_list:
-            if blas_flag and 'EINSUM' not in blas_flag:
-                raise NotImplementedError(f"levelwise engine: tensordot step in {struct[0]}")
-            operands = [ops.pop(x) for x in inds]
-            ins, out = einsum_str.split('->')
-            shapes = tuple(tuple(dim[c] for c in sub[1:]) for sub in ins.split(','))
-            steps.append(((_positional(einsum_str), shapes), operands, tuple(dim[c] for c in out[1:])))
-            ops.append(('tmp', len(steps) - 1))
-        assert len(ops) == 1
-        depth = []
-        for _, operands, _ in steps:
-            depth.append(1 + max((depth[r[1]] for r in operands if r[0] == 'tmp'), default=0))
-        levels = [[k for k, d in enumerate(depth) if d == level] for level in range(1, max(depth, default=0) + 1)]
-        struct.append((steps, ops[0], levels))
+        plan = self.level_cache.get((struct[0], struct[1]))
+        if plan is None:
+            plan = _level_plan(struct[0], struct[1], self._expression(struct, [(n, *shape) for shape in struct[1]]).contraction_list)
+        struct.append(plan)
         return struct[4]
 
     def _levelwise(self, groups):
@@ -468,6 +456,26 @@ class TNModel(nn.Module):
         return run_take(final)
 
 
+def _level_plan(batched_str, struct_shapes, contraction_list):
+    # see TNModel._steps: (steps, final ref, steps by dependency depth) of one structure
+    inputs = batched_str.split('->')[0].split(',')
+    dim = {c: d for sub, shape in zip(inputs, struct_shapes) for c, d in zip(sub[1:], shape)}   # sub[0] = batch index
+    ops, steps = [('leaf', j) for j in range(len(inputs))], []
+    for inds, _, einsum_str, _, blas_flag in contraction_list:
+        if blas_flag and 'EINSUM' not in blas_flag:
+            raise NotImplementedError(f"levelwise engine: tensordot step in {batched_str}")
+        operands = [ops.pop(x) for x in inds]
+        ins, out = einsum_str.split('->')
+        shapes = tuple(tuple(dim[c] for c in sub[1:]) for sub in ins.split(','))
+        steps.append(((_positional(einsum_str), shapes), operands, tuple(dim[c] for c in out[1:])))
+        ops.append(('tmp', len(steps) - 1))
+    assert len(ops) == 1
+    depth = []
+    for _, operands, _ in steps:
+        depth.append(1 + max((depth[r[1]] for r in operands if r[0] == 'tmp'), default=0))
+    levels = [[k for k, d in enumerate(depth) if d == level] for level in range(1, max(depth, default=0) + 1)]
+    return steps, ops[0], levels
+
 def _positional(einsum_str):
     # relabel indices by first appearance: equations that contract the same axis positions become identical
     labels = {}
@@ -480,9 +488,11 @@ def _batched(einsum_expr):
     return f"{','.join(batch_symbol + s for s in input_subscripts.split(','))}->{batch_symbol}{output_subscript}"
 
 def _search_path(key):
-    # path of a batched structure; batch size 64 stands in for the group size (the path doesn't depend on it)
+    # path and levelwise plan of a batched structure; batch size 64 stands in for the group size (the path doesn't
+    # depend on it)
     batched_str, shapes = key
-    return contract_path(batched_str, *[(64, *shape) for shape in shapes], shapes=True)[0]
+    path, info = contract_path(batched_str, *[(64, *shape) for shape in shapes], shapes=True)
+    return path, _level_plan(batched_str, shapes, info.contraction_list)
 
 class _Take(torch.autograd.Function):
     # rows idx of the concatenated pieces. Every pool row is read once, so idx has no repeats and the backward is one
