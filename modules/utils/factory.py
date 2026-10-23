@@ -6,6 +6,7 @@ from modules.compilation.classical.neural import MLPCompiler
 
 from modules.models.text.einsum_quantum import VQCModel
 from modules.models.text.einsum_classical import TNModel
+from modules.models.text.row_adam import RowAdam
 from modules.models.text.neural_model import MLPModel
 
 from modules.models.vision.quantum_map import QuantumFeatureMap, QFMap_CPTP
@@ -121,11 +122,13 @@ def build_optimizer(config, text_model, image_model, loss_fn):
     classical_params = list(image_model.projector.parameters()) if config['vision']['method'] == 'mlp' else []
     lr = config.get('qlr', config.get('lr'))
 
-    optimizer = torch.optim.Adam(
+    # models with packed parameter banks (TNModel) update only the rows a step used: RowAdam, same maths as Adam
+    row_kw = {'row_model': text_model} if hasattr(text_model, 'pop_row_grads') else {}
+    optimizer = (RowAdam if row_kw else torch.optim.Adam)(
         [{'params': quantum_params, 'lr': lr},
          {'params': classical_params, 'lr': config.get('clr', lr)}]
         + ([{'params': loss_params, 'lr': config.get('temperature_lr', 1e-3), 'weight_decay': 0.0}] if loss_params else []),
-        betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4)
+        betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4), **row_kw
     )
     warmup_epochs = config.get('warmup_epochs', 5)
     total_epochs = config['epochs']

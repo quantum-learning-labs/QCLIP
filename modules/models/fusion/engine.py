@@ -236,6 +236,8 @@ class ContrastiveTrainer:
             for name, param in self.text_model.named_parameters():
                 if param.grad is not None:
                     sq[f"order{param.dim()}" if name.startswith("params.") else "other"] += param.grad.norm(2).item() ** 2
+            for k, v in getattr(self.text_model, 'last_row_grad_sq', {}).items():   # packed banks: last step's row grads
+                sq[k] += v
             return {**{k: v ** 0.5 for k, v in sorted(sq.items())}, "total_text": sum(sq.values()) ** 0.5}
 
         for name, param in self.text_model.named_parameters():
