@@ -233,3 +233,6 @@ jobs/
 mlruns/
 .DS_Store
 * copy.*
+
+# compiled TN datasets (DataEngine compile cache)
+cache/

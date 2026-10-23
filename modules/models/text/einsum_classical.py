@@ -51,6 +51,14 @@ class TNModel(nn.Module):
 
         self.init_params()
 
+    def from_state_dict(self, state_dict):
+        # vocabulary (names, shapes, order) from a checkpoint's own tensors: evaluation needs no train/val recompile
+        for key, val in state_dict.items():
+            if key.startswith('params.'):
+                name = key[len('params.'):]
+                self.symbols.append(name); self.shapes.append(tuple(val.shape))
+                self.params[name] = nn.Parameter(val)
+
     def _flatten_symbols(self, val):
         if isinstance(val, dict) and 'name' in val:
             return [val]

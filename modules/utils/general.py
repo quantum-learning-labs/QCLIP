@@ -174,6 +174,8 @@ class CheckpointManager:
         if "params" in image_params and not any("params." in k for k in image_params):
             image_params = cls.upgrade_checkpoint(image_params)
 
+        if hasattr(text_model, 'from_state_dict') and not text_model.symbols:   # TN built without text_init (benchmark.py)
+            text_model.from_state_dict(text_params)
         missing, unexpected = text_model.load_state_dict(text_params, strict=False)
         if missing or unexpected:
             raise RuntimeError(f"Text weights in {checkpoint_path} do not match the model built from the config: "

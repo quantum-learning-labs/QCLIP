@@ -1,9 +1,12 @@
-import torch
+import torch, os, pickle, hashlib
+from pathlib import Path
 from torch.utils.data import DataLoader
 from modules.utils.general import load_pkl
 from modules.utils.analysis import tn_metadata, analyse_einsum
 from torchvision.transforms import v2
 from modules.utils.factory import build_dataset, load_obj
+
+TN_CACHE_VERSION = 1   # bump when TNCompiler output changes for the same settings
 
 class DataEngine:
     def __init__(self, config, ansatz, device):
@@ -39,16 +42,43 @@ class DataEngine:
                 raise ValueError("text.sinks needs text.mixer_layers >= 1 (the sinks are coupled in by the mixer)")
             
         if split == 'train' or split == 'val':
-            data = load_pkl(self.config["dataset"][split]["text_path"])
-            if split == 'train' and self.config.get('train_frac'):   # fixed random subset (smoke tests); saved in the run config
-                data = data.sample(frac=self.config['train_frac'], random_state=0).reset_index(drop=True)
-            return self.ansatz.compile_dataset(data, **compile_kwargs)
+            text_path = self.config["dataset"][split]["text_path"]
+            frac = self.config.get('train_frac') if split == 'train' else None
         elif split not in ['train', 'val']:
-            data = load_pkl(self.config["dataset"]["test"][split]["text_path"])
-            compiled_data = self.ansatz.compile_dataset(data, **compile_kwargs)
-            return compiled_data
-        else:
-            raise ValueError(f"Unsupported split '{split}' for text compilation. Must be 'train' or 'val'.")
+            text_path = self.config["dataset"]["test"][split]["text_path"]
+            frac = None
+        cache = self._compile_cache_path(text_path, frac) if self.config["model_type"] == "tn" else None
+        if cache is not None and cache.exists():
+            return load_pkl(cache)
+        data = load_pkl(text_path)
+        if frac:   # fixed random subset (smoke tests); saved in the run config
+            data = data.sample(frac=frac, random_state=0).reset_index(drop=True)
+        compiled = self.ansatz.compile_dataset(data, **compile_kwargs)
+        if cache is not None:
+            self._write_cache(compiled, cache)
+        return compiled
+
+    @staticmethod
+    def _write_cache(obj, path):
+        # write to a private temp file, then link it in: concurrent runs never see a partial file and never overwrite
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+        with open(tmp, 'xb') as f:
+            pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            pass
+        os.unlink(tmp)
+
+    def _compile_cache_path(self, text_path, frac):
+        # compiled TN datasets are cached on disk (cache/tn_compiled, untracked): key = source file identity + compiler
+        # settings + subset, so a changed pickle or compiler config never hits a stale entry
+        st = os.stat(text_path)
+        dec = self.ansatz.decomposition
+        key = repr((os.path.abspath(text_path), st.st_size, st.st_mtime_ns, self.ansatz.id, self.ansatz.word_dim,
+                    type(dec).__name__, sorted(vars(dec).items()) if dec is not None else None, frac, TN_CACHE_VERSION))
+        return Path('cache/tn_compiled') / f"{Path(text_path).stem}_{hashlib.sha1(key.encode()).hexdigest()[:16]}.pkl"
 
     def text_init(self, text_model, compiled_data):
         if hasattr(text_model, "from_symbols"):

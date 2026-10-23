@@ -31,12 +31,12 @@ if __name__ == "__main__":
 
     data_engine = DataEngine(config, ansatz, DEV)
     startup, t0 = {}, time.time()   # seconds per startup phase (step-2 efficiency report)
-    compiled_train = data_engine.compile_text('train')
-    compiled_val = data_engine.compile_text('val')
-
-    startup['compile_train_val'] = time.time() - t0; t0 = time.time()
-    log_phase("Restoring Dynamic Parameter Spaces")
-    data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
+    if not hasattr(text_model, 'from_state_dict'):   # TN models take their vocabulary from the checkpoint instead
+        compiled_train = data_engine.compile_text('train')
+        compiled_val = data_engine.compile_text('val')
+        startup['compile_train_val'] = time.time() - t0; t0 = time.time()
+        log_phase("Restoring Dynamic Parameter Spaces")
+        data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
     data_engine.image_init(image_model)
 
     startup['text_init'] = time.time() - t0; t0 = time.time()
