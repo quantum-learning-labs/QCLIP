@@ -59,12 +59,7 @@ class DataEngine:
             
             sym_kwargs = {"id_init": True} if self.config["model_type"] == "vqc" else {}
             text_model.from_symbols(symbol_arr, **sym_kwargs)
-            if hasattr(text_model, "precompute_paths"):
-                ein_cols = [c[:-len("_symbols")] + "_einsum" for c in sym_cols]
-                pairs = [(e, s) for ec, sc in zip(ein_cols, sym_cols) for es, ss in zip(compiled_data[ec], compiled_data[sc])
-                         if not isinstance(ss, float) for e, s in (zip(es, ss) if isinstance(es, list) else [(es, ss)])]
-                n = text_model.precompute_paths([e for e, _ in pairs], [s for _, s in pairs])
-                print(f"Contraction paths searched up front: {n} structures")
+            self.precompute_paths(text_model, compiled_data)
 
         if hasattr(text_model, "from_plans"):
             cols = [col for col in compiled_data.columns if col.endswith('_einsum')]
@@ -73,6 +68,17 @@ class DataEngine:
                 plan_stream += [v for v in compiled_data[col].tolist() if not isinstance(v, float)]
             text_model.from_plans(list(plan_stream))
         
+    def precompute_paths(self, text_model, compiled_data):
+        # TN models: contraction paths (and levelwise plans) of every structure in compiled_data, searched in parallel
+        if not hasattr(text_model, "precompute_paths"):
+            return
+        sym_cols = [c for c in compiled_data.columns if c.endswith("_symbols")]
+        ein_cols = [c[:-len("_symbols")] + "_einsum" for c in sym_cols]
+        pairs = [(e, s) for ec, sc in zip(ein_cols, sym_cols) for es, ss in zip(compiled_data[ec], compiled_data[sc])
+                 if not isinstance(ss, float) for e, s in (zip(es, ss) if isinstance(es, list) else [(es, ss)])]
+        n = text_model.precompute_paths([e for e, _ in pairs], [s for _, s in pairs])
+        print(f"Contraction paths searched up front: {n} structures")
+
     def image_init(self, image_model):
         if self.config['vision']['method'] == 'pca':
             train_embeddings = torch.load(self.config["dataset"]["train"]["img_path"])

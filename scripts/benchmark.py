@@ -67,6 +67,7 @@ if __name__ == "__main__":
             oov = text_model.extend_symbols([v for c in sym_cols for v in compiled_eval[c].tolist() if not isinstance(v, float)], seed=SEED)
             for key, val in oov.items(): results[f"{split_name}_{key}"] = val
             print(f" OOV '{split_name}': {oov}")
+        data_engine.precompute_paths(text_model, compiled_eval)
         eval_loader = data_engine.get_loader(compiled_eval, split=split_name)
         startup[f'prepare_{split_name}'] = time.time() - t0
         eval_fn = getattr(evaluator, split_info['task'], None)

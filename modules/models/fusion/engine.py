@@ -472,8 +472,8 @@ class MMEvaluator:
         n_imgs, m_txts = similarity.shape
 
         mask = torch.zeros((n_imgs, m_txts), dtype=torch.bool, device=similarity.device)
-        for i, j in match_coordinates:
-            mask[i, j] = True
+        rows, cols = torch.tensor(match_coordinates, dtype=torch.long).T
+        mask[rows, cols] = True
 
         metrics = {}
 
