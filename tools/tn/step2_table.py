@@ -12,7 +12,8 @@ EVAL = ['coco5k', 'sugarcrepe_replace_object', 'winoground', 'aro_rel']
 def load(tag):
     prof = json.load(open(R / f'prof_{tag}.json'))
     bench = json.load(open(R / f'bench_{tag}.json')) if (R / f'bench_{tag}.json').exists() else None
-    reg = (R / f'regress_{tag}.txt').read_text() if (R / f'regress_{tag}.txt').exists() else ''
+    regs = [R / f'regress2_{tag}.txt', R / f'regress_{tag}.txt']   # regress2: rerun with the final regress.py
+    reg = next((r.read_text() for r in regs if r.exists()), '')
     return prof, bench, reg
 
 def regress_summary(reg):
