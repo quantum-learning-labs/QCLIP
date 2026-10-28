@@ -32,6 +32,7 @@ def main(root):
         s = json.load(open(d / 'summary.json'))
         rows = s['rows'] + [r for f in sorted(d.glob('summary_ionq_*.json')) for r in json.load(open(f))['rows']]
         meta = s['meta']
+        sat = json.load(open(d / 'saturation.json')) if (d / 'saturation.json').exists() else {}   # saturation.py
         ex = rows[0]
         ionq_stats = dict(ex['stats_ionq_native'])
         a = ASSUME['ionq']
@@ -43,6 +44,7 @@ def main(root):
             b = r['backend']
             st = r.get('stats') or (ionq_stats if b.startswith('ionq') else ex['stats_logical'])
             r['stats'] = st
+            r['saturation'] = sat.get(b)
             s95 = r.get('shots_per_circuit_95')
             r['shots_per_decision_95'] = 2 * s95 if s95 else None
             kind = 'ionq' if b.startswith('ionq') else 'ibm' if b.startswith(('ibm', 'honest')) else None
