@@ -37,17 +37,17 @@ def main():
     assert 'qpu' not in sim.name.lower()
     tc = transpile(circs, backend=sim, optimization_level=1, seed_transpiler=0)
 
-    def run(cs, noise, shots, tag):
+    def run(cs, noise, shots, label):
         # submit every batch first (the simulator queue, not the simulation, dominates), then collect in order
         kw = {'noise_model': noise} if noise else {}
         jobs = [sim.run(cs[i:i + a.batch], shots=shots, **kw) for i in range(0, len(cs), a.batch)]
         with open(d / f'ionq_jobs_{tag}.txt', 'a') as f:
-            f.write(tag + ' ' + ' '.join(j.job_id() for j in jobs) + '\n')
+            f.write(label + ' ' + ' '.join(j.job_id() for j in jobs) + '\n')
         counts, t = [], time.time()
         for k, job in enumerate(jobs):
             cnt = job.result().get_counts()
             counts += [dict(c) for c in (cnt if isinstance(cnt, list) else [cnt])]
-            print(f'{tag}: job {k + 1}/{len(jobs)} done after {time.time() - t:.0f}s', flush=True)
+            print(f'{label}: job {k + 1}/{len(jobs)} done after {time.time() - t:.0f}s', flush=True)
         return counts
 
     # sanity check of the bit order / partial measurement handling: ideal simulator vs exact
