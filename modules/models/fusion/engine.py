@@ -74,7 +74,8 @@ class RunManager:
             "train_loss": loss,
             "val_metrics": metrics
         }
-        torch.save(payload, self.checkpoint_path)
+        if self.config.get('save_last', True):   # save_last: false keeps only best.pt (2.2 GB per TN checkpoint)
+            torch.save(payload, self.checkpoint_path)
         if is_best and self.config.get('save_best', True):   # fixed-budget runs report last.pt and can skip best.pt
             torch.save(payload, self.best_checkpoint_path)
 
@@ -85,6 +86,9 @@ class RunManager:
         
         best_metric_value = float("-inf")
         target_metric = "i2tR1" if 'global_retrieval' in self.eval_tasks else 'hard_neg_acc'
+        # select_metric: mrr_mean = mean of i2t_mrr and t2i_mrr (less noisy than R@1 on 5k val images)
+        target_metric = self.config.get('select_metric', target_metric)
+        metric_needed = getattr(self.scheduler, 'needs_metric', False)   # lr_schedule: plateau steps on the metric
 
         patience = self.config.get('patience', 15)
         min_delta = self.config.get('min_delta', 1e-3)
@@ -157,7 +161,7 @@ class RunManager:
 
                 grad_norm_dict = self.trainer.grad_norm_by_type()
 
-                if self.scheduler is not None:
+                if self.scheduler is not None and not metric_needed:
                     self.scheduler.step()
                     current_lr = self.scheduler.get_last_lr()[0]
                     mlflow.log_metric("learning_rate", current_lr, step=epoch)
@@ -176,7 +180,15 @@ class RunManager:
                 metrics_str = " | ".join([f"{k}: {v:.4f}" for k, v in metrics.items()])
                 tqdm.write(f"\nEpoch {epoch:02d} | Loss: {loss:.4f} | Gradient Norms: {', '.join([f'{k}: {v:.4f}' for k, v in grad_norm_dict.items()])} | {metrics_str} | Time: {elapsed_time:.1f}s")
 
+                if target_metric == 'mrr_mean' and 'i2t_mrr' in metrics:
+                    metrics['mrr_mean'] = 0.5 * (metrics['i2t_mrr'] + metrics['t2i_mrr'])
+                    mlflow.log_metric('mrr_mean', metrics['mrr_mean'], step=epoch)
                 current_metric = metrics.get(target_metric, 0.0)
+                if self.scheduler is not None and metric_needed:
+                    self.scheduler.step(current_metric)
+                    current_lr = self.scheduler.get_last_lr()[0]
+                    mlflow.log_metric("learning_rate", current_lr, step=epoch)
+                    tqdm.write(f"lr after epoch {epoch}: {current_lr:.3g}")
                 if current_metric > (best_metric_value + min_delta):
                     best_metric_value = current_metric
                     patience_counter = 0
@@ -426,10 +438,11 @@ class MMEvaluator:
         return self.image_model(images.to(self.device)).flatten(1).contiguous()
     
     def _calculate_recall(self, scores: torch.Tensor, mask: torch.Tensor, prefix: str):
-        rankings = scores.argsort(dim=1, descending=True)
-        matched_positions = mask.gather(1, rankings).float()
-        positions = torch.argmax(matched_positions, dim=1)
-        #positions = (rankings == target_indices[:, None]).nonzero(as_tuple=False)[:, 1]
+        # rank of the best positive = number of negatives scored strictly above it (no full argsort: 5k x 25k sorted twice
+        # per val eval was most of its time). Same as the old argsort rank except at exact score ties (duplicate captions),
+        # which argsort broke arbitrarily and which now count in the positive's favour.
+        best_pos = scores.masked_fill(~mask, float('-inf')).max(dim=1, keepdim=True).values
+        positions = ((scores > best_pos) & ~mask).sum(dim=1)
         
         results = {}
         results[f"{prefix}R1"] = (positions < 1).float().mean().item()
@@ -449,7 +462,7 @@ class MMEvaluator:
         for batch in dataloader:
             img_batch, txt_batch = batch_mapper(batch)
             img_emb = self._encode_img(img_batch)
-            all_img.append(img_emb.cpu())
+            all_img.append(img_emb)   # kept on the device: the 5k x 25k scores and metrics run there
 
             text_payload_batch = []
             for item_captions in txt_batch:
@@ -466,13 +479,13 @@ class MMEvaluator:
                 for c in item_captions:
                     text_payload_batch.append((c[0], c[1]))
             txt_emb = self._encode_txt(text_payload_batch)
-            all_txt.append(txt_emb.cpu())
+            all_txt.append(txt_emb)
 
         similarity = self._readout(torch.cat(all_img, dim=0) @ torch.cat(all_txt, dim=0).conj().T)
         n_imgs, m_txts = similarity.shape
 
         mask = torch.zeros((n_imgs, m_txts), dtype=torch.bool, device=similarity.device)
-        rows, cols = torch.tensor(match_coordinates, dtype=torch.long).T
+        rows, cols = torch.tensor(match_coordinates, dtype=torch.long, device=similarity.device).T
         mask[rows, cols] = True
 
         metrics = {}

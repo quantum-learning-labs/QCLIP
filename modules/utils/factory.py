@@ -135,7 +135,35 @@ def build_optimizer(config, text_model, image_model, loss_fn):
     )
     warmup_epochs = config.get('warmup_epochs', 5)
     total_epochs = config['epochs']
+    if config.get('lr_schedule', 'cosine') == 'plateau':
+        return optimizer, PlateauSchedule(optimizer, warmup_epochs, factor=config.get('lr_factor', 0.1),
+                                          patience=config.get('lr_patience', 4), threshold=config.get('min_delta', 1e-3))
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
     scheduler_cosine = CosineAnnealingLR(optimizer, T_max=max(total_epochs - warmup_epochs, 1), eta_min=1e-6)
     scheduler = SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_epochs])
     return optimizer, scheduler
+
+
+class PlateauSchedule:
+    """lr_schedule: plateau. Linear warmup over warmup_epochs, then constant LR, times `factor` whenever the selection
+    metric (RunManager.fit passes it: needs_metric) hasn't improved by > threshold for `patience` epochs. With early
+    stopping (config patience > lr_patience) a run trains until its validation metric plateaus."""
+    needs_metric = True
+
+    def __init__(self, optimizer, warmup_epochs, factor=0.1, patience=4, threshold=1e-3):
+        from torch.optim.lr_scheduler import LinearLR, ReduceLROnPlateau
+        self.warmup_epochs, self.epoch = warmup_epochs, 0
+        self.warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs) if warmup_epochs else None
+        self.plateau = ReduceLROnPlateau(optimizer, mode='max', factor=factor, patience=patience,
+                                         threshold=threshold, threshold_mode='abs')
+        self.optimizer = optimizer
+
+    def step(self, metric):
+        self.epoch += 1
+        if self.warmup is not None and self.epoch <= self.warmup_epochs:
+            self.warmup.step()
+        else:
+            self.plateau.step(metric)
+
+    def get_last_lr(self):
+        return [g['lr'] for g in self.optimizer.param_groups]
