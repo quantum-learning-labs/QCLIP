@@ -3,7 +3,7 @@
 # noise (FakeMiami as in emulate.py, and FakeKingston) and the honest profile. Writes the logical circuits (QPY)
 # for analysis/bench/ionq_run.py. Usage (from the repo root, GPU node):
 #   PYTHONPATH=.:analysis/bench python analysis/bench/backends.py -cp <best.pt> --meas destructive_swap -o results/bench_b1/<name>
-import argparse, copy, json, pickle, sys, time
+import argparse, copy, json, os, pickle, sys, time
 from pathlib import Path
 import numpy as np, pandas as pd, torch
 from qiskit import qpy
@@ -40,6 +40,8 @@ def main():
     p.add_argument('--eval_set', default='swap')
     p.add_argument('-l', '--limit', type=int, default=None)
     p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--full_map', action='store_true', help='noisy backends on the full device coupling map (old behaviour; '
+                   'slow: Aer setup per circuit on 120+ qubits); default restricts it to qlimit qubits as emulate.py does')
     p.add_argument('-o', '--out', required=True)
     a = p.parse_args()
     out = Path(a.out)
@@ -71,7 +73,7 @@ def main():
     with open(out / 'logical.qpy', 'wb') as f:
         qpy.dump(circs, f)
 
-    meta = {'checkpoint': str(ckpt), 'epoch': ck.get('epoch'), 'discard': discard, 'meas': a.meas, 'eval_set': a.eval_set,
+    meta = {'full_map': a.full_map, 'checkpoint': str(ckpt), 'epoch': ck.get('epoch'), 'discard': discard, 'meas': a.meas, 'eval_set': a.eval_set,
             'pairs': n_pairs, 'shots': a.shots, 'reps': a.reps, 'method': a.method, 'git': git_state(), 'qlimit': qlimit}
     print(f'{n_pairs} pairs, {len(circs)} circuits, discard={discard}, meas={a.meas}', flush=True)
 
@@ -111,8 +113,9 @@ def main():
         profile, cls = NOISY[name]
         cfg = copy.deepcopy(config)
         cfg['emulate'].update(noise=True, noise_profile=profile, backend=a.method,
-                              aer_options={'batched_shots_gpu': False, 'shot_branching_enable': False})
-        nb = BackendManager(cfg, None, hardware_profile=getattr(fake_provider, cls)())
+                              aer_options={'batched_shots_gpu': False, 'shot_branching_enable': False,
+                                           'max_parallel_threads': int(os.environ.get('AER_THREADS', 0))})
+        nb = BackendManager(cfg, None if a.full_map else qlimit, hardware_profile=getattr(fake_provider, cls)())
         idle = nb.honest['idle']
         nb.honest['idle'] = False   # gate-level circuit for the statistics (same seed -> same layout and routing)
         plain = nb.transpile(circs, batch_size=256, optimization_level=1)
@@ -124,9 +127,9 @@ def main():
         for r in range(a.reps):
             nb.backend.set_options(seed_simulator=1000 * (r + 1) + a.seed)
             cnt = []
-            for i in range(0, len(tc), 64):
-                res = nb.backend.run(tc[i:i + 64], shots=a.shots).result()
-                cnt += [dict(res.get_counts(j)) for j in range(len(tc[i:i + 64]))]
+            for i in range(0, len(tc), 256):   # few large run() calls: Aer pays a fixed noise-model setup per call
+                res = nb.backend.run(tc[i:i + 256], shots=a.shots).result()
+                cnt += [dict(res.get_counts(j)) for j in range(len(tc[i:i + 256]))]
             rep_counts.append(cnt)
             print(f'{name} rep {r}: {time.time() - t0:.0f}s', flush=True)
         e1, wall = gpu_energy_mj(), time.time() - t0

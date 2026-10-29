@@ -61,7 +61,8 @@ def main():
     p.add_argument('--reps', type=int, default=None, help='override reps (diagnostics)')
     p.add_argument('--limit', type=int, default=None, help='first N pairs only (diagnostics; writes nothing)')
     p.add_argument('--threads', type=int, default=0, help='Aer max_parallel_threads (0 = all cores)')
-    p.add_argument('--chunk', type=int, default=16, help='circuits whose variants are built and run together (memory)')
+    p.add_argument('--chunk', type=int, default=64, help='circuits whose variants are built and run together (one Aer run() call)')
+    p.add_argument('--full_map', action='store_true', help='full device coupling map (default: qlimit qubits, as the run in <dir>)')
     a = p.parse_args()
     d = Path(a.dir)
     tag = '' if ',' in a.backends else '_' + a.backends   # one file per backend when run per backend
@@ -86,7 +87,7 @@ def main():
         cfg = copy.deepcopy(config)
         cfg['emulate'].update(noise=True, noise_profile=profile, backend=a.method,
                               aer_options={'batched_shots_gpu': False, 'shot_branching_enable': False, 'max_parallel_threads': a.threads})
-        nb = BackendManager(cfg, None, hardware_profile=getattr(fake_provider, cls)())
+        nb = BackendManager(cfg, None if (a.full_map or meta.get('full_map', True)) else meta['qlimit'], hardware_profile=getattr(fake_provider, cls)())
         idle = profile == 'honest' and nb.honest['idle']
         nb.honest['idle'] = False
         plain = nb.transpile(circs, batch_size=256, optimization_level=1)   # same seed -> same layout as the unmitigated run
