@@ -1,4 +1,4 @@
-import torch
+import torch, gc, os
 from torch.utils.data import DataLoader
 from modules.utils.general import load_pkl
 from modules.utils.analysis import tn_metadata, analyse_einsum
@@ -60,6 +60,10 @@ class DataEngine:
             sym_kwargs = {"id_init": True} if self.config["model_type"] == "vqc" else {}
             text_model.from_symbols(symbol_arr, **sym_kwargs)
             self.precompute_paths(text_model, compiled_data)
+            if os.environ.get('TN_GC_FREEZE', '1') == '1':
+                # the compiled captions and plans are millions of long-lived Python objects: freeze them so the cyclic
+                # GC stops rescanning them on every full collection (training steps allocate many temporaries)
+                gc.collect(); gc.freeze()
 
         if hasattr(text_model, "from_plans"):
             cols = [col for col in compiled_data.columns if col.endswith('_einsum')]
