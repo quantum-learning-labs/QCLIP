@@ -1,0 +1,379 @@
+<meta name="dash-one-writer">
+<style>
+  #dash-root { --dash-gutter: var(--cds-pad-lg); }
+  .qb { font-family: var(--font-anthropic-sans); display: grid; gap: var(--cds-gap-xl); max-width: 84rem; margin-inline: auto; }
+  .qb h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0; text-wrap: balance; }
+  .qb h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0; text-wrap: balance; }
+  .qb h3 { font-size: var(--cds-font-size-body); font-weight: var(--cds-font-weight-medium); margin: 0; }
+  .qb p { margin: 0; max-width: 72ch; line-height: 1.5; }
+  .qb .muted { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+  .qb .head { display: grid; gap: var(--cds-gap-sm); }
+  .qb .sec { display: grid; gap: var(--cds-gap-md); }
+  .qb .grid { display: grid; gap: var(--cds-gap-md); grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); }
+  .qb .card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: grid; gap: var(--cds-gap-sm); align-content: start; min-width: 0; }
+  .qb .chart { position: relative; min-height: 14rem; }
+  .qb .chart.tall { min-height: 22rem; }
+  .qb .tip { position: absolute; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); pointer-events: none; white-space: nowrap; z-index: 2; }
+  .qb .tip .k { color: var(--cds-text-secondary); }
+  .qb .legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-sm) var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .qb .legend span { display: inline-flex; align-items: center; gap: .35rem; }
+  .qb .legend i { width: .6rem; height: .6rem; border-radius: 50%; display: inline-block; }
+  .qb .tbl { overflow: auto; max-height: 32rem; }
+  .qb table { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; }
+  .qb th, .qb td { padding: .35rem .5rem; text-align: right; border-bottom: 1px solid var(--color-border-line); white-space: nowrap; }
+  .qb th:nth-child(-n+3), .qb td:nth-child(-n+3) { text-align: left; }
+  .qb th { position: sticky; top: 0; background: var(--color-panel); font-weight: var(--cds-font-weight-medium); }
+  .qb th button { all: unset; cursor: pointer; }
+  .qb th button:focus-visible { outline: 2px solid var(--cds-chart-axis); }
+  .qb .controls { display: flex; flex-wrap: wrap; gap: var(--cds-gap-sm); align-items: center; }
+  .qb select, .qb input { font: inherit; font-size: var(--cds-font-size-caption); padding: .25rem .4rem; border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); background: var(--color-bg); color: var(--color-fg); }
+  .qb .note { border-left: 2px solid var(--color-border-line); padding-left: var(--cds-pad-sm); }
+  .qb b { font-weight: 600; }
+  .qb ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .3rem; max-width: 80ch; line-height: 1.45; }
+  [data-dash-source-state=empty] { color: transparent; }
+  [data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+</style>
+
+<div class="qb">
+  <header class="head">
+    <h1 id="top">QCLIP backend benchmark</h1>
+    <p>Best post-selected and discard circuits on the SVO-probes swap set (95 caption pairs), each readout run on the exact simulator, IBM fake-backend noise, the honest noise profile and IonQ's Forte-1 noise simulator. Five independent shot and noise repetitions of 8192 shots per circuit.</p>
+    <p>On IonQ Forte-1 with the swap test, post-selection reaches <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=ps|swap|ionq_forte-1">—</b> and the val runner-up discard model <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=discard6|swap|ionq_forte-1">—</b>, against <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=ps|swap|exact_inf">—</b> and <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=discard6|swap|exact_inf">—</b> exactly. Noise costs at most a few points on every backend; with 95 pairs one pair-level standard error is about 3.5 to 5 points, so the backends cannot be told apart on accuracy alone.</p>
+    <p class="muted">The best discard model by validation accuracy (seed 3) is at chance on this set in every setting, including exact simulation, so the val runner-up (seed 6, validation 0.881 against 0.882) is shown beside it. No hardware was used: IonQ ran on its cloud simulator only, and every hardware time, energy and price figure is an estimate.</p>
+  </header>
+
+  <section class="sec" id="accuracy">
+    <h2>Accuracy on each backend</h2>
+    <div class="card">
+      <h3>Swap-set accuracy, mean of 5 repetitions with ±1 standard deviation</h3>
+      <p class="muted">Hover a dot for the numbers. Chance is 0.5.</p>
+      <div class="legend" data-draw="legend" data-source="results">—</div>
+      <div class="chart tall" data-draw="dots" data-source="results"></div>
+    </div>
+  </section>
+
+  <section class="sec" id="shots">
+    <h2>Accuracy for a given shot budget</h2>
+    <p>Expected accuracy at a given number of shots per circuit, from each backend's own per-circuit signal and acceptance rate (normal approximation, two circuits per decision). Rejected shots count for post-selection. This is the shot-cost metric used here: the accuracy at 1024 shots per circuit is in the table below, and the shots needed to reach 95% of each backend's large-shot accuracy above chance is there too, but that second number is unstable because pairs with near-zero margins dominate it.</p>
+    <div class="grid" data-draw="curves" data-source="curves"></div>
+  </section>
+
+  <section class="sec" id="distributions">
+    <h2>Output bit strings</h2>
+    <p>Average probability of each outcome of the readout register over the 190 circuits, exact against the chosen backend. Swap test outcomes are written text bits | image bits; compute-uncompute outcomes are the output qubits. For post-selection the right chart shows how many post-selected (aux) qubits read 1: zero ones is an accepted shot.</p>
+    <div class="controls">
+      <label class="muted" for="dist-run">Circuit set</label>
+      <select id="dist-run" data-draw="distrun" data-source="dists"></select>
+      <label class="muted" for="dist-back">Backend</label>
+      <select id="dist-back" data-draw="distback" data-source="dists"></select>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3>Readout register, exact (grey) and backend (color)</h3>
+        <div class="chart" data-draw="dist" data-source="dists"></div>
+      </div>
+      <div class="card">
+        <h3>Post-selected qubits reading 1</h3>
+        <p class="muted">Post-selection circuits only.</p>
+        <div class="chart" data-draw="aux" data-source="aux"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="saturation">
+    <h2>When the output distribution stops changing</h2>
+    <ul>
+      <li><b>Effective outcomes K</b>: (Σ√p)², the number of equally likely outcomes with the same spread.</li>
+      <li><b>Shots to 1% (0.1%)</b>: shots per circuit at which a sample is expected to be within 1% (0.1%) Hellinger infidelity of the backend's own distribution, (K − 1) / 4ε. The fitted column measures the same from two independent halves of the data.</li>
+      <li><b>Noise bias</b>: infidelity to the exact distribution that remains with infinite shots. <b>Crossover S*</b> = (K − 1) / (4 · bias): beyond it, more shots do not bring the distribution closer to the exact one.</li>
+    </ul>
+    <div class="card">
+      <h3>Saturation per circuit set and backend (median over circuits)</h3>
+      <div class="tbl">
+        <table data-source="saturation" data-row-key="run">
+          <thead><tr>
+            <th data-field="model">Model</th><th data-field="readout">Readout</th><th data-field="backend">Backend</th>
+            <th data-field="k_eff">K</th><th data-field="k_eff_exact">K exact</th><th data-field="s_sat_1pct">Shots to 1%</th>
+            <th data-field="s_sat_1pct_fit">Shots to 1% (fit)</th><th data-field="s_sat_01pct">Shots to 0.1%</th>
+            <th data-field="noise_bias">Noise bias</th><th data-field="s_star">Crossover S*</th>
+          </tr></thead>
+          <tbody data-draw="sattable"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Hellinger infidelity against shots per circuit, for the circuit set chosen above</h3>
+      <p class="muted">Solid: between two independent samples (falls like 1/shots). Dashed: sample against the exact distribution (levels off at the noise bias).</p>
+      <div class="legend" data-draw="legend" data-source="results">—</div>
+      <div class="chart" data-draw="split" data-source="split_half"></div>
+    </div>
+  </section>
+
+  <section class="sec" id="hardware">
+    <h2>Running these circuits on hardware</h2>
+    <p>Circuit size after compilation for each target (IBM: heavy-hex routing to the device; IonQ: all-to-all, two-qubit gates counted as XX). Estimated success probability is the product of 1 − error over every gate and readout. Time, energy and list price are per decision (two circuits) at 1024 shots per circuit, from the assumptions at the bottom; the simulator's own GPU energy is what the cluster GPU actually drew for 5 × 8192 shots per circuit.</p>
+    <div class="card">
+      <div class="tbl">
+        <table data-source="results" data-row-key="run">
+          <thead><tr>
+            <th data-field="model">Model</th><th data-field="readout">Readout</th><th data-field="backend">Backend</th>
+            <th data-field="qubits">Qubits</th><th data-field="depth">Depth</th><th data-field="depth_2q">2q depth</th>
+            <th data-field="gates_2q">2q gates</th><th data-field="gates_2q_max">2q gates max</th><th data-field="esp">Est. success prob.</th>
+            <th data-field="hellinger_fidelity">Measured fidelity</th><th data-field="duration_us">Circuit µs</th>
+            <th data-field="qpu_s_per_decision">QPU s / decision</th><th data-field="energy_J_per_decision">Energy J / decision</th>
+            <th data-field="usd_per_decision">USD / decision</th><th data-field="sim_gpu_energy_kJ">Simulator GPU kJ</th>
+          </tr></thead>
+          <tbody data-draw="hwtable"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="all">
+    <h2>All results</h2>
+    <p class="muted">Accuracy is the mean over 5 repetitions; its standard deviation and variance are across repetitions (shot and noise sampling), not across trained seeds. Agreement is the share of pairs decided as in exact simulation. Margin vs exact is the median ratio of the backend's pos − neg margin to the exact one (noise contraction). Below shot noise is the share of pairs whose margin is under 2σ at 8192 shots.</p>
+    <div class="controls"><label class="muted" for="flt">Filter rows</label><input id="flt" type="search" placeholder="e.g. IonQ, swap, discard"></div>
+    <div class="card">
+      <div class="tbl">
+        <table data-source="results" data-row-key="run">
+          <thead><tr>
+            <th data-field="model"><button>Model</button></th><th data-field="readout"><button>Readout</button></th><th data-field="backend"><button>Backend</button></th>
+            <th data-field="accuracy"><button>Accuracy</button></th><th data-field="accuracy_sd"><button>SD</button></th><th data-field="accuracy_var"><button>Variance</button></th>
+            <th data-field="acc_at_1k"><button>Acc. at 1k shots</button></th><th data-field="shots95_per_decision"><button>Shots to 95% / decision</button></th>
+            <th data-field="agree_with_exact"><button>Agrees with exact</button></th><th data-field="hellinger_fidelity"><button>Hellinger fid.</button></th>
+            <th data-field="tvd"><button>TVD</button></th><th data-field="score_spearman"><button>Score Spearman</button></th>
+            <th data-field="margin_vs_exact"><button>Margin vs exact</button></th><th data-field="below_shot_noise"><button>Below shot noise</button></th>
+            <th data-field="acceptance"><button>Acceptance</button></th><th data-field="sim_wall_s"><button>Sim wall s</button></th>
+          </tr></thead>
+          <tbody data-draw="alltable"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="assumptions">
+    <h2>Hardware assumptions</h2>
+    <p class="muted">IBM: per shot = scheduled circuit duration + 250 µs repetition delay, about 25 kW for the whole system, pay-as-you-go list price per QPU second. IonQ: Aria-class gate and readout times with 1 ms per-shot overhead, Forte-class error rates, about 10 kW (an assumption, not a published figure), AWS Braket list price per shot. Rough orders of magnitude, for comparing readouts and platforms only.</p>
+    <div class="card">
+      <div class="tbl">
+        <table data-source="assumptions" data-row-key="platform,parameter">
+          <thead><tr><th data-field="platform">Platform</th><th data-field="parameter">Parameter</th><th data-field="value">Value</th></tr></thead>
+          <tbody data-draw="asstable"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const BACKS = ['Exact (infinite shots)', 'Exact, 8192 shots', 'IBM Miami', 'Honest (Miami)', 'IBM Kingston', 'IonQ Forte-1'];
+  const color = (b) => b.startsWith('Exact (inf') ? 'var(--cds-chart-muted)' : dash.colors[(BACKS.indexOf(b) - 1 + 8) % 8];
+  const SETS = (rows) => Array.from(new Set(rows.map((r) => r.model + ' · ' + r.readout)));
+  const num = (x) => (x === '' || x == null ? NaN : Number(x));
+  const ok = (id) => dash.data(id).status === 'ok';
+  const rowsOf = (id) => (ok(id) ? dash.data(id).data : []);
+  window.qbState = window.qbState || { set: null, back: 'IonQ Forte-1', sort: null, asc: false, q: '' };
+  const S = window.qbState;
+
+  function tip(box) {
+    let t = box.querySelector('.tip');
+    if (!t) { t = document.createElement('div'); t.className = 'tip'; t.hidden = true; box.appendChild(t); }
+    return {
+      show(ev, lines) {
+        t.replaceChildren(...lines.map(([k, v], i) => { const d = document.createElement('div'); if (i === 0) d.className = 'k'; d.textContent = v == null ? k : k + ': ' + v; return d; }));
+        t.hidden = false;
+        const r = box.getBoundingClientRect(), w = t.offsetWidth, h = t.offsetHeight;
+        let x = ev.clientX - r.left + 12, y = ev.clientY - r.top - h - 8;
+        if (x + w > r.width) x = ev.clientX - r.left - w - 12; if (x < 0) x = 0; if (y < 0) y = ev.clientY - r.top + 12;
+        t.style.left = x + 'px'; t.style.top = y + 'px';
+      },
+      hide() { t.hidden = true; },
+    };
+  }
+  function measure(svg, texts) {
+    const g = svg.append('g').attr('font-size', 'var(--cds-font-size-caption)');
+    const w = d3.max(texts, (s) => { const n = g.append('text').text(s).node(); const l = n.getComputedTextLength(); return l; }) || 0;
+    g.remove(); return w;
+  }
+
+  dash.draw('kpi', (el) => {
+    const id = el.dataset.source, d = dash.data(id);
+    if (d.status !== 'ok') { el.textContent = '—'; return; }
+    const [k, v] = el.dataset.where.split('=');
+    const r = d.data.find((x) => x[k] === v);
+    el.textContent = r ? d3.format('.3f')(num(r[el.dataset.field])) : '—';
+  });
+
+  dash.draw('legend', (el) => {
+    if (!ok('results')) { el.textContent = '—'; return; }
+    const present = new Set(rowsOf('results').map((r) => r.backend));
+    el.replaceChildren(...BACKS.filter((b) => present.has(b)).map((b) => { const s = document.createElement('span'); const i = document.createElement('i'); i.style.background = color(b); s.append(i, b); return s; }));
+  });
+
+  dash.draw('dots', (el) => {
+    el.replaceChildren();
+    if (!ok('results')) return;
+    const rows = rowsOf('results'), sets = SETS(rows);
+    const W = el.clientWidth || 600, rowH = 40;
+    const svg = d3.select(el).append('svg').attr('width', '100%');
+    const ml = Math.min(measure(svg, sets) + 12, W * 0.45), mr = 16, mt = 8, mb = 28, H = mt + mb + rowH * sets.length;
+    svg.attr('viewBox', `0 0 ${W} ${H}`);
+    const x = d3.scaleLinear([0.4, 1], [ml, W - mr]);
+    const y = d3.scaleBand(sets, [mt, H - mb]).padding(0.2);
+    svg.append('g').selectAll('line').data(x.ticks(6)).join('line').attr('x1', x).attr('x2', x).attr('y1', mt).attr('y2', H - mb).attr('stroke', 'var(--cds-chart-grid)');
+    svg.append('line').attr('x1', x(0.5)).attr('x2', x(0.5)).attr('y1', mt).attr('y2', H - mb).attr('stroke', 'var(--cds-chart-reference)').attr('stroke-dasharray', '4 3');
+    const ax = svg.append('g').attr('transform', `translate(0,${H - mb})`).call(d3.axisBottom(x).ticks(6).tickFormat(d3.format('.1f'))).attr('font-size', null).attr('font-family', null);
+    ax.selectAll('text').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)'); ax.selectAll('line,path').attr('stroke', 'var(--cds-chart-axis)');
+    svg.append('g').selectAll('text').data(sets).join('text').attr('x', ml - 10).attr('y', (s) => y(s) + y.bandwidth() / 2).attr('dy', '0.35em').attr('text-anchor', 'end').attr('fill', 'var(--color-fg)').style('font-size', 'var(--cds-font-size-caption)').text((s) => s);
+    const off = d3.scalePoint(BACKS, [-y.bandwidth() / 2 + 3, y.bandwidth() / 2 - 3]);
+    const T = tip(el);
+    const g = svg.append('g').selectAll('g').data(rows.filter((r) => !isNaN(num(r.accuracy)))).join('g').attr('transform', (r) => `translate(0,${y(r.model + ' · ' + r.readout) + y.bandwidth() / 2 + off(r.backend)})`);
+    g.append('line').attr('x1', (r) => x(Math.max(0.4, num(r.accuracy) - (num(r.accuracy_sd) || 0)))).attr('x2', (r) => x(Math.min(1, num(r.accuracy) + (num(r.accuracy_sd) || 0)))).attr('stroke', (r) => color(r.backend)).attr('stroke-width', 2).attr('stroke-linecap', 'round');
+    g.append('circle').attr('cx', (r) => x(num(r.accuracy))).attr('r', 4.5).attr('fill', (r) => color(r.backend))
+      .on('pointermove', (ev, r) => T.show(ev, [[r.model + ' · ' + r.readout], [r.backend, null], ['Accuracy', d3.format('.3f')(num(r.accuracy))], ['SD over reps', isNaN(num(r.accuracy_sd)) ? 'n/a' : d3.format('.3f')(num(r.accuracy_sd))], ['Agrees with exact', isNaN(num(r.agree_with_exact)) ? 'n/a' : d3.format('.0%')(num(r.agree_with_exact))]]))
+      .on('pointerleave', () => T.hide());
+  });
+
+  dash.draw('curves', (el) => {
+    el.replaceChildren();
+    if (!ok('curves')) return;
+    const rows = rowsOf('curves'), sets = SETS(rows);
+    const all = d3.extent(rows, (r) => num(r.accuracy));
+    for (const s of sets) {
+      const card = document.createElement('div'); card.className = 'card';
+      const h = document.createElement('h3'); h.textContent = s; card.appendChild(h);
+      const box = document.createElement('div'); box.className = 'chart'; card.appendChild(box); el.appendChild(card);
+      const W = box.clientWidth || 380, H = 220, ml = 40, mr = 12, mt = 8, mb = 30;
+      const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`);
+      const rs = rows.filter((r) => r.model + ' · ' + r.readout === s);
+      const x = d3.scaleLog([64, 65536], [ml, W - mr]).base(2);
+      const y = d3.scaleLinear([Math.max(0.45, Math.floor(all[0] * 20) / 20), 1], [H - mb, mt]);
+      svg.append('g').selectAll('line').data(y.ticks(4)).join('line').attr('x1', ml).attr('x2', W - mr).attr('y1', y).attr('y2', y).attr('stroke', 'var(--cds-chart-grid)');
+      const ax = svg.append('g').attr('transform', `translate(0,${H - mb})`).call(d3.axisBottom(x).tickValues([64, 256, 1024, 4096, 16384, 65536]).tickFormat(d3.format('~s')));
+      const ay = svg.append('g').attr('transform', `translate(${ml},0)`).call(d3.axisLeft(y).ticks(4).tickFormat(d3.format('.2f')));
+      for (const a of [ax, ay]) { a.attr('font-size', null).attr('font-family', null); a.selectAll('text').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)'); a.selectAll('line,path').attr('stroke', 'var(--cds-chart-axis)'); }
+      const T = tip(box);
+      for (const b of BACKS) {
+        const pts = rs.filter((r) => r.backend === b).map((r) => [num(r.shots_per_circuit), num(r.accuracy)]).sort((a, c) => a[0] - c[0]);
+        if (!pts.length) continue;
+        svg.append('path').attr('d', d3.line().x((p) => x(p[0])).y((p) => y(p[1]))(pts)).attr('fill', 'none').attr('stroke', color(b)).attr('stroke-width', 2).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
+        svg.append('g').selectAll('circle').data(pts).join('circle').attr('cx', (p) => x(p[0])).attr('cy', (p) => y(p[1])).attr('r', 3).attr('fill', color(b))
+          .on('pointermove', (ev, p) => T.show(ev, [[d3.format(',')(p[0]) + ' shots per circuit'], [b, d3.format('.3f')(p[1])]])).on('pointerleave', () => T.hide());
+      }
+    }
+  });
+
+  const distSets = () => SETS(rowsOf('dists'));
+  dash.draw('distrun', (sel) => {
+    const sets = distSets();
+    if (!sets.length) { sel.replaceChildren(); return; }
+    if (!S.set || !sets.includes(S.set)) S.set = sets.find((s) => s.startsWith('Post-selection') && s.endsWith('Swap test')) || sets[0];
+    sel.replaceChildren(...sets.map((s) => new Option(s, s)));
+    sel.value = S.set;
+    sel.onchange = () => { S.set = sel.value; dash.draw('dist'); dash.draw('aux'); dash.draw('split'); };
+  });
+  dash.draw('distback', (sel) => {
+    const present = new Set(rowsOf('dists').map((r) => r.backend));
+    const opts = BACKS.filter((b) => present.has(b) && !b.startsWith('Exact (inf'));
+    if (!opts.length) { sel.replaceChildren(); return; }
+    if (!opts.includes(S.back)) S.back = opts[opts.length - 1];
+    sel.replaceChildren(...opts.map((b) => new Option(b, b)));
+    sel.value = S.back;
+    sel.onchange = () => { S.back = sel.value; dash.draw('dist'); dash.draw('aux'); };
+  });
+
+  function bars(el, rows, keyName, xLabelFmt) {
+    el.replaceChildren();
+    const ex = rows.filter((r) => r.backend === 'Exact (infinite shots)'), bk = rows.filter((r) => r.backend === S.back);
+    const keys = Array.from(new Set([...ex, ...bk].map((r) => String(r[keyName])))).sort();
+    if (!keys.length) return;
+    const W = el.clientWidth || 380, H = 220, ml = 44, mr = 8, mt = 8, mb = keys.length > 16 ? 16 : 30;
+    const svg = d3.select(el).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`);
+    const pe = new Map(ex.map((r) => [String(r[keyName]), num(r.probability)])), pb = new Map(bk.map((r) => [String(r[keyName]), num(r.probability)]));
+    const x = d3.scaleBand(keys, [ml, W - mr]).padding(0.15), y = d3.scaleLinear([0, d3.max([...pe.values(), ...pb.values()]) * 1.05], [H - mb, mt]);
+    svg.append('g').selectAll('line').data(y.ticks(4)).join('line').attr('x1', ml).attr('x2', W - mr).attr('y1', y).attr('y2', y).attr('stroke', 'var(--cds-chart-grid)');
+    const ay = svg.append('g').attr('transform', `translate(${ml},0)`).call(d3.axisLeft(y).ticks(4).tickFormat(d3.format('.0%')));
+    const ax = svg.append('g').attr('transform', `translate(0,${H - mb})`).call(d3.axisBottom(x).tickValues(keys.length > 16 ? [] : keys).tickFormat(xLabelFmt));
+    for (const a of [ax, ay]) { a.attr('font-size', null).attr('font-family', null); a.selectAll('text').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)'); a.selectAll('line,path').attr('stroke', 'var(--cds-chart-axis)'); }
+    const bw = x.bandwidth() / 2, T = tip(el);
+    const g = svg.append('g').selectAll('g').data(keys).join('g').attr('transform', (k) => `translate(${x(k)},0)`);
+    g.append('rect').attr('x', 0).attr('width', bw).attr('y', (k) => y(pe.get(k) || 0)).attr('height', (k) => y(0) - y(pe.get(k) || 0)).attr('rx', Math.min(2, bw / 2)).attr('fill', 'var(--cds-chart-muted)');
+    g.append('rect').attr('x', bw).attr('width', bw).attr('y', (k) => y(pb.get(k) || 0)).attr('height', (k) => y(0) - y(pb.get(k) || 0)).attr('rx', Math.min(2, bw / 2)).attr('fill', color(S.back));
+    g.append('rect').attr('x', 0).attr('width', x.step()).attr('y', mt).attr('height', H - mb - mt).attr('fill', 'transparent')
+      .on('pointermove', (ev, k) => T.show(ev, [[keyName === 'outcome' ? 'Outcome ' + k : k + ' aux qubits read 1'], ['Exact', d3.format('.2%')(pe.get(k) || 0)], [S.back, d3.format('.2%')(pb.get(k) || 0)]])).on('pointerleave', () => T.hide());
+  }
+  dash.draw('dist', (el) => { if (!ok('dists')) { el.replaceChildren(); return; } bars(el, rowsOf('dists').filter((r) => r.model + ' · ' + r.readout === S.set), 'outcome', (k) => k); });
+  dash.draw('aux', (el) => { if (!ok('aux')) { el.replaceChildren(); return; } bars(el, rowsOf('aux').filter((r) => r.model + ' · ' + r.readout === S.set), 'aux_ones', (k) => k); });
+
+  dash.draw('split', (el) => {
+    el.replaceChildren();
+    if (!ok('split_half')) return;
+    const set = S.set || SETS(rowsOf('split_half'))[0];
+    const rs = rowsOf('split_half').filter((r) => r.model + ' · ' + r.readout === set);
+    if (!rs.length) return;
+    const W = el.clientWidth || 600, H = 240, ml = 52, mr = 12, mt = 8, mb = 30;
+    const svg = d3.select(el).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`);
+    const vals = rs.flatMap((r) => [num(r.split_half_infidelity), num(r.infidelity_to_exact)]).filter((v) => v > 0);
+    const x = d3.scaleLog([16, 4096], [ml, W - mr]).base(2), y = d3.scaleLog([d3.min(vals) * 0.8, d3.max(vals) * 1.2], [H - mb, mt]);
+    svg.append('g').selectAll('line').data(y.ticks(4)).join('line').attr('x1', ml).attr('x2', W - mr).attr('y1', y).attr('y2', y).attr('stroke', 'var(--cds-chart-grid)');
+    const ax = svg.append('g').attr('transform', `translate(0,${H - mb})`).call(d3.axisBottom(x).tickValues([16, 64, 256, 1024, 4096]).tickFormat(d3.format('~s')));
+    const ay = svg.append('g').attr('transform', `translate(${ml},0)`).call(d3.axisLeft(y).ticks(4, '.0e'));
+    for (const a of [ax, ay]) { a.attr('font-size', null).attr('font-family', null); a.selectAll('text').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)'); a.selectAll('line,path').attr('stroke', 'var(--cds-chart-axis)'); }
+    const T = tip(el);
+    for (const b of BACKS) {
+      const p = rs.filter((r) => r.backend === b).sort((a, c) => num(a.shots) - num(c.shots));
+      if (!p.length) continue;
+      for (const [f, dash_] of [['split_half_infidelity', null], ['infidelity_to_exact', '5 4']]) {
+        const pts = p.map((r) => [num(r.shots), num(r[f])]).filter((q) => q[1] > 0);
+        svg.append('path').attr('d', d3.line().x((q) => x(q[0])).y((q) => y(q[1]))(pts)).attr('fill', 'none').attr('stroke', color(b)).attr('stroke-width', 2).attr('stroke-linecap', dash_ ? 'butt' : 'round').attr('stroke-dasharray', dash_);
+        svg.append('g').selectAll('circle').data(pts).join('circle').attr('cx', (q) => x(q[0])).attr('cy', (q) => y(q[1])).attr('r', 2.5).attr('fill', color(b))
+          .on('pointermove', (ev, q) => T.show(ev, [[d3.format(',')(q[0]) + ' shots per circuit'], [b + (dash_ ? ', to exact' : ', split half'), d3.format('.2e')(q[1])]])).on('pointerleave', () => T.hide());
+      }
+    }
+  });
+
+  const FMT = {
+    accuracy: '.3f', accuracy_sd: '.3f', accuracy_var: '.5f', acc_at_1k: '.3f', agree_with_exact: '.0%', hellinger_fidelity: '.3f', tvd: '.3f',
+    score_spearman: '.3f', margin_vs_exact: '.2f', below_shot_noise: '.0%', acceptance: '.3f', shots95_per_decision: ',', sim_wall_s: ',.0f',
+    qubits: '.1f', depth: ',.0f', depth_2q: ',.0f', gates_2q: ',.0f', gates_2q_max: ',.0f', esp: '.3f', duration_us: ',.1f',
+    qpu_s_per_decision: '.3~f', energy_J_per_decision: ',.0f', usd_per_decision: ',.2f', sim_gpu_energy_kJ: ',.1f',
+    k_eff: '.1f', k_eff_exact: '.1f', s_sat_1pct: ',.0f', s_sat_1pct_fit: ',.0f', s_sat_01pct: ',.0f', noise_bias: '.4f', s_star: ',.0f',
+  };
+  const fmt = (f, v) => { if (v === '' || v == null) return ''; const n = Number(v); return FMT[f] && !isNaN(n) ? d3.format(FMT[f])(n) : String(v); };
+  function fillTable(tb, id, filterRow, sortable) {
+    const table = tb.closest('table');
+    const fields = Array.from(table.querySelectorAll('th')).map((th) => th.dataset.field);
+    tb.replaceChildren();
+    if (!ok(id)) return;
+    let rows = rowsOf(id).filter(filterRow || (() => true));
+    if (sortable && S.sort && fields.includes(S.sort)) {
+      const f = S.sort, isNum = rows.every((r) => r[f] === '' || !isNaN(Number(r[f])));
+      rows = rows.slice().sort((a, b) => { const va = isNum ? (a[f] === '' ? -Infinity : Number(a[f])) : a[f], vb = isNum ? (b[f] === '' ? -Infinity : Number(b[f])) : b[f]; return (va < vb ? -1 : va > vb ? 1 : 0) * (S.asc ? 1 : -1); });
+    }
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.dataset.key = table.dataset.rowKey.split(',').map((k) => encodeURIComponent(r[k])).join(',');
+      for (const f of fields) { const td = document.createElement('td'); td.textContent = fmt(f, r[f]); tr.appendChild(td); }
+      tb.appendChild(tr);
+    }
+  }
+  dash.draw('sattable', (tb) => fillTable(tb, 'saturation'));
+  dash.draw('hwtable', (tb) => fillTable(tb, 'results', (r) => !r.backend.startsWith('Exact, 8192')));
+  dash.draw('asstable', (tb) => fillTable(tb, 'assumptions'));
+  dash.draw('alltable', (tb) => {
+    const q = (S.q || '').toLowerCase();
+    fillTable(tb, 'results', (r) => !q || [r.model, r.readout, r.backend].join(' ').toLowerCase().includes(q), true);
+  });
+
+  document.querySelectorAll('#all th').forEach((th) => {
+    const btn = th.querySelector('button'); if (!btn) return;
+    btn.addEventListener('click', () => {
+      const f = th.dataset.field; S.asc = S.sort === f ? !S.asc : false; S.sort = f;
+      document.querySelectorAll('#all th').forEach((h) => h.setAttribute('aria-sort', h.dataset.field === f ? (S.asc ? 'ascending' : 'descending') : 'none'));
+      dash.draw('alltable');
+    });
+  });
+  document.querySelectorAll('#flt').forEach((inp) => inp.addEventListener('input', () => { S.q = inp.value; dash.draw('alltable'); }));
+})();
+</script>
