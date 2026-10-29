@@ -372,21 +372,21 @@ class TNModel(nn.Module):
         struct.append(plan)
         return struct[4]
 
-    def _levelwise(self, groups):
-        # Every tensor of the batch is a row of a pool piece: per bank, one piece with a row per use of a word tensor
-        # (expanded once from the bank's unique rows), then one piece per (round, output shape) of results. Each row is
-        # read exactly once. Round t runs the steps at dependency depth t+1 of every sentence (they only need earlier
-        # rounds); steps with the same key run as one batched einsum,
-        # and all its operands of one shape come from one gather (_Take). The schedule depends only on counts, so it
-        # is planned on the CPU first and all its indices move to the GPU in one copy.
-        device = self._bank(0).device
+    def _schedule(self, groups):
+        # The levelwise schedule of a batch, planned on the CPU (it depends only on counts): one int64 index array (all
+        # gathers, moved to the GPU in one copy) and specs of spans into it. Every tensor of the batch is a row of a pool
+        # piece: per bank, one piece with a row per use of a word tensor (expanded once from the bank's unique rows),
+        # then one piece per (round, output shape) of results. Each row is read exactly once. Round t runs the steps at
+        # dependency depth t+1 of every sentence (they only need earlier rounds); steps with the same key run as one
+        # batched einsum, and all its operands of one shape come from one gather (_Take). A group's rows in a piece are
+        # always contiguous, so a ref is (piece, first row, count) and each gather index is built in one numpy step.
         plans = [(sid, np.array([r for _, r in items], dtype=np.int64).reshape(len(items), -1), self._steps(sid, len(items)))
                  for sid, items in groups.items()]
         chunks, pos = [], [0]
         def put(a):   # index array -> its span in the single transfer
             chunks.append(a); pos[0] += len(a); return (pos[0] - len(a), pos[0])
 
-        # pieces[shape] = sizes of the pool pieces of that shape; a row is (piece, local row)
+        # pieces[shape] = sizes of the pool pieces of that shape
         piece_sizes = defaultdict(list)
         leaf_ref, leaves = {}, []
         by_bank = defaultdict(list)
@@ -401,19 +401,20 @@ class TNModel(nn.Module):
             leaves.append((b, shape, put(uniq), put(inv.reshape(-1))))
             o = 0
             for g, j, r in items:
-                leaf_ref[(g, j)] = (pid, np.arange(o, o + len(r))); o += len(r)
+                leaf_ref[(g, j)] = (pid, o, len(r)); o += len(r)
 
         tmp = [[None] * len(st[0]) for _, _, st in plans]
         def ref_of(g, ref):
             return leaf_ref[(g, ref[1])] if ref[0] == 'leaf' else tmp[g][ref[1]]
 
         def take(shape, refs):
-            # one gather of the rows refs = [(piece, local rows)] from the pieces of `shape` they touch
-            used = sorted({pid for pid, _ in refs})
+            # one gather of the row ranges refs = [(piece, first row, count)] from the pieces of `shape` they touch
+            used = sorted({pid for pid, _, _ in refs})
             off, o = {}, 0
             for pid in used:
                 off[pid] = o; o += piece_sizes[shape][pid]
-            return (shape, used, put(np.concatenate([off[pid] + rows for pid, rows in refs])))
+            return (shape, used, put(_ranges(np.array([off[pid] + s for pid, s, _ in refs], dtype=np.int64),
+                                             np.array([n for _, _, n in refs], dtype=np.int64))))
 
         rounds = []
         for t in range(max(len(st[2]) for _, _, st in plans)):
@@ -422,7 +423,7 @@ class TNModel(nn.Module):
                 if t < len(levels):
                     for k in levels[t]:
                         buckets[st[k][0]].append((g, k, st[k][1], st[k][2]))
-            # operands grouped by shape: requests[shape] = [(bucket, position, (piece, rows) per member)]
+            # operands grouped by shape: requests[shape] = [(bucket, position, ranges per member)]
             requests = defaultdict(list)
             for k, ((eq, shapes), members) in enumerate(buckets.items()):
                 for p, shape in enumerate(shapes):
@@ -430,7 +431,7 @@ class TNModel(nn.Module):
             gathers = []
             for shape, reqs in requests.items():
                 flat = [r for _, _, rs in reqs for r in rs]
-                sizes = [sum(len(rows) for _, rows in rs) for _, _, rs in reqs]
+                sizes = [sum(n for _, _, n in rs) for _, _, rs in reqs]
                 gathers.append((take(shape, flat), [(k, p) for k, p, _ in reqs], sizes))
             # results: one piece per output shape, buckets in order
             out_pieces, ops = {}, []
@@ -441,19 +442,29 @@ class TNModel(nn.Module):
                     piece_sizes[out_shape].append(0)
                 pid, o = out_pieces[out_shape]
                 for g, k, _, _ in members:
-                    n = len(plans[g][1]); tmp[g][k] = (pid, np.arange(o, o + n)); o += n
+                    n = len(plans[g][1]); tmp[g][k] = (pid, o, n); o += n
                 out_pieces[out_shape][1] = o
                 piece_sizes[out_shape][pid] = o
                 ops.append((eq, len(shapes), out_shape))
             rounds.append((gathers, ops, list(out_pieces)))
-        # final outputs straight into batch order
+        # final outputs straight into batch order: the groups' output rows in plan order, then permuted to batch order
         order = np.concatenate([[i for i, _ in items] for items in groups.values()])
         finals = [ref_of(g, st[1]) for g, (_, _, st) in enumerate(plans)]   # st = (steps, final ref, levels)
         inverse = np.empty(len(order), dtype=np.int64); inverse[order] = np.arange(len(order))
-        per_row = [(pid, rows[k:k + 1]) for pid, rows in finals for k in range(len(rows))]
-        final = take((self.out_dim,), [per_row[i] for i in inverse])
+        shape = (self.out_dim,)
+        used = sorted({pid for pid, _, _ in finals})
+        off, o = {}, 0
+        for pid in used:
+            off[pid] = o; o += piece_sizes[shape][pid]
+        rows = _ranges(np.array([off[pid] + s for pid, s, _ in finals], dtype=np.int64), np.array([n for _, _, n in finals], dtype=np.int64))
+        final = (shape, used, put(rows[inverse]))
+        return np.concatenate(chunks), leaves, rounds, final
 
-        idx = torch.from_numpy(np.concatenate(chunks))
+    def _levelwise(self, groups, schedule=None):
+        # runs the batch's schedule (_schedule; `schedule` = one planned ahead of time)
+        device = self._bank(0).device
+        idx, leaves, rounds, final = schedule if schedule is not None else self._schedule(groups)
+        idx = torch.from_numpy(idx)
         if device.type == 'cuda':
             idx = idx.pin_memory().to(device, non_blocking=True)
         sl = lambda span: idx[span[0]:span[1]]
@@ -481,6 +492,15 @@ class TNModel(nn.Module):
                 rs = results[shape]
                 pieces[shape].append(torch.cat(rs) if len(rs) > 1 else rs[0])
         return run_take(final)
+
+
+def _ranges(starts, counts):
+    # concatenation of arange(s, s + n) for each (s, n), in one vectorised step
+    total = int(counts.sum())
+    if total == 0:
+        return np.zeros(0, dtype=np.int64)
+    excl = np.cumsum(counts) - counts
+    return np.arange(total, dtype=np.int64) + np.repeat(starts - excl, counts)
 
 
 def _level_plan(batched_str, struct_shapes, contraction_list):
