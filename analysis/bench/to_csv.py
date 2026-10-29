@@ -1,11 +1,13 @@
 # table.json (summarize.py) -> CSV datasets for the benchmark dashboard. Hardware estimates at a common budget
 # of 1024 shots per circuit (2048 per decision) with the same assumptions as summarize.py.
+#   python analysis/bench/to_csv.py results/bench_b2/table.json <out dir> [model to leave out ...]
 import csv, json, sys
 from pathlib import Path
 
 t = json.load(open(sys.argv[1])); out = Path(sys.argv[2]); out.mkdir(exist_ok=True)
 A = t['assumptions']
-MODEL = {'ps': 'Post-selection s6', 'discard': 'Discard s3 (best val)', 'discard6': 'Discard s6 (val runner-up)'}
+MODEL = {'ps': 'Post-selection s6', 'discard': 'Discard s3 (best val)', 'discard6': 'Discard s6'}
+SKIP = set(sys.argv[3:])   # e.g. discard: seed 3 is at chance on the swap set, even exact
 READ = {'swap': 'Swap test', 'cu': 'Compute-uncompute'}
 BACK = {'exact_inf': 'Exact (infinite shots)', 'exact_shots': 'Exact, 8192 shots', 'ibm_miami': 'IBM Miami',
         'honest_miami': 'Honest (Miami)', 'ibm_kingston': 'IBM Kingston', 'ionq_forte-1': 'IonQ Forte-1'}
@@ -27,6 +29,8 @@ def r3(x, n=4):
 res, curves, sat, split, dists, aux = [], [], [], [], [], []
 for r in t['rows']:
     m, rd = r['model'].rsplit('_', 1)
+    if m in SKIP:
+        continue
     b = r['backend']
     if b.endswith('_debias_twirl'): bp, mit = b[:-13], 'debias (twirl limit)'
     elif b.endswith('_debias'): bp, mit = b[:-7], 'debias (4 variants)'
