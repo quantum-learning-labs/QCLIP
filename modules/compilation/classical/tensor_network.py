@@ -2,6 +2,8 @@ from __future__ import annotations
 import pandas as pd
 import opt_einsum as oe
 from itertools import count
+import os, multiprocessing
+from functools import partial
 from tqdm import tqdm
     
 class TNCompiler: 
@@ -112,23 +114,33 @@ class TNCompiler:
                              )
             einsum_arr, symbols_arr = [], []
 
-            for row_val in tqdm(tn_df[col]):
-                if is_nested_list:
-                    row_einsums, row_symbols = [], []
-                    for tn in row_val:
-                        e_str, syms = self.compile_tn(tn)
-                        row_einsums.append(e_str)
-                        row_symbols.append(syms)
-                    einsum_arr.append(row_einsums)
-                    symbols_arr.append(row_symbols)
-                else:
-                    e_str, syms = self.compile_tn(row_val)
-                    einsum_arr.append(e_str)
-                    symbols_arr.append(syms)
+            rows = tn_df[col].tolist()
+            workers = int(os.environ.get('TN_PATH_WORKERS', 0)) or len(os.sched_getaffinity(0))
+            if len(rows) >= 20000 and workers > 1:   # big sets: rows compiled in a fork pool (same results, same order)
+                global _POOL_COMPILER
+                _POOL_COMPILER = self
+                with multiprocessing.get_context('fork').Pool(workers) as pool:
+                    out = pool.map(partial(_compile_row, nested=is_nested_list), rows, chunksize=2000)
+            else:
+                out = [_compile_row(r, is_nested_list, self) for r in tqdm(rows)]
+            for e, syms in out:
+                einsum_arr.append(e)
+                symbols_arr.append(syms)
             tn_df[einsum_col] = einsum_arr
             tn_df[symbols_col] = symbols_arr
         return tn_df
     
+
+_POOL_COMPILER = None
+
+def _compile_row(row_val, nested, comp=None):
+    # one dataframe cell: a caption's diagram, or (nested, decided per column) a list of them (several captions per image)
+    comp = comp or _POOL_COMPILER
+    if nested:
+        pairs = [comp.compile_tn(tn) for tn in row_val]
+        return [e for e, _ in pairs], [syms for _, syms in pairs]
+    return comp.compile_tn(row_val)
+
 
 def out_legs(idx_lists):
     # leg of each tensor towards the output wire (index 0), by a walk from the output over the (tree) network;
