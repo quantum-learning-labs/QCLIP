@@ -316,7 +316,9 @@ class TNModel(nn.Module):
         if len(todo) < 4000:   # forking the (large) training process costs ~1 s: small sets are searched in-process
             found = [_search_path(key) for key in todo]
         else:
-            workers = workers or len(os.sched_getaffinity(0))
+            # TN_PATH_WORKERS caps the pool: on a cluster node the affinity is the whole machine and each fork counts
+            # against the job's h_vmem (a 64G job died silently here)
+            workers = workers or int(os.environ.get('TN_PATH_WORKERS', 0)) or len(os.sched_getaffinity(0))
             with multiprocessing.get_context('fork').Pool(workers) as pool:
                 found = pool.map(_search_path, list(todo), chunksize=512)
         for key, (path, plan) in zip(todo, found):
