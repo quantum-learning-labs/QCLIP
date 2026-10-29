@@ -158,6 +158,11 @@ class RunManager:
                 if torch.cuda.is_available(): torch.cuda.reset_peak_memory_stats()
                 loss = self.trainer.train_epoch(train_loader, eval_mapper)
                 elapsed_time = time.time() - start_time
+                if not math.isfinite(loss):   # diverged: stop before evaluating/saving, best.pt keeps the last good model
+                    stopped_epoch = epoch
+                    tqdm.write(f"\n[DIVERGED] non-finite training loss in epoch {epoch}; stopping (best.pt = last good best)")
+                    mlflow.log_metric("diverged_epoch", epoch)
+                    break
 
                 grad_norm_dict = self.trainer.grad_norm_by_type()
 
@@ -443,6 +448,7 @@ class MMEvaluator:
         # argsort broke ties arbitrarily; here each metric is its expectation under uniformly random tie-breaking,
         # i.e. the rank is uniform on g..g+t: P(rank < K) = clip((K - g) / (t + 1), 0, 1), E[1/(rank+1)] =
         # (H(g+t+1) - H(g)) / (t + 1). Rows without ties give exactly the old values.
+        scores = scores.nan_to_num(nan=float('-inf'))   # a diverged (NaN) model ranks at chance, not first
         best_pos = scores.masked_fill(~mask, float('-inf')).max(dim=1, keepdim=True).values
         neg = ~mask
         g = ((scores > best_pos) & neg).sum(dim=1).double()

@@ -28,3 +28,6 @@ o, nn = old_metric(s2, mask), MMEvaluator._calculate_recall(None, s2, mask, '')
 nn['mrr'] = nn['_mrr']
 assert all(abs(nn[k] - o[k]) < 1e-6 for k in o), (nn, o)   # old MRR mean in float32
 print('check_recall OK')
+nanm = MMEvaluator._calculate_recall(None, torch.full((n, m), float('nan'), dtype=torch.float64), mask, '')   # diverged model
+assert abs(nanm['R1'] - 1 / (m - 1)) < 1e-9 and nanm['R10'] < 0.02, nanm   # chance (uniform rank), not 1.0
+print('NaN scores -> chance', {k: round(v, 5) for k, v in nanm.items()})
