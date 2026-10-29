@@ -57,6 +57,10 @@ def main():
     p.add_argument('--variants', type=int, default=4, help='random variants per circuit per rep')
     p.add_argument('--backends', default='ibm_miami,honest_miami,ibm_kingston')
     p.add_argument('--method', default='density_matrix')
+    p.add_argument('--ckpt', default=None, help='checkpoint path if meta[checkpoint] is relative to another code dir')
+    p.add_argument('--reps', type=int, default=None, help='override reps (diagnostics)')
+    p.add_argument('--limit', type=int, default=None, help='first N pairs only (diagnostics; writes nothing)')
+    p.add_argument('--threads', type=int, default=0, help='Aer max_parallel_threads (0 = all cores)')
     p.add_argument('--chunk', type=int, default=16, help='circuits whose variants are built and run together (memory)')
     a = p.parse_args()
     d = Path(a.dir)
@@ -68,7 +72,12 @@ def main():
     raw = pickle.load(open(d / 'raw.pkl', 'rb'))
     circs = qpy.load(open(d / 'logical.qpy', 'rb'))
     infos, ex, n_pairs = raw['infos'], raw['exact'], meta['pairs']
-    config, _, _ = setup_exp(resolve_eval_config(None, Path(meta['checkpoint'])), seed=0)
+    config, _, _ = setup_exp(resolve_eval_config(None, Path(a.ckpt or meta['checkpoint'])), seed=0)
+    if a.reps: meta['reps'] = a.reps
+    if a.limit:   # pos circuits [:limit] and neg circuits [:limit], nothing written
+        circs = circs[:a.limit] + circs[n_pairs:n_pairs + a.limit]; infos = infos[:a.limit] + infos[n_pairs:n_pairs + a.limit]
+        ex = {k: (v[:a.limit] + v[n_pairs:n_pairs + a.limit]) for k, v in ex.items()}; n_pairs = a.limit
+        out = Path('/dev/null')
     config['emulate'].update(set=meta['eval_set'], measurement_method=meta['meas'])
     shots_v = meta['shots'] // a.variants
     rows, rawd = [], {}
@@ -76,7 +85,7 @@ def main():
         profile, cls = NOISY[name]
         cfg = copy.deepcopy(config)
         cfg['emulate'].update(noise=True, noise_profile=profile, backend=a.method,
-                              aer_options={'batched_shots_gpu': False, 'shot_branching_enable': False})
+                              aer_options={'batched_shots_gpu': False, 'shot_branching_enable': False, 'max_parallel_threads': a.threads})
         nb = BackendManager(cfg, None, hardware_profile=getattr(fake_provider, cls)())
         idle = profile == 'honest' and nb.honest['idle']
         nb.honest['idle'] = False
@@ -112,8 +121,8 @@ def main():
                    profile=nb.hardware_profile.name, noise_profile=profile, mitigation=f'debias: 2q Pauli twirl + readout flips, {a.variants} variants x {shots_v} shots')
         print(name + '_debias', 'acc', row['acc_mean'], '+-', row['acc_std'], 'hellinger', row['hellinger_fid_mean'], flush=True)
         rows.append(row); rawd[name + '_debias'] = {'extra': extra, 'counts_rep0': rep_counts[0]}
-        json.dump({'meta': meta, 'rows': rows}, open(out, 'w'), indent=1, default=str)
-    pickle.dump(rawd, open(d / f'raw_debias{tag}.pkl', 'wb'))
+        if not a.limit: json.dump({'meta': meta, 'rows': rows}, open(out, 'w'), indent=1, default=str)
+    if not a.limit: pickle.dump(rawd, open(d / f'raw_debias{tag}.pkl', 'wb'))
     print('done', d, flush=True)
 
 
