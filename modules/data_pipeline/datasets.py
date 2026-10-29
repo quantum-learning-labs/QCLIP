@@ -60,15 +60,15 @@ class BaseDataset(Dataset):
 
 class CocoDataset(BaseDataset):
     def __getitem__(self, idx):
-        row_compiled = self.compiled_df.iloc[idx]
-        
+        # columns as plain lists, built on first use: a pandas row per sample (iloc) cost ~40 ms per 512-batch
+        if not hasattr(self, '_cols'):
+            df = self.compiled_df
+            self._cols = (df['file_name'].tolist() if 'file_name' in df.columns else [None] * len(df),
+                          df['captions_einsum'].tolist(), df['captions_symbols'].tolist())
+        image_ref, einsums, symbols = (c[idx] for c in self._cols)
+
         # Load the single image reference
-        image_ref = row_compiled.get('file_name')
         image = self._load_image(image_ref)
-        
-        # Compiled data contains lists for columns with multiple captions
-        einsums = row_compiled['captions_einsum']
-        symbols = row_compiled['captions_symbols']
         
         # During contrastive training, pick one caption variation randomly per sample
         if self.mode == "train":
