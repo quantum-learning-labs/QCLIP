@@ -27,6 +27,7 @@ if __name__ == "__main__":
     ap.add_argument('--hotspot_steps', type=int, default=10, help='extra steps under cProfile, then under torch.profiler')
     ap.add_argument('--train_frac', type=float, default=None)
     ap.add_argument('--set', action='append', default=[], metavar='KEY=VALUE')
+    ap.add_argument('--val_eval', action='store_true', help='also time one validation pass (as train.py runs each epoch), cProfiled')
     ap.add_argument('-o', '--out', required=True)
     args = ap.parse_args()
     out = Path(args.out)
@@ -90,6 +91,19 @@ if __name__ == "__main__":
         res["torch_top_cuda"] = ka.table(sort_by="cuda_time_total" if torch.cuda.is_available() else "cpu_time_total", row_limit=25)
         res["torch_top_cpu"] = ka.table(sort_by="self_cpu_time_total", row_limit=25)
         print(res["cprofile_top"]); print(res["torch_top_cuda"]); print(res["torch_top_cpu"])
+
+    if args.val_eval:
+        from modules.models.fusion.engine import MMEvaluator
+        val_loader = data_engine.get_loader(compiled_val, split='val')
+        evaluator = MMEvaluator(image_model, text_model, DEV)
+        tasks = config['dataset']['val'].get('diagnostics', ['global_retrieval'])
+        for k in range(2):   # the first pass also searches any missing plans; report both
+            pr = cProfile.Profile(); sync(); t0 = time.time(); pr.enable()
+            m = evaluator.eval_set(dataloader=val_loader, tasks=tasks, eval_mapper=data_engine.eval_mapper); sync()
+            pr.disable(); res[f"val_eval_s_{k}"] = time.time() - t0
+        s = io.StringIO(); pstats.Stats(pr, stream=s).sort_stats('cumulative').print_stats(25)
+        res["val_cprofile_top"] = s.getvalue(); res["val_metrics"] = m
+        print(f"val eval: {res['val_eval_s_0']:.1f}s, {res['val_eval_s_1']:.1f}s | {m}", flush=True)
 
     with open(out, 'x') as f:
         json.dump(res, f, indent=1)
