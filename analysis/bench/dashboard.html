@@ -38,8 +38,8 @@
   <header class="head">
     <h1 id="top">QCLIP backend benchmark</h1>
     <p>Best post-selected and discard circuits on the SVO-probes swap set (95 caption pairs), each readout run on the exact simulator, IBM fake-backend noise, the honest noise profile and IonQ's Forte-1 noise simulator. Five independent shot and noise repetitions of 8192 shots per circuit.</p>
-    <p>On IonQ Forte-1 with the swap test, post-selection reaches <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=ps|swap|ionq_forte-1">—</b> and the val runner-up discard model <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=discard6|swap|ionq_forte-1">—</b>, against <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=ps|swap|exact_inf">—</b> and <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=discard6|swap|exact_inf">—</b> exactly. Noise costs at most a few points on every backend; with 95 pairs one pair-level standard error is about 3.5 to 5 points, so the backends cannot be told apart on accuracy alone.</p>
-    <p class="muted">The best discard model by validation accuracy (seed 3) is at chance on this set in every setting, including exact simulation, so the val runner-up (seed 6, validation 0.881 against 0.882) is shown beside it. No hardware was used: IonQ ran on its cloud simulator only, and every hardware time, energy and price figure is an estimate.</p>
+    <p>On IonQ Forte-1 with the swap test, post-selection reaches <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=ps|swap|ionq_forte-1">—</b> and the val runner-up discard model <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=discard6|swap|ionq_forte-1">—</b>, against <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=ps|swap|exact_inf">—</b> and <b data-draw="kpi" data-source="results" data-field="accuracy" data-where="run=discard6|swap|exact_inf">—</b> exactly. On the IBM backends and IonQ noise costs at most a few points, which 95 pairs cannot resolve; the honest profile hurts the swap test far more than compute-uncompute, because the swap test runs on twice the qubits and its margins shrink much further.</p>
+    <p class="muted">The best discard model by validation accuracy (seed 3) is at chance on this set in every setting, including exact simulation, so the val runner-up (seed 6, validation 0.881 against 0.882) is shown beside it. IBM and honest runs use the device coupling map cut to the circuits' qubit count, as our emulator does (FakeMiami is the 120-qubit Nighthawk layout in this Qiskit version). No hardware was used: IonQ ran on its cloud simulator only, and every hardware time, energy and price figure is an estimate.</p>
   </header>
 
   <section class="sec" id="accuracy">
@@ -49,6 +49,42 @@
       <p class="muted">Hover a dot for the numbers. Chance is 0.5.</p>
       <div class="legend" data-draw="legend" data-source="results">—</div>
       <div class="chart tall" data-draw="dots" data-source="results"></div>
+    </div>
+  </section>
+
+  <section class="sec" id="debiasing">
+    <h2>With and without debiasing</h2>
+    <p>IonQ's debiasing runs many symmetrized variants of each circuit and averages them. Its cloud simulator accepts the option but runs no variants (averaged and sharpened results were identical), so it is emulated here: every two-qubit gate is Pauli-twirled and a random subset of qubits is flipped before measurement and flipped back in the bits. Twirling turns coherent gate errors into random ones; readout flips make readout error the same for 0 and 1. On IonQ each repetition runs 4 random variants of 2048 shots (same 8192 shots). On the Aer backends the chart shows the limit of infinitely many variants, simulated exactly by replacing each two-qubit error with its Pauli twirl and each readout error with its symmetric average; 4-variant runs on Aer are in the table as a check (they agree within shot noise).</p>
+    <p>Debiasing barely moves anything here. The IBM noise models are already random (depolarizing plus relaxation), so there is nothing coherent to remove. On the honest profile, whose two-qubit gates carry a small coherent ZZ over-rotation, it recovers part of the margin lost to noise (margin vs exact rises by about 5 to 20 percent), but accuracy on 95 pairs does not change measurably: 30 to 45 percent of pairs are within shot noise of a tie, so a few points of accuracy is noise.</p>
+    <div class="card">
+      <h3>Without (hollow) and with debiasing (filled)</h3>
+      <div class="controls"><label class="muted" for="deb-metric">Metric</label>
+        <select id="deb-metric">
+          <option value="accuracy">Accuracy</option>
+          <option value="agree_with_exact">Agreement with exact decisions</option>
+          <option value="hellinger_fidelity">Hellinger fidelity to exact</option>
+          <option value="margin_vs_exact">Margin vs exact (1 = no contraction)</option>
+          <option value="acc_at_1k">Accuracy at 1k shots per circuit</option>
+          <option value="below_shot_noise">Pairs below shot noise</option>
+        </select></div>
+      <div class="legend" data-draw="legend" data-source="results">—</div>
+      <div class="chart tall" data-draw="debias" data-source="debias_effect"></div>
+    </div>
+    <div class="card">
+      <h3>Change from debiasing</h3>
+      <div class="tbl">
+        <table data-source="debias_effect" data-row-key="key">
+          <thead><tr>
+            <th data-field="model">Model</th><th data-field="readout">Readout</th><th data-field="platform">Backend</th>
+            <th data-field="mitigation">Debiasing</th><th data-field="accuracy_off">Accuracy</th><th data-field="accuracy_on">Debiased</th><th data-field="accuracy_change">Change</th>
+            <th data-field="accuracy_sd_off">SD</th><th data-field="accuracy_sd_on">SD debiased</th>
+            <th data-field="agree_with_exact_change">Agreement change</th><th data-field="hellinger_fidelity_change">Fidelity change</th>
+            <th data-field="margin_vs_exact_off">Margin vs exact</th><th data-field="margin_vs_exact_on">Debiased</th>
+            <th data-field="acc_at_1k_change">Acc. at 1k change</th><th data-field="below_shot_noise_change">Below noise change</th>
+          </tr></thead>
+          <tbody data-draw="debtable"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -168,7 +204,8 @@
 <script>
 (() => {
   const BACKS = ['Exact (infinite shots)', 'Exact, 8192 shots', 'IBM Miami', 'Honest (Miami)', 'IBM Kingston', 'IonQ Forte-1'];
-  const color = (b) => b.startsWith('Exact (inf') ? 'var(--cds-chart-muted)' : dash.colors[(BACKS.indexOf(b) - 1 + 8) % 8];
+  const plat = (b) => b.replace(/ \+ debias.*$/, '');
+  const color = (b) => b.startsWith('Exact (inf') ? 'var(--cds-chart-muted)' : dash.colors[(BACKS.indexOf(plat(b)) - 1 + 8) % 8];
   const SETS = (rows) => Array.from(new Set(rows.map((r) => r.model + ' · ' + r.readout)));
   const num = (x) => (x === '' || x == null ? NaN : Number(x));
   const ok = (id) => dash.data(id).status === 'ok';
@@ -214,7 +251,7 @@
   dash.draw('dots', (el) => {
     el.replaceChildren();
     if (!ok('results')) return;
-    const rows = rowsOf('results'), sets = SETS(rows);
+    const rows = rowsOf('results').filter((r) => BACKS.includes(r.backend)), sets = SETS(rows);
     const W = el.clientWidth || 600, rowH = 40;
     const svg = d3.select(el).append('svg').attr('width', '100%');
     const ml = Math.min(measure(svg, sets) + 12, W * 0.45), mr = 16, mt = 8, mb = 28, H = mt + mb + rowH * sets.length;
@@ -275,7 +312,7 @@
   });
   dash.draw('distback', (sel) => {
     const present = new Set(rowsOf('dists').map((r) => r.backend));
-    const opts = BACKS.filter((b) => present.has(b) && !b.startsWith('Exact (inf'));
+    const opts = BACKS.flatMap((b) => [b, b + ' + debias (twirl limit)', b + ' + debias (4 variants)']).filter((b) => present.has(b) && !b.startsWith('Exact (inf'));
     if (!opts.length) { sel.replaceChildren(); return; }
     if (!opts.includes(S.back)) S.back = opts[opts.length - 1];
     sel.replaceChildren(...opts.map((b) => new Option(b, b)));
@@ -338,6 +375,8 @@
     score_spearman: '.3f', margin_vs_exact: '.2f', below_shot_noise: '.0%', acceptance: '.3f', shots95_per_decision: ',', sim_wall_s: ',.0f',
     qubits: '.1f', depth: ',.0f', depth_2q: ',.0f', gates_2q: ',.0f', gates_2q_max: ',.0f', esp: '.3f', duration_us: ',.1f',
     qpu_s_per_decision: '.3~f', energy_J_per_decision: ',.0f', usd_per_decision: ',.2f', sim_gpu_energy_kJ: ',.1f',
+    in_chart: 'd', accuracy_off: '.3f', accuracy_on: '.3f', accuracy_change: '+.3f', accuracy_sd_off: '.3f', accuracy_sd_on: '.3f', agree_with_exact_change: '+.0%',
+    hellinger_fidelity_change: '+.4f', margin_vs_exact_off: '.2f', margin_vs_exact_on: '.2f', margin_vs_exact_change: '+.2f', acc_at_1k_change: '+.3f', below_shot_noise_change: '+.0%',
     k_eff: '.1f', k_eff_exact: '.1f', s_sat_1pct: ',.0f', s_sat_1pct_fit: ',.0f', s_sat_01pct: ',.0f', noise_bias: '.4f', s_star: ',.0f',
   };
   const fmt = (f, v) => { if (v === '' || v == null) return ''; const n = Number(v); return FMT[f] && !isNaN(n) ? d3.format(FMT[f])(n) : String(v); };
@@ -359,7 +398,38 @@
     }
   }
   dash.draw('sattable', (tb) => fillTable(tb, 'saturation'));
-  dash.draw('hwtable', (tb) => fillTable(tb, 'results', (r) => !r.backend.startsWith('Exact, 8192')));
+  dash.draw('hwtable', (tb) => fillTable(tb, 'results', (r) => !r.backend.startsWith('Exact, 8192') && r.mitigation === 'none'));
+  dash.draw('debtable', (tb) => fillTable(tb, 'debias_effect'));
+  dash.draw('debias', (el) => {
+    el.replaceChildren();
+    if (!ok('debias_effect')) return;
+    const f = (document.querySelector('#deb-metric') || {}).value || 'accuracy';
+    const rows = rowsOf('debias_effect').filter((r) => r.in_chart === '1' || r.in_chart === 1), sets = SETS(rows), plats = BACKS.slice(2);
+    const W = el.clientWidth || 600, rowH = 14 * plats.length + 18;
+    const svg = d3.select(el).append('svg').attr('width', '100%');
+    const ml = Math.min(measure(svg, sets) + 12, W * 0.45), mr = 16, mt = 8, mb = 28, H = mt + mb + rowH * sets.length;
+    svg.attr('viewBox', `0 0 ${W} ${H}`);
+    const vals = rows.flatMap((r) => [num(r[f + '_off']), num(r[f + '_on'])]).filter((v) => !isNaN(v));
+    const lo = d3.min(vals), hi = d3.max(vals), pad = (hi - lo) * 0.08 || 0.02;
+    const x = d3.scaleLinear([lo - pad, hi + pad], [ml, W - mr]).nice();
+    const y = d3.scaleBand(sets, [mt, H - mb]).padding(0.12);
+    svg.append('g').selectAll('line').data(x.ticks(6)).join('line').attr('x1', x).attr('x2', x).attr('y1', mt).attr('y2', H - mb).attr('stroke', 'var(--cds-chart-grid)');
+    const fm = FMT[f] && FMT[f].includes('%') ? '.0%' : '.2f';
+    const ax = svg.append('g').attr('transform', `translate(0,${H - mb})`).call(d3.axisBottom(x).ticks(6).tickFormat(d3.format(fm))).attr('font-size', null).attr('font-family', null);
+    ax.selectAll('text').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)'); ax.selectAll('line,path').attr('stroke', 'var(--cds-chart-axis)');
+    svg.append('g').selectAll('text').data(sets).join('text').attr('x', ml - 10).attr('y', (s) => y(s) + y.bandwidth() / 2).attr('dy', '0.35em').attr('text-anchor', 'end').attr('fill', 'var(--color-fg)').style('font-size', 'var(--cds-font-size-caption)').text((s) => s);
+    const off = d3.scalePoint(plats, [-y.bandwidth() / 2 + 6, y.bandwidth() / 2 - 6]);
+    const T = tip(el);
+    const g = svg.append('g').selectAll('g').data(rows.filter((r) => !isNaN(num(r[f + '_off'])) && !isNaN(num(r[f + '_on'])))).join('g')
+      .attr('transform', (r) => `translate(0,${y(r.model + ' · ' + r.readout) + y.bandwidth() / 2 + off(r.platform)})`);
+    g.append('line').attr('x1', (r) => x(num(r[f + '_off']))).attr('x2', (r) => x(num(r[f + '_on']))).attr('stroke', (r) => color(r.platform)).attr('stroke-width', 2).attr('stroke-opacity', 0.5);
+    g.append('circle').attr('cx', (r) => x(num(r[f + '_off']))).attr('r', 4).attr('fill', 'var(--color-panel)').attr('stroke', (r) => color(r.platform)).attr('stroke-width', 1.5);
+    g.append('circle').attr('cx', (r) => x(num(r[f + '_on']))).attr('r', 4).attr('fill', (r) => color(r.platform));
+    g.append('rect').attr('x', ml).attr('width', W - ml - mr).attr('y', -6).attr('height', 12).attr('fill', 'transparent')
+      .on('pointermove', (ev, r) => T.show(ev, [[r.model + ' · ' + r.readout + ' · ' + r.platform], ['Without', fmt(f, r[f + '_off'])], ['With debiasing', fmt(f, r[f + '_on'])], ['Change', fmt(f, r[f + '_change'])]]))
+      .on('pointerleave', () => T.hide());
+  });
+  document.querySelectorAll('#deb-metric').forEach((sel) => sel.addEventListener('change', () => dash.draw('debias')));
   dash.draw('asstable', (tb) => fillTable(tb, 'assumptions'));
   dash.draw('alltable', (tb) => {
     const q = (S.q || '').toLowerCase();

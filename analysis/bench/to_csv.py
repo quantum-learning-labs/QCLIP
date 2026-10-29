@@ -9,6 +9,7 @@ MODEL = {'ps': 'Post-selection s6', 'discard': 'Discard s3 (best val)', 'discard
 READ = {'swap': 'Swap test', 'cu': 'Compute-uncompute'}
 BACK = {'exact_inf': 'Exact (infinite shots)', 'exact_shots': 'Exact, 8192 shots', 'ibm_miami': 'IBM Miami',
         'honest_miami': 'Honest (Miami)', 'ibm_kingston': 'IBM Kingston', 'ionq_forte-1': 'IonQ Forte-1'}
+PLAT = {'ibm_miami': 'IBM Miami', 'honest_miami': 'Honest (Miami)', 'ibm_kingston': 'IBM Kingston', 'ionq_forte-1': 'IonQ Forte-1'}
 BUDGET = 2048   # shots per decision (1024 per circuit)
 
 
@@ -27,8 +28,12 @@ res, curves, sat, split, dists, aux = [], [], [], [], [], []
 for r in t['rows']:
     m, rd = r['model'].rsplit('_', 1)
     b = r['backend']
+    if b.endswith('_debias_twirl'): bp, mit = b[:-13], 'debias (twirl limit)'
+    elif b.endswith('_debias'): bp, mit = b[:-7], 'debias (4 variants)'
+    else: bp, mit = b, 'none'
     run = f"{m}|{rd}|{b}"
-    base = {'run': run, 'model': MODEL[m], 'readout': READ[rd], 'backend': BACK[b]}
+    base = {'run': run, 'model': MODEL[m], 'readout': READ[rd], 'backend': BACK[bp] + ('' if mit == 'none' else ' + ' + mit),
+            'platform': BACK[bp], 'mitigation': mit}
     st = r.get('stats') or {}
     kind = 'ionq' if b.startswith('ionq') else 'ibm' if b.startswith(('ibm', 'honest')) else None
     q = hw(kind, st['duration_s_mean']) if kind and st.get('duration_s_mean') else (None, None, None)
@@ -62,6 +67,26 @@ for r in t['rows']:
         dists.append({**base, 'outcome': k, 'probability': r3(v, 5)})
     for k, v in (r.get('aux_hamming_dist') or {}).items():
         aux.append({**base, 'aux_ones': int(k), 'probability': r3(v, 5)})
+
+# with vs without debiasing, one row per model, readout and noisy platform that has both
+eff = []
+by = {(x['model'], x['readout'], x['platform'], x['mitigation']): x for x in res}
+for (mo, rd, pl, mi), y in by.items():
+    x = by.get((mo, rd, pl, 'none'))
+    if mi == 'none' or x is None:
+        continue
+    # shown in the chart: twirl limit for the Aer backends (all sets), 4 variants for IonQ (its simulator ignores debiasing)
+    shown = (mi == 'debias (twirl limit)') or (pl == 'IonQ Forte-1' and mi == 'debias (4 variants)')
+    row = {'key': f"{mo}|{rd}|{pl}|{mi}", 'model': mo, 'readout': rd, 'platform': pl, 'mitigation': mi, 'in_chart': int(shown)}
+    for f in ('accuracy', 'accuracy_sd', 'agree_with_exact', 'hellinger_fidelity', 'margin_vs_exact', 'acc_at_1k', 'below_shot_noise'):
+        a_, b_ = x[f], y[f]
+        row[f + '_off'] = a_; row[f + '_on'] = b_
+        row[f + '_change'] = round(b_ - a_, 4) if a_ != '' and b_ != '' else ''
+    eff.append(row)
+if eff:
+    with open(out / 'debias_effect.csv', 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=list(eff[0])); w.writeheader(); w.writerows(eff)
+    print('debias_effect', len(eff))
 
 for name, rows in [('results', res), ('curves', curves), ('saturation', sat), ('split_half', split), ('dists', dists), ('aux', aux)]:
     with open(out / f'{name}.csv', 'w', newline='') as f:
