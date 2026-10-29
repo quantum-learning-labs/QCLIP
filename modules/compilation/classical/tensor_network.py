@@ -5,12 +5,14 @@ from itertools import count
 from tqdm import tqdm
     
 class TNCompiler: 
-    def __init__(self, obmap: dict[str, int], decomp_fn, decouple: bool = False):
+    def __init__(self, obmap: dict[str, int], decomp_fn, decouple: bool = False, orient: bool = False):
         # decouple: one shared vector per word + one shared tensor per complex type (compile_decoupled_tn)
+        # orient: each symbol also gets 'out' = position of its leg towards the sentence output (for text.init: norm)
         self.obmap = obmap
         self.word_dim = obmap.get('sem', 16)
         self.decomposition = decomp_fn
         self.decouple = decouple
+        self.orient = orient
         self.id = type(self).__name__ + '_' + str(obmap['n']) + '_' + str(obmap['s']) + '_' + str(obmap['p']) + '_' + str(obmap['out'])
         if decouple:
             self.id += f'_dec{self.word_dim}'
@@ -43,6 +45,9 @@ class TNCompiler:
             subs = "".join(oe.parser.get_symbol(i) for i in idx_arr)
             input_subs.append(subs)
             symbols.append({'name': symbol, 'shape': list(shape)})
+        if self.orient:
+            for sym, out in zip(symbols, out_legs([idx for _, idx, _ in processed_tensors])):
+                sym['out'] = out
 
         output_subs = oe.parser.get_symbol(0)
         einsum_str = f"{','.join(input_subs)}->{output_subs}"
@@ -84,6 +89,9 @@ class TNCompiler:
             subs = "".join(oe.parser.get_symbol(i) for i in idx_arr)
             input_subs.append(subs)
             symbols.append({'name': symbol, 'shape': list(shape)})
+        if self.orient:
+            for sym, out in zip(symbols, out_legs([idx for _, idx, _ in processed_tensors])):
+                sym['out'] = out
 
         output_subs = oe.parser.get_symbol(0)
         einsum_str = f"{','.join(input_subs)}->{output_subs}"
@@ -121,3 +129,21 @@ class TNCompiler:
             tn_df[symbols_col] = symbols_arr
         return tn_df
     
+
+def out_legs(idx_lists):
+    # leg of each tensor towards the output wire (index 0), by a walk from the output over the (tree) network;
+    # None for tensors without legs or not reached (a cycle or a disconnected part)
+    by_idx = {}
+    for t, idx in enumerate(idx_lists):
+        for leg, i in enumerate(idx):
+            by_idx.setdefault(i, []).append((t, leg))
+    out = [None] * len(idx_lists)
+    frontier = [(0, None)]   # (index, tensor it came from)
+    while frontier:
+        i, src = frontier.pop()
+        for t, leg in by_idx.get(i, []):
+            if t == src or out[t] is not None:
+                continue
+            out[t] = leg
+            frontier += [(j, t) for k, j in enumerate(idx_lists[t]) if k != leg]
+    return out

@@ -1,5 +1,5 @@
 # Step 3, decoupled (TN_BRIEF.md): one shared vector per word (word_dim) + one shared tensor per complex type with an extra
-# word leg; MPS (bond 8) only on type tensors of order >= 2 (max_order 1, order counts the word leg). Else = ref_clip.yaml.
+# word leg; MPS (bond 8) only on type tensors of order >= 2 (max_order 1, order counts the word leg). Else = ref_clip.yaml. Norm init (text.init: norm).
 model_type: tn
 batch_size: 512
 lr: 0.001
@@ -20,6 +20,7 @@ text:
   decouple: true
   word_dim: 128
   tn_engine: levelwise
+  init: norm
 vision:
   method: clip
 dataset:

@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import defaultdict, Counter
 from typing import Any, Dict, List, Tuple
 import torch, math
 import torch.nn as nn
@@ -13,8 +13,16 @@ import numpy as np
 class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
-    def __init__(self, out_dim: int = 512, engine: str = 'grouped'):
+    def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot'):
         super().__init__()
+        # init 'glorot': step-1 scheme (shape only). 'norm': std 1/sqrt(dim of the leg towards the sentence output) (the
+        # compiler's 'out' per symbol, majority over its uses), so each tensor maps unit-norm inputs to a unit-norm
+        # output in expectation and sentence vectors start at norm ~1 (glorot: ~1e-6, decoupled ~1e-11: below the
+        # LayerNorm eps, gradients vanish)
+        if init not in ('glorot', 'norm'):
+            raise ValueError(f"text.init must be 'glorot' or 'norm', got {init!r}")
+        self.init = init
+        self.out_votes = defaultdict(Counter)   # symbol -> Counter of its output leg over its uses (init 'norm')
         # 'grouped': one batched contraction per sentence structure (step-1 reference engine). 'levelwise': the same
         # pairwise steps (opt_einsum path of each structure), executed step by step for all sentences at once, one
         # batched einsum per distinct (equation, operand shapes): far fewer kernel launches, same maths up to float
@@ -55,6 +63,8 @@ class TNModel(nn.Module):
             flat_tensors = self._flatten_symbols(tensor_arr)
             for symbol_info in flat_tensors:
                 symbol = symbol_info['name']
+                if self.init == 'norm' and symbol_info.get('out') is not None:
+                    self.out_votes[symbol][symbol_info['out']] += 1
                 if symbol not in symbols_hash:
                     symbols_hash.add(symbol)
                     self.symbols.append(symbol)
@@ -80,11 +90,14 @@ class TNModel(nn.Module):
         return []
 
     @staticmethod
-    def _init_tensor(shape, generator=None, out=None):
+    def _init_tensor(shape, generator=None, out=None, std=None):
         # out: fill this tensor (a bank row) in place; the draws are the same as for a fresh tensor of that shape
+        # std: init 'norm' (see __init__); None = the glorot scheme
         param = nn.Parameter(torch.empty(shape)) if out is None else out
         order = len(shape)
-        if order == 0:
+        if std is not None and order > 0:
+            nn.init.normal_(param, mean=0.0, std=std, generator=generator)
+        elif order == 0:
             nn.init.constant_(param, 1.0)
         elif order == 1:
             nn.init.normal_(param, mean=0.0, std=1.0 / math.sqrt(shape[0]), generator=generator)
@@ -94,6 +107,15 @@ class TNModel(nn.Module):
             std = math.sqrt(2.0 / (fan_in + fan_out))
             nn.init.normal_(param, mean=0.0, std=std, generator=generator)
         return param
+
+    def _norm_std(self, name, shape):
+        # init 'norm': 1/sqrt(dim of the output leg); vectors are always outputs (1/sqrt(d), as glorot); a symbol never
+        # seen with an orientation (e.g. a disconnected tensor) uses its first leg
+        if self.init != 'norm' or len(shape) == 0:
+            return None
+        votes = self.out_votes.get(name)
+        leg = votes.most_common(1)[0][0] if votes else 0
+        return 1.0 / math.sqrt(shape[leg])
 
     def init_params(self):
         if not self.symbols:
@@ -118,7 +140,7 @@ class TNModel(nn.Module):
             with torch.no_grad():
                 for name, shape in zip(self.symbols, self.shapes):
                     b, r = self.sym_loc[name]
-                    self._init_tensor(shape, out=banks[b][r])
+                    self._init_tensor(shape, out=banks[b][r], std=self._norm_std(name, shape))
         for b, t in enumerate(banks):
             self.register_parameter(f'bank{b}', nn.Parameter(t))
 
@@ -174,7 +196,7 @@ class TNModel(nn.Module):
                 b = self.bank_shapes.index(shape)
                 gen = torch.Generator().manual_seed(seed * 1_000_003 + zlib.crc32(name.encode()))
                 self.sym_loc[name] = (b, self._bank(b).shape[0] + len(rows[b]))
-                rows[b].append(self._init_tensor(shape, gen).data)
+                rows[b].append(self._init_tensor(shape, gen, std=self._norm_std(name, shape)).data)
             for b, ts in rows.items():
                 self.register_parameter(f'bank{b}', nn.Parameter(torch.cat([self._bank(b).data, torch.stack(ts).to(device)])))
         return {"oov_sentence_frac": n_oov_sent / max(n_sent, 1), "oov_tensor_frac": n_oov_tensors / max(n_tensors, 1),
