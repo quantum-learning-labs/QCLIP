@@ -37,9 +37,10 @@ def build_experiment(config, device):
     
     if model_type == 'tn':
         compiler = config['text']
-        obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_dim']}
+        obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_dim'],
+                 'sem': compiler.get('word_dim', 128)}
         mps_proc = MPS(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'])
-        ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc)
+        ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc, decouple=compiler.get('decouple', False))
         
         method = config['vision']['method']
         if method == 'clip':   # precomputed, L2-normalised CLIP ViT-B/32 vectors (embeddings.embed_images)
