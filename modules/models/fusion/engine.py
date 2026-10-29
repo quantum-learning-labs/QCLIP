@@ -438,17 +438,21 @@ class MMEvaluator:
         return self.image_model(images.to(self.device)).flatten(1).contiguous()
     
     def _calculate_recall(self, scores: torch.Tensor, mask: torch.Tensor, prefix: str):
-        # rank of the best positive = number of negatives scored strictly above it (no full argsort: 5k x 25k sorted twice
-        # per val eval was most of its time). Same as the old argsort rank except at exact score ties (duplicate captions),
-        # which argsort broke arbitrarily and which now count in the positive's favour.
+        # rank of the best positive without sorting the whole matrix (5k x 25k argsorted twice on the CPU was most of a
+        # val eval): g negatives score above it, t tie with it (duplicate captions give identical text vectors). The old
+        # argsort broke ties arbitrarily; here each metric is its expectation under uniformly random tie-breaking,
+        # i.e. the rank is uniform on g..g+t: P(rank < K) = clip((K - g) / (t + 1), 0, 1), E[1/(rank+1)] =
+        # (H(g+t+1) - H(g)) / (t + 1). Rows without ties give exactly the old values.
         best_pos = scores.masked_fill(~mask, float('-inf')).max(dim=1, keepdim=True).values
-        positions = ((scores > best_pos) & ~mask).sum(dim=1)
-        
+        neg = ~mask
+        g = ((scores > best_pos) & neg).sum(dim=1).double()
+        t = ((scores == best_pos) & neg).sum(dim=1).double()
+
         results = {}
-        results[f"{prefix}R1"] = (positions < 1).float().mean().item()
-        results[f"{prefix}R5"] = (positions < 5).float().mean().item()
-        results[f"{prefix}R10"] = (positions < 10).float().mean().item()
-        results[f"{prefix}_mrr"] = (1.0 / (positions.float() + 1.0)).mean().item()
+        for k in (1, 5, 10):
+            results[f"{prefix}R{k}"] = ((k - g) / (t + 1)).clamp(0, 1).mean().item()
+        results[f"{prefix}_mrr"] = ((torch.digamma(g + t + 2) - torch.digamma(g + 1)) / (t + 1)).mean().item()
+        results[f"{prefix}_tie_frac"] = (t > 0).double().mean().item()
         return results
 
     @torch.no_grad()
