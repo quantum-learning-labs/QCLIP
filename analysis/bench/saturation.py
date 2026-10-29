@@ -96,8 +96,8 @@ def main(dirs):
                 continue
             hel = v['extra'].get('hellinger') if name != 'exact_shots' else None
             res[name] = agg([circuit(c, exact[j], hel[j] if hel else None, pooled) for j, c in enumerate(v['counts_rep0'])])
-        if (d / 'raw_debias.pkl').exists():   # debias.py rows, same structure as raw.pkl entries
-            for name, v in pickle.load(open(d / 'raw_debias.pkl', 'rb')).items():
+        for f in sorted(d.glob('raw_debias*.pkl')):   # debias.py rows, same structure as raw.pkl entries
+            for name, v in pickle.load(open(f, 'rb')).items():
                 res[name] = agg([circuit(c, exact[j], v['extra']['hellinger'][j], pooled) for j, c in enumerate(v['counts_rep0'])])
         for f in sorted(d.glob('raw_ionq_*.pkl')):
             v = pickle.load(open(f, 'rb'))

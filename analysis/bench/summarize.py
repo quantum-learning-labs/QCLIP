@@ -30,7 +30,7 @@ def main(root):
         if not (d / 'summary.json').exists():
             continue
         s = json.load(open(d / 'summary.json'))
-        rows = s['rows'] + [r for f in sorted(d.glob('summary_ionq_*.json')) + sorted(d.glob('summary_debias.json')) for r in json.load(open(f))['rows']]
+        rows = s['rows'] + [r for f in sorted(d.glob('summary_ionq_*.json')) + sorted(d.glob('summary_debias_*.json')) for r in json.load(open(f))['rows']]
         meta = s['meta']
         sat = json.load(open(d / 'saturation.json')) if (d / 'saturation.json').exists() else {}   # saturation.py
         ex = rows[0]

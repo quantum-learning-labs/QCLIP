@@ -57,9 +57,11 @@ def main():
     p.add_argument('--variants', type=int, default=4, help='random variants per circuit per rep')
     p.add_argument('--backends', default='ibm_miami,honest_miami,ibm_kingston')
     p.add_argument('--method', default='density_matrix')
+    p.add_argument('--chunk', type=int, default=16, help='circuits whose variants are built and run together (memory)')
     a = p.parse_args()
     d = Path(a.dir)
-    out = d / 'summary_debias.json'
+    tag = '' if ',' in a.backends else '_' + a.backends   # one file per backend when run per backend
+    out = d / f'summary_debias{tag}.json'
     if out.exists():
         raise FileExistsError(out)
     meta = json.load(open(d / 'summary.json'))['meta']
@@ -91,17 +93,16 @@ def main():
         rep_counts = []
         for r in range(meta['reps']):
             nb.backend.set_options(seed_simulator=7000 * (r + 1))
-            var, owner = [], []
-            for j, qc in enumerate(plain):
-                for v, m in variants(qc, a.variants, rng, target=tgt):
-                    var.append((relax.run(sched.run(v)) if idle else v, m)); owner.append(j)
             cnt = [dict() for _ in plain]
-            for i in range(0, len(var), 64):
-                chunk = var[i:i + 64]
-                res = nb.backend.run([c for c, _ in chunk], shots=shots_v).result()
-                for k, (c, m) in enumerate(chunk):
+            for c0 in range(0, len(plain), a.chunk):   # build and run variants chunk by chunk (honest variants carry big channels)
+                var, owner = [], []
+                for j in range(c0, min(c0 + a.chunk, len(plain))):
+                    for v, m in variants(plain[j], a.variants, rng, target=tgt):
+                        var.append((relax.run(sched.run(v)) if idle else v, m)); owner.append(j)
+                res = nb.backend.run([c for c, _ in var], shots=shots_v).result()
+                for k, (c, m) in enumerate(var):
                     for key, n in unflip(res.get_counts(k), m).items():
-                        cnt[owner[i + k]][key] = cnt[owner[i + k]].get(key, 0) + n
+                        cnt[owner[k]][key] = cnt[owner[k]].get(key, 0) + n
             rep_counts.append(cnt)
             print(f'{name}_debias rep {r}: {time.time() - t0:.0f}s', flush=True)
         e1 = gpu_energy_mj()
@@ -112,7 +113,7 @@ def main():
         print(name + '_debias', 'acc', row['acc_mean'], '+-', row['acc_std'], 'hellinger', row['hellinger_fid_mean'], flush=True)
         rows.append(row); rawd[name + '_debias'] = {'extra': extra, 'counts_rep0': rep_counts[0]}
         json.dump({'meta': meta, 'rows': rows}, open(out, 'w'), indent=1, default=str)
-    pickle.dump(rawd, open(d / 'raw_debias.pkl', 'wb'))
+    pickle.dump(rawd, open(d / f'raw_debias{tag}.pkl', 'wb'))
     print('done', d, flush=True)
 
 
