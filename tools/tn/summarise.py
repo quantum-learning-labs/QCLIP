@@ -1,6 +1,6 @@
 """Step tables for the TN retrieval work: mean ± std over seeds, chance, distance to chance, efficiency.
 
-  python tools/tn/summarise.py <out_dir> <label>=<run_glob>[@best] [<label>=<run_glob>[@best] ...]
+  python tools/tn/summarise.py <out_dir> <label>=<run_glob>[,<run_glob>...][@best] [...]
   e.g. python tools/tn/summarise.py results/tn/step1 clip='tn_s1_clip_s*' ttn='tn_s1_ttn_s*'
   @best: read benchmark_best.json (early-stopped runs report best.pt) instead of benchmark_last.json
 
@@ -30,7 +30,7 @@ ROWS = [('coco5k', f'{d}R{k}', f'MSCOCO 5k {d} R@{k}', None) for d in ('i2t', 't
 def load(glob_pat):
     glob_pat, _, which = glob_pat.partition('@')
     runs = []
-    for d in sorted(glob.glob(str(CKPT / glob_pat))):
+    for d in sorted(d for g in glob_pat.split(',') for d in glob.glob(str(CKPT / g))):   # 'a,b': union of globs
         b, m = Path(d) / f'benchmark_{which or "last"}.json', Path(d) / 'run_meta.json'
         if b.exists() and m.exists():
             bj = json.load(open(b))
