@@ -1,4 +1,4 @@
-# TN retrieval, step 3: decouple word from complex type (2026-10-30, interim: round 3 running)
+# TN retrieval, step 3: decouple word from complex type (2026-10-30)
 
 Goal (user's spec): keep the existing tensor as the complex type only, add one wire to an order-1 word vector, compare
 against the baseline where type tensors are not shared across words. Branch `tn-step3` (pushed to QLL). Full tables:
@@ -6,19 +6,20 @@ against the baseline where type tensors are not shared across words. Branch `tn-
 `results/tn/step3/` (profiles, regression checks, summaries, plateau logs).
 
 ## Result
-- **Decoupling works and generalises far better, but it needs long training at full learning rate.** The one `dec_t3`
-  run whose LR was never cut (seed 2, 200 epochs, still improving) reaches coco5k i2t R@10 **0.289** and t2i R@10 **0.173**
-  (baseline at its plateau: 0.110 / 0.037), SVO-probes std **0.714**, SVO swap_full **0.925**, ARO VG-Relation 0.548,
-  with **18M text parameters instead of 538M** and half the GPU memory. Runs whose LR was cut early by validation noise
-  stall at R@10 ~0.04. Round 3 (LR kept until 30 epochs without improvement, max 500) is running to measure the real
-  plateau of all three seeds.
-- **Every decoupled run is above chance on subject/object swaps** (SVO swap_full 0.62-0.93, ARO VG-Relation 0.51-0.55),
-  where both baselines stay at chance (0.47-0.55) at every budget. No ties (ties count as wrong), real margins.
-- **Threshold 2 (`dec_t2`, noun type also an MPS) diverges to NaN** at full LR in all 3 seeds (epochs 71, 74, 85; the
-  same seed diverges at the same epoch on rerun). Threshold 3 (`dec_t3`, noun type dense 128x128) never diverged.
-- Both decoupled models are mostly below chance on SugarCREPE++ replace sets (11 of 12 run-set means, z -2.4 to -4.3;
-  dec_t3 round 2 replace_object at chance) and on Winoground image/group;
-  the baselines are at chance on SugarCREPE++. See "Caveats".
+- **Decoupling works, generalises far better than the baseline, and has a large upside, but long training at full
+  learning rate is numerically unstable.** The one decoupled run that trained at LR 1e-3 for 200 epochs without diverging
+  (`dec_t3` seed 2, round 2, still improving) reaches coco5k i2t R@10 **0.289** and t2i R@10 **0.173** (baseline at its
+  plateau 0.110 / 0.037), SVO-probes std **0.714**, SVO swap_full **0.925**, with **18M text parameters instead of 538M**
+  and half the GPU memory. But 8 of 9 decoupled runs held at LR 1e-3 beyond ~65 epochs **diverged to NaN** (epochs 65-86;
+  both thresholds; the same seed survives on one GPU and diverges on another), and runs whose LR was cut early by noisy
+  validation are stable but stall at R@10 0.04-0.07. A real plateau for the decoupled model needs a stability fix:
+  that is step 4.
+- **Every decoupled run is far above chance on subject/object swaps** (SVO swap_full 0.59-0.93, z up to 41; ARO
+  VG-Relation up to 0.55), where both baselines stay at chance (0.47-0.55) at every budget. No ties (ties count as wrong),
+  real margins. The baselines never leave chance on any compositional benchmark.
+- **Baselines plateau and overfit:** 538M parameters, train loss 3.2 at val mrr 0.035; `base` (glorot) and `base_norm`
+  end within 0.005 R@10 of each other (0.110 / 0.105).
+- Decoupled models are mostly below chance on SugarCREPE++ replace sets and on Winoground image/group (see "Caveats").
 - Found and fixed on the way: a **scale bug** (glorot init puts sentence vectors at ~1e-6, decoupled ~1e-11, below the
   LayerNorm eps: decoupled text gradients were exactly 0), a **tie bug** and a **NaN bug** in the retrieval metrics.
   Training is **+34-36% faster** with bit-identical losses.
@@ -106,11 +107,31 @@ dec_t3 round 2 per seed: i2t R@10 0.043 / 0.041 / **0.289**, t2i R@10 0.009 / 0.
 (val mrr_mean 0.012 at epoch 20, 0.038 at 100, 0.077 at 140, 0.107 at 199). base_norm plateaus at val mrr ~0.035 with train
 loss 3.2 (538M parameters, overfits); dec_t3 seed 2 reaches 0.107 at train loss 4.0.
 
-### Round 3 (running): dec_t3, LR x0.1 only after 30 epochs without val gain, stop after 40, max 500, pool 3090 Ti
-Runs `tn_s3r_dt3_s{0,1,2}`. Will be added here.
+### Round 3: dec_t3, LR x0.1 only after 30 epochs without val gain, stop after 40, max 500 (pool 3090 Ti)
+All three seeds diverged to NaN at full LR (epochs 84, 65, 86); reported = best.pt before divergence (epochs 75, 63, 82).
+| | seed 0 | seed 1 | seed 2 | mean ± std |
+|---|---|---|---|---|
+| coco5k i2t R@10 | 0.051 | 0.045 | 0.102 | 0.066 ± 0.031 |
+| coco5k t2i R@10 | 0.014 | 0.012 | 0.037 | 0.021 ± 0.014 |
+| SVO swap_full | 0.872 | 0.872 | 0.588 | 0.777 ± 0.164 (z 28) |
+| SVO-probes std | 0.538 | 0.541 | 0.544 | 0.541 (z 3.6) |
+| ARO VG-Relation | 0.535 | 0.525 | 0.496 | 0.518 |
+Seed 2 followed its round-2 trajectory (val mrr_mean 0.034 at epoch 85 vs 0.030 at epoch 80 in round 2) until it diverged.
+
+### Divergence
+| runs held at LR 1e-3 past ~65 epochs | diverged |
+|---|---|
+| dec_t2: round 1 seed 1 (+ its rerun s1b), round 2 seeds 0-2 | 5 of 5 (epochs 71, 71, 71, 74, 85; seed 1 always at 71) |
+| dec_t3: round 2 seed 2, round 3 seeds 0-2 | 3 of 4 (epochs 65, 84, 86; round 2 seed 2 survived 200 epochs on a cluster GPU) |
+| base, base_norm (all rounds) | 0 (their LR is cut by epoch ~50-100: they plateau) |
+| (not counted: runs whose LR was cut before epoch ~65, e.g. round-1 dec_t3 rerun s2b, cut after epoch 45) | |
+Gradient-norm spikes (>5, up to 27) precede it. The decoupled model shares one tensor per complex type across every
+word, so a type tensor gets gradient from a large share of every batch and its scale can run away; the dense-noun
+threshold (dec_t3) delays but does not prevent it.
 
 ## Caveats
-- dec_t3's main result rests on one seed reaching full-LR training so far; round 3 tests whether all seeds do.
+- The best decoupled result rests on one run that happened not to diverge; it shows what the model can reach, not
+  what it reliably reaches today.
 - The plateau rule interacts with how noisy and slow the validation metric is: the decoupled models need a more
   patient rule than the baselines. Same rule for all configs within a round, so each round is a fair comparison.
 - SugarCREPE++ replace sets and Winoground: decoupled models are below chance. Both benchmarks pair two positive
@@ -118,8 +139,13 @@ Runs `tn_s3r_dt3_s{0,1,2}`. Will be added here.
   (shared word vectors) but composes weakly can systematically prefer the negative. Not investigated yet.
 - Mixed GPU types across runs (pool 3090 Ti, cluster L40S / RTX 6000 Ada / 3090): metrics are unaffected beyond float
   drift; speed numbers come only from the controlled per-change profiles above.
-- dec_t2 diverges at full LR: its round-2 numbers are the last good checkpoint before NaN (epochs 70-84). Divergence
-  and the noisy LR schedule are direct input for step 4 (regularisation and constraints).
+- Diverged runs report their last good checkpoint before NaN.
+
+## Input for step 4 (regularisation and constraints)
+- Divergence of the shared type tensors at LR 1e-3 (norm bounds / spectral constraints on type tensors, gradient
+  clipping, per-group LR for shared vs per-word parameters); the norm-preserving init is a first data point for init.
+- The plateau LR rule fires on validation noise for the slow decoupled models: step 4 should compare candidates at a
+  fixed long budget (or with a smoothed selection metric) so the schedule does not decide the comparison.
 
 ## Compute and housekeeping
 3-epoch and plateau runs on the CS cluster (one job per run) and pool 3090 Tis. Pool node list in

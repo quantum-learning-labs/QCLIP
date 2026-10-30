@@ -110,3 +110,39 @@ Plateau runs report best.pt (val mrr_mean). Configs: base = step-2 model (glorot
 | gpus | ['NVIDIA GeForce RTX 3090 Ti'] | ['NVIDIA L40S', 'NVIDIA RTX 6000 Ada Generation'] | ['NVIDIA L40S', 'NVIDIA RTX 6000 Ada Generation'] | ['NVIDIA GeForce RTX 3090', 'NVIDIA L40S'] |
 | epochs_trained | [98, 68, 126] | [121, 70, 128] | [85, 71, 74] | [127, 108, 200] |
 | reported_epoch | [77, 47, 105] | [100, 49, 107] | [84, 70, 70] | [106, 87, 196] |
+
+## Plateau round 3 (dec_t3 only; lr_patience 30, patience 40, max 500; all seeds diverged, best.pt before NaN)
+
+| benchmark | chance | n | dt3r3 mean ± std (seeds) | dt3r3 above chance (z) | OOV sent. (dt3r3) |
+|---|---|---|---|---|---|
+| MSCOCO 5k i2t R@1 | 0.0002 | 5000 | 0.0106 ± 0.0066 (3) | +0.0104 (7.2) | 0.097 |
+| MSCOCO 5k i2t R@5 | 0.0010 | 5000 | 0.0384 ± 0.0218 (3) | +0.0374 (13.8) | 0.097 |
+| MSCOCO 5k i2t R@10 | 0.0020 | 5000 | 0.0659 ± 0.0314 (3) | +0.0639 (18.2) | 0.097 |
+| MSCOCO 5k t2i R@1 | 0.0002 | 5000 | 0.0027 ± 0.0021 (3) | +0.0025 (3.4) | 0.097 |
+| MSCOCO 5k t2i R@5 | 0.0010 | 5000 | 0.0115 ± 0.0080 (3) | +0.0105 (7.0) | 0.097 |
+| MSCOCO 5k t2i R@10 | 0.0020 | 5000 | 0.0208 ± 0.0142 (3) | +0.0188 (9.3) | 0.097 |
+| ARO VG-Relation | 0.5000 | 3650 | 0.5184 ± 0.0204 (3) | +0.0184 (2.2) | 0.000 |
+| ARO VG-Attribution | 0.5000 | 4438 | 0.5115 ± 0.0052 (3) | +0.0115 (1.5) | 0.001 |
+| SVO-probes std (image choice) | 0.5000 | 1833 | 0.5414 ± 0.0030 (3) | +0.0414 (3.6) | 0.000 |
+| SVO swap_full (text choice) | 0.5000 | 1777 | 0.7773 ± 0.1644 (3) | +0.2773 (28.1) | 0.000 |
+| SVO swap_animate (text choice) | 0.5000 | 55 | 0.6485 ± 0.1640 (3) | +0.1485 (2.3) | 0.000 |
+| SugarCREPE++ swap_object (both pos > neg) | 0.3333 | 244 | 0.3265 ± 0.0226 (3) | -0.0068 (-0.2) | 0.031 |
+| SugarCREPE++ swap_atribute (both pos > neg) | 0.3333 | 661 | 0.3127 ± 0.0083 (3) | -0.0207 (-1.1) | 0.023 |
+| SugarCREPE++ replace_object (both pos > neg) | 0.3333 | 1643 | 0.3185 ± 0.0065 (3) | -0.0148 (-1.3) | 0.022 |
+| SugarCREPE++ replace_attribute (both pos > neg) | 0.3333 | 784 | 0.3006 ± 0.0041 (3) | -0.0327 (-2.0) | 0.020 |
+| SugarCREPE++ replace_relation (both pos > neg) | 0.3333 | 1393 | 0.2862 ± 0.0170 (3) | -0.0471 (-3.9) | 0.025 |
+| Winoground text | 0.2500 | 390 | 0.1094 ± 0.0167 (3) | -0.1406 (-8.9) | 0.099 |
+| Winoground image | 0.2500 | 390 | 0.1239 ± 0.0237 (3) | -0.1261 (-7.6) | 0.099 |
+| Winoground group | 0.1667 | 390 | 0.0291 ± 0.0116 (3) | -0.1376 (-16.2) | 0.099 |
+
+| efficiency | dt3r3 |
+|---|---|
+| params_text | 18,040,040 |
+| params_image_trainable | 0 |
+| train_samples_per_s | 3,182.18 |
+| epoch_train_min | 0.61 |
+| val_eval_s | 3.57 |
+| peak_train_mem_gb | 4.33 |
+| gpus | ['NVIDIA GeForce RTX 3090 Ti'] |
+| epochs_trained | [84, 65, 86] |
+| reported_epoch | [75, 63, 82] |
