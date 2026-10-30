@@ -32,13 +32,15 @@ class RunManager:
         self.eval_tasks = config['dataset']['val'].get('diagnostics', ['global_retrieval'])
         self.perf = []
 
-    def _setup_environment(self):
-        # never reuse a run directory (runs started in the same minute used to share one)
-        if self.checkpoint_dir.exists():
-            raise FileExistsError(f"{self.checkpoint_dir} already exists; choose another run_name")
-        self.checkpoint_dir.mkdir(parents=True)
+    def _setup_environment(self, resume_epoch=None):
+        # never reuse a run directory (runs started in the same minute used to share one); a resumed run (--resume) continues
+        # its own and keeps its config.yaml (the resume config goes to config_resume_e<epoch>.yaml)
+        if resume_epoch is None:
+            if self.checkpoint_dir.exists():
+                raise FileExistsError(f"{self.checkpoint_dir} already exists; choose another run_name")
+            self.checkpoint_dir.mkdir(parents=True)
         
-        with open(self.checkpoint_dir / f"config.yaml", 'w') as f:
+        with open(self.checkpoint_dir / ("config.yaml" if resume_epoch is None else f"config_resume_e{resume_epoch}.yaml"), 'w') as f:
             yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
 
         mlf_db_path = Path.cwd() / self.config.get('mlflow_db', f"mlf_dbs/{self.dataset_name}.db")
@@ -48,13 +50,49 @@ class RunManager:
         mlflow.set_tracking_uri(f"sqlite:///{mlf_db_path}")
         mlflow.set_experiment(self.dataset_name+'_train')
 
-    def _log_perf(self, epoch, train_s, n_samples, val_s):
-        # steps.csv: per-step losses (the curve a speed-up must reproduce); run_meta.json: speed, memory, parameter counts
+    def _log_steps(self, epoch):
+        # steps.csv: per-step losses (the curve a speed-up must reproduce)
         with open(self.checkpoint_dir / "steps.csv", 'a', newline='') as f:
             w = csv.writer(f)
             if epoch == 0: w.writerow(["epoch", "step", "loss", "step_s"])
             for i, (l, dt) in enumerate(self.trainer.step_log): w.writerow([epoch, i, repr(l), f"{dt:.4f}"])
         self.trainer.step_log = []
+
+    def _log_stats(self, epoch):
+        # tn_stats: per-step gradient norms and pre-LayerNorm sentence norms (trainstats.csv), per-epoch parameter norms
+        # (paramstats.csv; epoch -1 = init). Written before the divergence check, so the epoch that went non-finite is kept.
+        tr = self.trainer
+        if not getattr(tr, 'tn_stats', False):
+            return
+        if tr.stat_log:
+            rows = torch.stack(tr.stat_log).cpu().tolist(); tr.stat_log = []
+            path = self.checkpoint_dir / "trainstats.csv"; new = not path.exists()
+            with open(path, 'a', newline='') as f:
+                w = csv.writer(f)
+                if new: w.writerow(["epoch", "step", "g_word", "g_type", "g_text_other", "g_image", "pre_min", "pre_med", "pre_max", "pre_nonfinite", "g_preclip"])
+                for i, r in enumerate(rows): w.writerow([epoch, i] + [f"{x:.6g}" for x in r])
+        ps = tr.text_model.param_stats() if hasattr(tr.text_model, 'param_stats') else {}
+        path = self.checkpoint_dir / "paramstats.csv"; new = not path.exists()
+        with open(path, 'a', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=["epoch"] + list(ps))
+            if new: w.writeheader()
+            w.writerow({"epoch": epoch, **{k: f"{v:.6g}" for k, v in ps.items()}})
+
+    def _train_state(self, best_metric, patience_counter):
+        # save_state: what --resume needs to continue the run exactly (optimiser + scheduler state, RNG streams: the train
+        # DataLoader shuffles with the global torch RNG), stored in last.pt only
+        import random, numpy as np
+        return {"optimizer": self.trainer.optimizer.state_dict(),
+                "scheduler": self.scheduler.state_dict() if self.scheduler is not None else None,
+                "rng": {"torch": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                        "numpy": (lambda s: (s[0], torch.from_numpy(s[1].astype(np.int64)), *s[2:]))(np.random.get_state()),
+                        "python": random.getstate()},   # (tensors, not arrays: torch.load defaults to weights_only)
+                "best_metric": best_metric, "patience_counter": patience_counter, "perf": self.perf,
+                "norm0": getattr(self.trainer.text_model, '_norm0', None)}   # tn_stats: init norms (paramstats *_rel)
+
+    def _log_perf(self, epoch, train_s, n_samples, val_s):
+        # run_meta.json: speed, memory, parameter counts
+        self._log_steps(epoch)
         self.perf.append({"epoch": epoch, "train_s": train_s, "train_samples_per_s": n_samples / train_s, "val_eval_s": val_s,
                           "peak_mem_gb": torch.cuda.max_memory_allocated() / 2**30 if torch.cuda.is_available() else None})
         tm, im = self.trainer.text_model, self.trainer.image_model
@@ -66,7 +104,7 @@ class RunManager:
         with open(self.checkpoint_dir / "run_meta.json", 'w') as f:
             json.dump(meta, f, indent=1)
 
-    def _save_checkpoint(self, epoch, loss, metrics, is_best=False):
+    def _save_checkpoint(self, epoch, loss, metrics, is_best=False, state=None):
         payload = {
             "image": self.trainer.image_model.state_dict(),
             "text": self.trainer.text_model.state_dict(),
@@ -74,13 +112,14 @@ class RunManager:
             "train_loss": loss,
             "val_metrics": metrics
         }
-        if self.config.get('save_last', True):   # save_last: false keeps only best.pt (2.2 GB per TN checkpoint)
-            torch.save(payload, self.checkpoint_path)
+        if self.config.get('save_last', True) or state is not None:   # save_last: false keeps only best.pt (2.2 GB per TN checkpoint)
+            torch.save(payload if state is None else {**payload, "state": state}, self.checkpoint_path)
         if is_best and self.config.get('save_best', True):   # fixed-budget runs report last.pt and can skip best.pt
             torch.save(payload, self.best_checkpoint_path)
 
-    def fit(self, train_loader, val_loader, eval_mapper):
-        self._setup_environment()
+    def fit(self, train_loader, val_loader, eval_mapper, resume=None):
+        # resume: a last.pt written with save_state (scripts/train.py --resume); its model weights are already loaded
+        self._setup_environment(resume_epoch=None if resume is None else resume['epoch'])
         hostname = socket.gethostname()
         log_phase(f"Model #{self.run_name}: optimization started on \"{hostname}\"...")
         
@@ -94,6 +133,14 @@ class RunManager:
         min_delta = self.config.get('min_delta', 1e-3)
         patience_counter = 0
         stopped_epoch = 0
+        start_epoch = 0
+        if resume is not None:
+            st = resume['state']
+            self.trainer.optimizer.load_state_dict(st['optimizer'])
+            if self.scheduler is not None: self.scheduler.load_state_dict(st['scheduler'])
+            best_metric_value, patience_counter, self.perf = st['best_metric'], st['patience_counter'], st['perf']
+            start_epoch = resume['epoch'] + 1
+            if st.get('norm0') is not None: self.trainer.text_model._norm0 = st['norm0']
 
         with mlflow.start_run(run_name=self.run_name):
             mlflow.log_params({
@@ -139,14 +186,22 @@ class RunManager:
                 "distill_state_weight": self.config.get('distill_state_weight', 0.0) if self.config.get('distill_from') else 0.0,
             })
 
-            if self.config.get('checkpoint_every'):   # the initialisation, as epoch -1
+            if resume is None:
+                self._log_stats(-1)   # tn_stats: parameter norms at init
+            else:   # resumed: the RNG streams continue where the saved epoch left them
+                import random, numpy as np
+                rng = resume['state']['rng']
+                torch.set_rng_state(rng['torch'].cpu())
+                if rng['cuda'] is not None and torch.cuda.is_available(): torch.cuda.set_rng_state_all([r.cpu() for r in rng['cuda']])
+                n = rng['numpy']; np.random.set_state((n[0], n[1].cpu().numpy().astype(np.uint32), *n[2:])); random.setstate(rng['python'])
+            if self.config.get('checkpoint_every') and resume is None:   # the initialisation, as epoch -1
                 torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
                             "epoch": -1, "train_loss": None, "val_metrics": {}}, self.checkpoint_dir / "epoch_init.pt")
-            if self.config.get('eval_init'):   # validation metrics of the initialisation (logged as init_*, not used for selection)
+            if self.config.get('eval_init') and resume is None:   # validation metrics of the initialisation (logged as init_*, not used for selection)
                 m0 = self.evaluator.eval_set(dataloader=val_loader, tasks=self.eval_tasks, eval_mapper=eval_mapper)
                 mlflow.log_metrics({f"init_{k}": v for k, v in m0.items()})
                 tqdm.write("\nInit | " + " | ".join(f"{k}: {v:.4f}" for k, v in m0.items()))
-            epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
+            epoch_pbar = tqdm(range(start_epoch, self.config['epochs']), desc="Training Pipeline", unit="epoch")
             current_lr = self.config.get('qlr', 1e-3)
             
             anneal = int(self.config.get('purity_anneal_epochs', 0) or 0)
@@ -158,10 +213,13 @@ class RunManager:
                 if torch.cuda.is_available(): torch.cuda.reset_peak_memory_stats()
                 loss = self.trainer.train_epoch(train_loader, eval_mapper)
                 elapsed_time = time.time() - start_time
+                self._log_stats(epoch)
                 if not math.isfinite(loss):   # diverged: stop before evaluating/saving, best.pt keeps the last good model
                     stopped_epoch = epoch
+                    self._log_steps(epoch)
                     tqdm.write(f"\n[DIVERGED] non-finite training loss in epoch {epoch}; stopping (best.pt = last good best)")
                     mlflow.log_metric("diverged_epoch", epoch)
+                    (self.checkpoint_dir / "diverged.txt").write_text(f"{epoch}\n")   # tools/tn/s4_lane.sh: don't resume
                     break
 
                 grad_norm_dict = self.trainer.grad_norm_by_type()
@@ -202,7 +260,8 @@ class RunManager:
                     patience_counter += 1
                     is_best = False
 
-                self._save_checkpoint(epoch, loss, metrics, is_best=is_best)
+                state = self._train_state(best_metric_value, patience_counter) if self.config.get('save_state') else None
+                self._save_checkpoint(epoch, loss, metrics, is_best=is_best, state=state)
                 mlflow.log_metric("train_loss", loss, step=epoch)
                 ls_ = getattr(self.trainer.loss_fn, 'logit_scale', None)
                 if ls_ is not None: mlflow.log_metric("logit_scale", float(ls_.exp().clamp(max=100)), step=epoch)
@@ -230,6 +289,33 @@ class ContrastiveTrainer:
         self.loss_fn = loss_fn
         self.device = device
         self.step_log = []   # (loss, seconds) per optimiser step, flushed to steps.csv each epoch
+        self.tn_stats = False   # tn_stats: per-step norms (_step_stats) in stat_log, flushed to trainstats.csv each epoch
+        self.stat_log = []
+        self.grad_clip = None    # grad_clip: max global gradient norm (text rows + other text params + image), None = off
+        self.constraints = None  # text.constraint: TNConstraints, applied after every optimiser step
+        self._preclip = None
+
+    @torch.no_grad()
+    def _step_stats(self):
+        # gradient norms of the word vectors / type tensors (RowAdam row grads of this step) / other text parameters / image
+        # model, then (min, median, max, #non-finite) of the step's pre-LayerNorm sentence norms; stays on the GPU
+        tm = self.text_model
+        sq = torch.zeros(4, device=self.device)
+        for bank, _, g in getattr(tm, '_last_row_grads', []):
+            sq[0 if bank.dim() == 2 else 1] += g.float().pow(2).sum()
+        for i, m in ((2, tm), (3, self.image_model)):
+            for p in m.parameters():
+                if p.grad is not None: sq[i] += p.grad.float().pow(2).sum()
+        pre = tm.stats[0].float() if tm.stats else torch.full((4,), float('nan'), device=self.device)
+        tm.stats = []
+        clip = self._preclip.float().view(1) if self._preclip is not None else torch.full((1,), float('nan'), device=self.device)
+        return torch.cat([sq.sqrt(), pre, clip])
+
+    def _clip(self):
+        # global norm over the gathered bank rows (leaves of this step's forwards) and every other parameter with a gradient
+        leaves = [leaf for _, _, leaf in getattr(self.text_model, '_active', [])]
+        params = [p for m in (self.text_model, self.image_model) for p in m.parameters() if p.grad is not None]
+        self._preclip = torch.nn.utils.clip_grad_norm_(leaves + params, self.grad_clip, foreach=True)
 
     @torch.no_grad()
     def grad_norm(self):
@@ -331,9 +417,14 @@ class ContrastiveTrainer:
             loss.backward()
             tick('backward')
 
-            # torch.nn.utils.clip_grad_norm_(self.text_model.parameters(), max_norm=1.0)
+            if self.grad_clip:
+                self._clip()
             self.optimizer.step()
+            if self.constraints is not None:
+                self.constraints.apply()
             tick('optimizer')
+            if self.tn_stats:
+                self.stat_log.append(self._step_stats())
             l = loss.item()
             epoch_loss += l * images.shape[0]
             now = time.time(); self.step_log.append((l, now - t_step)); t_step = now

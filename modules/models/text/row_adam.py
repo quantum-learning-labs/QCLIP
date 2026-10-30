@@ -14,6 +14,18 @@ class RowAdam(torch.optim.Adam):
         self.row_model = row_model
         self._group_of = {id(p): g for g in self.param_groups for p in g['params']}
 
+    def __setstate__(self, state):
+        # torch Adam's __setstate__ wants a 'step' in every non-empty state; bank states only keep 'row_step' (plain Adam
+        # never steps banks: they get no .grad), so give them a placeholder
+        for s in state.get('state', {}).values():
+            if 'row_step' in s and 'step' not in s:
+                s['step'] = torch.tensor(0.0)
+        super().__setstate__(state)
+
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        self._group_of = {id(p): g for g in self.param_groups for p in g['params']}   # (load_state_dict replaces the group dicts)
+
     @torch.no_grad()
     def step(self, closure=None):
         loss = super().step(closure)
@@ -28,7 +40,9 @@ class RowAdam(torch.optim.Adam):
             step = state['row_step'].index_select(0, rows) + 1
             state['row_step'].index_copy_(0, rows, step)
             p = bank.index_select(0, rows)
-            if wd != 0:
+            if wd != 0 and group.get('decoupled_weight_decay'):   # AdamW-style (decoupled_wd), as torch Adam does it
+                p.mul_(1 - lr * wd)
+            elif wd != 0:
                 grad = grad.add(p, alpha=wd)
             m = state['exp_avg'].index_select(0, rows).lerp_(grad, 1 - beta1)
             v = state['exp_avg_sq'].index_select(0, rows).mul_(beta2).addcmul_(grad, grad, value=1 - beta2)

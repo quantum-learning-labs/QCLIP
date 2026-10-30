@@ -13,8 +13,15 @@ import numpy as np
 class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
-    def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot'):
+    def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False):
         super().__init__()
+        # scale_free (text.scale_free, levelwise only): divide every intermediate of the contraction by its (detached) max |entry|,
+        # per sentence. The network is multilinear, so this only rescales each sentence vector by a positive number, which
+        # the LayerNorm head removes: same outputs and gradients (up to the LayerNorm eps), no fp32 overflow/underflow
+        # however large the products of the tensors' gains grow (step 4: they reach inf and the run diverges)
+        if scale_free and engine != 'levelwise':
+            raise ValueError("text.scale_free needs text.tn_engine: levelwise")
+        self.scale_free = scale_free
         # init 'glorot': step-1 scheme (shape only). 'norm': std 1/sqrt(dim of the leg towards the sentence output) (the
         # compiler's 'out' per symbol, majority over its uses), so each tensor maps unit-norm inputs to a unit-norm
         # output in expectation and sentence vectors start at norm ~1 (glorot: ~1e-6, decoupled ~1e-11: below the
@@ -42,6 +49,7 @@ class TNModel(nn.Module):
         self.level_cache = {}   # (batched einsum, shapes) -> levelwise plan (precompute_paths)
         self.out_dim: int = out_dim
         self.norm_head = nn.LayerNorm(out_dim)
+        self.stats = None   # tn_stats: a list; training forwards append (min, median, max, #non-finite) of the pre-LayerNorm norms
     
     @property
     def pcount(self):
@@ -202,6 +210,28 @@ class TNModel(nn.Module):
         return {"oov_sentence_frac": n_oov_sent / max(n_sent, 1), "oov_tensor_frac": n_oov_tensors / max(n_tensors, 1),
                 "oov_new_symbols": len(new)}
 
+    def _record(self, output):
+        if self.stats is not None and torch.is_grad_enabled():
+            n = output.detach().norm(dim=1)
+            self.stats.append(torch.stack([n.min(), n.median(), n.max(), (~torch.isfinite(n)).sum().to(n.dtype)]))
+
+    @torch.no_grad()
+    def param_stats(self):
+        # tn_stats: Frobenius norms of the word vectors (order-1 banks) and of the type tensors / MPS cores (the other banks):
+        # quantiles, and quantiles of each tensor's norm over its norm at the first call (the init, epoch -1)
+        norms = {'word': [self._bank(b).norm(dim=1) for b, s in enumerate(self.bank_shapes) if len(s) == 1],
+                 'type': [self._bank(b).flatten(1).norm(dim=1) for b, s in enumerate(self.bank_shapes) if len(s) > 1]}
+        norms = {k: torch.cat(v).float() for k, v in norms.items() if v}
+        if not hasattr(self, '_norm0'):
+            self._norm0 = {k: v.clone() for k, v in norms.items()}
+        out, qs = {}, torch.tensor([0.0, 0.5, 1.0])
+        for k, v in norms.items():
+            for name, x in ((k, v), (k + '_rel', v / self._norm0[k].clamp_min(1e-30))):
+                for q, val in zip(('min', 'med', 'max'), torch.quantile(x.cpu(), qs).tolist()):
+                    out[f'{name}_{q}'] = val
+        out['head_w'] = float(self.norm_head.weight.norm())
+        return out
+
     def param_breakdown(self):
         # parameter count by tensor order (vectors, matrices, order-3 cores, ...)
         out = defaultdict(int)
@@ -284,6 +314,7 @@ class TNModel(nn.Module):
 
         if self.engine == 'levelwise':
             output = self._levelwise(groups)
+            self._record(output)
             output = self.norm_head(output)
             return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
 
@@ -311,6 +342,7 @@ class TNModel(nn.Module):
             pieces[b] = src.index_select(0, torch.from_numpy(idx.reshape(-1)).to(device)).split([len(l) for l in lists])
 
         output = self._grouped(groups, refs, pieces)
+        self._record(output)
         output = self.norm_head(output)
         return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
 
@@ -487,7 +519,10 @@ class TNModel(nn.Module):
                     operands[k][p] = part
             results = defaultdict(list)
             for (eq, _, out_shape), ins in zip(ops, operands):
-                results[out_shape].append(torch.einsum(eq, ins))
+                r = torch.einsum(eq, ins)
+                if self.scale_free:
+                    r = r / r.detach().abs().flatten(1).amax(dim=1).clamp_min(1e-30).view(-1, *([1] * (r.dim() - 1)))
+                results[out_shape].append(r)
             for shape in out_shapes:   # planned order: one new piece per output shape
                 rs = results[shape]
                 pieces[shape].append(torch.cat(rs) if len(rs) > 1 else rs[0])

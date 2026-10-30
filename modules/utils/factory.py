@@ -52,7 +52,7 @@ def build_experiment(config, device):
             raise ValueError(f"tn: vision.method must be 'clip' or 'ttn', got '{method}'")
 
         text_model = TNModel(out_dim=config['embedding_dim'], engine=config['text'].get('tn_engine', 'grouped'),
-                             init=config['text'].get('init', 'glorot')).to(device)
+                             init=config['text'].get('init', 'glorot'), scale_free=config['text'].get('scale_free', False)).to(device)
         loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
         
     elif model_type == "vqc":
@@ -127,11 +127,21 @@ def build_optimizer(config, text_model, image_model, loss_fn):
 
     # models with packed parameter banks (TNModel) update only the rows a step used: RowAdam, same maths as Adam
     row_kw = {'row_model': text_model} if hasattr(text_model, 'pop_row_grads') else {}
+    groups = [{'params': quantum_params, 'lr': lr}, {'params': classical_params, 'lr': config.get('clr', lr)}]
+    # step 4 (TN): type tensors / MPS cores (banks of order >= 2) in their own group with type_lr_scale x LR and
+    # type_weight_decay; decoupled_wd: AdamW-style decay for every group. Unset = the single group above.
+    split = row_kw and ('type_lr_scale' in config or 'type_weight_decay' in config)
+    if split:
+        type_banks = [text_model._bank(b) for b, s in enumerate(text_model.bank_shapes) if len(s) > 1]
+        ids = {id(p) for p in type_banks}
+        groups[0]['params'] = [p for p in quantum_params if id(p) not in ids]
+        groups.insert(1, {'params': type_banks, 'lr': lr * config.get('type_lr_scale', 1.0),
+                          'weight_decay': config.get('type_weight_decay', config.get('weight_decay', 1e-4))})
     optimizer = (RowAdam if row_kw else torch.optim.Adam)(
-        [{'params': quantum_params, 'lr': lr},
-         {'params': classical_params, 'lr': config.get('clr', lr)}]
+        groups
         + ([{'params': loss_params, 'lr': config.get('temperature_lr', 1e-3), 'weight_decay': 0.0}] if loss_params else []),
-        betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4), **row_kw
+        betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4), **row_kw,
+        **({'decoupled_weight_decay': True} if config.get('decoupled_wd') else {})
     )
     warmup_epochs = config.get('warmup_epochs', 5)
     total_epochs = config['epochs']
@@ -167,3 +177,12 @@ class PlateauSchedule:
 
     def get_last_lr(self):
         return [g['lr'] for g in self.optimizer.param_groups]
+
+    def state_dict(self):
+        return {'epoch': self.epoch, 'warmup': self.warmup.state_dict() if self.warmup is not None else None,
+                'plateau': self.plateau.state_dict()}
+
+    def load_state_dict(self, sd):
+        self.epoch = sd['epoch']
+        if self.warmup is not None: self.warmup.load_state_dict(sd['warmup'])
+        self.plateau.load_state_dict(sd['plateau'])
