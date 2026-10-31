@@ -39,7 +39,7 @@ def build_experiment(config, device):
         compiler = config['text']
         obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_dim'],
                  'sem': compiler.get('word_dim', 128)}
-        mps_proc = MPS(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'])
+        mps_proc = MPS(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'], root_bond=config['text'].get('root_bond_dim'))
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc, decouple=compiler.get('decouple', False),
                             orient=compiler.get('init', 'glorot') == 'norm')
         
@@ -52,7 +52,8 @@ def build_experiment(config, device):
             raise ValueError(f"tn: vision.method must be 'clip' or 'ttn', got '{method}'")
 
         text_model = TNModel(out_dim=config['embedding_dim'], engine=config['text'].get('tn_engine', 'grouped'),
-                             init=config['text'].get('init', 'glorot'), scale_free=config['text'].get('scale_free', False)).to(device)
+                             init=config['text'].get('init', 'glorot'), scale_free=config['text'].get('scale_free', False),
+                             bow=config['text'].get('arch') == 'bow').to(device)
         loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
         
     elif model_type == "vqc":

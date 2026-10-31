@@ -8,8 +8,10 @@ PY="taskset -c $CORES /cs/research/pplv/comp_bridge/.venv/bin/python"
 export PYTHONPATH=. PYTHONUNBUFFERED=1 TN_PATH_WORKERS=4
 FX="--set lr_schedule=plateau --set warmup_epochs=1 --set lr_patience=100000 --set patience=100000 --set min_delta=0.0 --set select_metric=mrr_mean --set save_last=true --set save_best=true --set save_state=true --set tn_stats=true"
 while read -r R C S E LR EXTRA; do
+  EXTRA=${EXTRA:-}
   [ -z "${R:-}" ] && continue; case $R in \#*) continue;; esac
   D=checkpoints/mscoco/tn/$R
+  eval "XA=($EXTRA)"   # extras may hold quoted YAML values, e.g. --set 'text.constraint={norm: all}'
   if [ -f $D/benchmark_best.json ]; then echo "[lane] $R done, skip"; continue; fi
   done_ep=$(python3 -c "import csv,sys;r=list(csv.DictReader(open('$D/steps.csv')));print(int(r[-1]['epoch'])+1)" 2>/dev/null || echo 0)
   if [ -f $D/last.pt ] && [ "$done_ep" -lt "$E" ] && [ ! -f $D/diverged.txt ]; then
@@ -17,7 +19,7 @@ while read -r R C S E LR EXTRA; do
     $PY scripts/train.py --resume $D/last.pt --epochs $E; rc=$?
   elif [ ! -d $D ]; then
     echo "[lane] $R start $(date -Is)"
-    $PY scripts/train.py -cfg configs/tn/$C --seed $S --run_name $R --epochs $E --set lr=$LR --set mlflow_db=mlf_dbs/$R.db $FX $EXTRA; rc=$?
+    $PY scripts/train.py -cfg configs/tn/$C --seed $S --run_name $R --epochs $E --set lr=$LR --set mlflow_db=mlf_dbs/$R.db $FX "${XA[@]}"; rc=$?
   else
     echo "[lane] $R exists (epochs $done_ep, diverged: $(cat $D/diverged.txt 2>/dev/null || echo no)): no training"; rc=0
   fi

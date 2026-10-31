@@ -13,7 +13,7 @@ import numpy as np
 class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
-    def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False):
+    def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False):
         super().__init__()
         # scale_free (text.scale_free, levelwise only): divide every intermediate of the contraction by its (detached) max |entry|,
         # per sentence. The network is multilinear, so this only rescales each sentence vector by a positive number, which
@@ -22,6 +22,10 @@ class TNModel(nn.Module):
         if scale_free and engine != 'levelwise':
             raise ValueError("text.scale_free needs text.tn_engine: levelwise")
         self.scale_free = scale_free
+        # bow (text.arch: bow, step-4b lexical baseline): the caption's word vectors ('w:' symbols of the decoupled compile)
+        # averaged, then a linear map word_dim -> out_dim (bow_proj) and the same head; the type tensors are never used
+        self.bow, self.bow_proj = bow, None
+        self.capture = None   # a list: every forward appends its pre-LayerNorm outputs (analysis tools)
         # init 'glorot': step-1 scheme (shape only). 'norm': std 1/sqrt(dim of the leg towards the sentence output) (the
         # compiler's 'out' per symbol, majority over its uses), so each tensor maps unit-norm inputs to a unit-norm
         # output in expectation and sentence vectors start at norm ~1 (glorot: ~1e-6, decoupled ~1e-11: below the
@@ -151,6 +155,8 @@ class TNModel(nn.Module):
                     self._init_tensor(shape, out=banks[b][r], std=self._norm_std(name, shape))
         for b, t in enumerate(banks):
             self.register_parameter(f'bank{b}', nn.Parameter(t))
+        if self.bow and self.bow_proj is None:
+            self.bow_proj = nn.Linear(next(s[0] for s in self.bank_shapes if len(s) == 1), self.out_dim, bias=False)
 
     def _save_to_state_dict(self, destination, prefix, keep_vars):
         # one entry per symbol (views into the banks; torch.save stores each bank once): same keys as before packing
@@ -211,6 +217,8 @@ class TNModel(nn.Module):
                 "oov_new_symbols": len(new)}
 
     def _record(self, output):
+        if self.capture is not None:
+            self.capture.append(output.detach())
         if self.stats is not None and torch.is_grad_enabled():
             n = output.detach().norm(dim=1)
             self.stats.append(torch.stack([n.min(), n.median(), n.max(), (~torch.isfinite(n)).sum().to(n.dtype)]))
@@ -305,6 +313,8 @@ class TNModel(nn.Module):
         return sid, rows
 
     def forward(self, batch: List[tuple[str, List[str]]]) -> torch.Tensor:
+        if self.bow:
+            return self._bow_forward(batch)
         if not hasattr(self, '_plans'):
             self._plans, self._struct_ids, self._structs = {}, {}, []
         groups = defaultdict(list)   # structure id -> [(row, bank rows)], in order of first appearance (as before)
@@ -342,6 +352,31 @@ class TNModel(nn.Module):
             pieces[b] = src.index_select(0, torch.from_numpy(idx.reshape(-1)).to(device)).split([len(l) for l in lists])
 
         output = self._grouped(groups, refs, pieces)
+        self._record(output)
+        output = self.norm_head(output)
+        return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
+
+    def _bow_forward(self, batch):
+        rows, seg, b = [], [], None
+        for i, (_, tensor_arr) in enumerate(batch):
+            for d in tensor_arr:
+                if d['name'].startswith('w:'):
+                    b, r = self.sym_loc[d['name']]; rows.append(r); seg.append(i)
+        device = self._bank(0).device
+        if b is None:
+            output = torch.zeros(len(batch), self.out_dim, device=device)
+        else:
+            uniq, inv = np.unique(np.asarray(rows, dtype=np.int64), return_inverse=True)
+            uniq = torch.from_numpy(uniq).to(device)
+            if torch.is_grad_enabled():   # training: RowAdam updates exactly these word rows
+                leaf = self._bank(b).detach().index_select(0, uniq).requires_grad_()
+                self._active.append((b, uniq, leaf))
+            else:
+                leaf = self._bank(b).index_select(0, uniq)
+            vecs = leaf.index_select(0, torch.from_numpy(inv).to(device))
+            seg = torch.tensor(seg, device=device)
+            summed = torch.zeros(len(batch), vecs.shape[1], device=device).index_add_(0, seg, vecs)
+            output = self.bow_proj(summed / torch.bincount(seg, minlength=len(batch)).clamp_min(1).unsqueeze(1))
         self._record(output)
         output = self.norm_head(output)
         return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)

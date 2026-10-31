@@ -33,11 +33,15 @@ def summary(d):
         x = col('g_preclip') if 'g_preclip' in ts[0] else np.array([])
         x = x[np.isfinite(x)] if len(x) else x
         if len(x): out['g_preclip_p99'], out['g_preclip_max'] = float(np.percentile(x, 99)), float(x.max())
-        lo, hi = col('pre_min'), col('pre_max')
-        if len(lo): out['pre_min'], out['pre_max'] = float(np.nanmin(lo)), float(np.nanmax(hi[np.isfinite(hi)])) if np.isfinite(hi).any() else float('inf')
+        lo = col('pre_min'); hi = np.array([float(r['pre_max']) for r in ts])
+        if len(lo):
+            out['pre_min'] = float(np.nanmin(lo))
+            out['pre_max'] = float(np.nanmax(hi[np.isfinite(hi)])) if np.isfinite(hi).any() else float('inf')
+            out['overflow_step_frac'] = float(np.mean(np.isinf(hi)))   # steps where some sentence norm overflowed fp32
     ps = rows(f'{d}/paramstats.csv')
     if ps:
-        last = ps[-1]
+        fin = [r for r in ps if r.get('type_rel_med') not in (None, '', 'nan')]
+        last = fin[-1] if fin else ps[-1]
         for k in ('type_rel_med', 'type_rel_min', 'type_rel_max', 'word_rel_med'):
             if k in last: out[k] = float(last[k])
     try:
@@ -53,7 +57,7 @@ if __name__ == '__main__':
     if args and args[0] == '--json': js, args = args[1], args[2:]
     res = [summary(d) for d in args]
     keys = ['run', 'epochs', 'nan_epoch', 'loss_spikes', 'g_type_p99', 'g_type_max', 'g_word_p99', 'g_word_max', 'g_preclip_max',
-            'pre_min', 'pre_max', 'type_rel_med', 'type_rel_min', 'samples_per_s']
+            'pre_min', 'pre_max', 'overflow_step_frac', 'type_rel_med', 'type_rel_min', 'samples_per_s']
     print(' | '.join(keys))
     for r in res:
         print(' | '.join(f"{r[k]:.3g}" if isinstance(r.get(k), float) else str(r.get(k, '-')) for k in keys))

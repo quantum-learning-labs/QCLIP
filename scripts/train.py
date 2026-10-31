@@ -19,6 +19,13 @@ if __name__ == "__main__":
     parser.add_argument("--resume", type=str, default=None,
                         help='Continue a run from its last.pt (written with save_state: true): its config.yaml, seed and run dir; '
                              '--epochs may extend it')
+    parser.add_argument("--resume_as", type=str, default=None,
+                        help='With --resume: continue as a NEW run (own dir and mlflow db; history up to the resume epoch copied) from '
+                             'that checkpoint, e.g. an epoch_XXX.pt snapshot taken with snapshot_state; the source run is untouched')
+    parser.add_argument("--reseed", type=int, default=None,
+                        help='With --resume: reseed the RNG streams (data order, caption picks) instead of restoring them')
+    parser.add_argument("--perturb", type=float, default=0.0,
+                        help='With --resume: multiply every type-tensor entry by (1 + perturb * N(0,1)) (generator seeded by --reseed)')
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help='Override a config value, e.g. --set qlr=3e-3 --set text.layers=3 (repeatable)')
     args = parser.parse_args()
@@ -31,6 +38,9 @@ if __name__ == "__main__":
     config, DEV, SEED = setup_exp(args.config, seed=args.seed, overrides=args.set)
     if args.init_from: config['init_from'] = args.init_from
     if args.run_name: config['run_name'] = args.run_name
+    if args.resume_as:
+        config.update(run_name=args.resume_as, mlflow_db=f"mlf_dbs/{args.resume_as}.db", resumed_from=args.resume,
+                      resume_reseed=args.reseed, resume_perturb=args.perturb)
     if args.epochs: config['epochs'] = args.epochs
     if args.train_frac: config['train_frac'] = args.train_frac
     DATASET = config['dataset']['name']
@@ -85,6 +95,26 @@ if __name__ == "__main__":
         if 'state' not in resume_ck:
             raise ValueError(f"{args.resume} has no training state (train with save_state: true)")
         print(f"Resuming {args.resume} after epoch {resume_ck['epoch']}")
+        resume_ck['reseed'] = args.reseed
+        if args.perturb:
+            with torch.no_grad():
+                g = torch.Generator().manual_seed(args.reseed or 0)
+                for b, s in enumerate(text_model.bank_shapes):
+                    if len(s) > 1:
+                        bank = text_model._bank(b)
+                        bank.mul_(1 + args.perturb * torch.randn(bank.shape, generator=g).to(bank.device))
+            print(f"Perturbed the type tensors: x(1 + {args.perturb} N(0,1)), seed {args.reseed or 0}")
+        if args.resume_as:   # new run dir: its config + the source history up to the resume epoch
+            import yaml, csv, shutil
+            from pathlib import Path as _P
+            src, dst = _P(args.resume).parent, _P(f"./checkpoints/{config['dataset']['name']}/{config['model_type']}/{args.resume_as}")
+            dst.mkdir(parents=True)
+            yaml.dump(config, open(dst / 'config.yaml', 'w'), default_flow_style=False, sort_keys=False)
+            for name in ('steps.csv', 'trainstats.csv', 'paramstats.csv'):
+                if (src / name).exists():
+                    rows = list(csv.reader(open(src / name)))
+                    with open(dst / name, 'w', newline='') as f:
+                        csv.writer(f).writerows([rows[0]] + [r for r in rows[1:] if int(r[0]) <= resume_ck['epoch']])
     elif args.init_from:
         ck = CheckpointManager.load_model(args.init_from, image_model, text_model, DEV)
         print(f"Initialised weights from {args.init_from} (epoch {ck.get('epoch')})")

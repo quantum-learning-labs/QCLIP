@@ -188,6 +188,9 @@ class RunManager:
 
             if resume is None:
                 self._log_stats(-1)   # tn_stats: parameter norms at init
+            elif resume.get('reseed') is not None:   # resumed with --reseed: new data order / caption picks from here
+                import random, numpy as np
+                k = resume['reseed']; torch.manual_seed(k); random.seed(k); np.random.seed(k)
             else:   # resumed: the RNG streams continue where the saved epoch left them
                 import random, numpy as np
                 rng = resume['state']['rng']
@@ -267,8 +270,11 @@ class RunManager:
                 if ls_ is not None: mlflow.log_metric("logit_scale", float(ls_.exp().clamp(max=100)), step=epoch)
                 every = self.config.get('checkpoint_every')
                 if every and epoch % every == 0:   # per-epoch snapshots for training-dynamics analysis
-                    torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
-                                "epoch": epoch, "train_loss": loss, "val_metrics": metrics}, self.checkpoint_dir / f"epoch_{epoch:03d}.pt")
+                    snap = {"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
+                            "epoch": epoch, "train_loss": loss, "val_metrics": metrics}
+                    if self.config.get('snapshot_state'):   # resumable snapshots (train.py --resume <snapshot> --resume_as <new run>)
+                        snap["state"] = state if state is not None else self._train_state(best_metric_value, patience_counter)
+                    torch.save(snap, self.checkpoint_dir / f"epoch_{epoch:03d}.pt")
 
                 if patience_counter >= patience:
                     stopped_epoch = epoch
