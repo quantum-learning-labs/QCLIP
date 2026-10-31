@@ -13,7 +13,8 @@ import numpy as np
 class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
-    def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False):
+    def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False,
+                 head: str = 'affine'):
         super().__init__()
         # scale_free (text.scale_free, levelwise only): divide every intermediate of the contraction by its (detached) max |entry|,
         # per sentence. The network is multilinear, so this only rescales each sentence vector by a positive number, which
@@ -52,7 +53,11 @@ class TNModel(nn.Module):
         self.path_cache = {}
         self.level_cache = {}   # (batched einsum, shapes) -> levelwise plan (precompute_paths)
         self.out_dim: int = out_dim
-        self.norm_head = nn.LayerNorm(out_dim)
+        # head (text.head): 'affine' = LayerNorm with gain and bias (default); 'no_bias' = gain only; 'plain' = no parameters
+        # (step 4b: the shared gain/bias move first and collapse the embeddings)
+        if head not in ('affine', 'no_bias', 'plain'):
+            raise ValueError(f"text.head must be 'affine', 'no_bias' or 'plain', got {head!r}")
+        self.norm_head = nn.LayerNorm(out_dim) if head == 'affine' else nn.LayerNorm(out_dim, elementwise_affine=head == 'no_bias', bias=False)
         self.stats = None   # tn_stats: a list; training forwards append (min, median, max, #non-finite) of the pre-LayerNorm norms
     
     @property
@@ -237,7 +242,7 @@ class TNModel(nn.Module):
             for name, x in ((k, v), (k + '_rel', v / self._norm0[k].clamp_min(1e-30))):
                 for q, val in zip(('min', 'med', 'max'), torch.quantile(x.cpu(), qs).tolist()):
                     out[f'{name}_{q}'] = val
-        out['head_w'] = float(self.norm_head.weight.norm())
+        out['head_w'] = float(self.norm_head.weight.norm()) if self.norm_head.weight is not None else float('nan')
         return out
 
     def param_breakdown(self):

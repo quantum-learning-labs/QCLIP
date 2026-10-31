@@ -53,7 +53,7 @@ def build_experiment(config, device):
 
         text_model = TNModel(out_dim=config['embedding_dim'], engine=config['text'].get('tn_engine', 'grouped'),
                              init=config['text'].get('init', 'glorot'), scale_free=config['text'].get('scale_free', False),
-                             bow=config['text'].get('arch') == 'bow').to(device)
+                             bow=config['text'].get('arch') == 'bow', head=config['text'].get('head', 'affine')).to(device)
         loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
         
     elif model_type == "vqc":
