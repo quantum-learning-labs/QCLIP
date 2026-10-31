@@ -11,6 +11,8 @@
   mps_gauge: canonical      MPS type tensors in left-canonical form (core k = polar factor of its (left bond x leg, right
                             bond) matrix, the remainder pushed into core k+1): same represented tensor, gauge fixed
   init_orth: true           (once, at init) type tensors set to the polar factor of their norm init, same norm
+  scope: all | root         root: the per-step constraints act only on the tensors carrying the sentence output leg (type
+                            'out', i.e. the root types' cores); init_orth still applies to every type tensor
 
 Everything is matmuls: CUDA svd/eigh are broken in our environments. "Output leg" = the leg towards the sentence output
 (TNModel.out_votes majority, as for text.init: norm).
@@ -51,6 +53,9 @@ class TNConstraints:
         self.isometric = bool(cfg.get('isometric', False))
         self.gauge = cfg.get('mps_gauge', 'none')
         self.iters = int(cfg.get('ns_iters', 15))
+        self.scope = cfg.get('scope', 'all')
+        if self.scope not in ('all', 'root'):
+            raise ValueError(f"text.constraint.scope must be 'all' or 'root', got {self.scope!r}")
         if self.norm not in ('none', 'type', 'all') or self.gauge not in ('none', 'canonical'):
             raise ValueError(f"text.constraint: bad norm/mps_gauge in {cfg}")
         if self.isometric and self.gauge != 'none':
@@ -63,6 +68,12 @@ class TNConstraints:
         for name, (b, r) in model.sym_loc.items():
             votes = model.out_votes.get(name)
             if votes: self.leg[b][r] = votes.most_common(1)[0][0]
+        # scope root: per bank, which rows belong to tensors of a root type ('out' among its types)
+        self.in_scope = [torch.ones(model._bank(b).shape[0], dtype=torch.bool, device=dev) for b in range(nb)]
+        if self.scope == 'root':
+            for m in self.in_scope: m.zero_()
+            for name, (b, r) in model.sym_loc.items():
+                if 'out' in name.split(':')[-1].split('_core')[0].split('@'): self.in_scope[b][r] = True
         self.u = {}   # spectral: persistent power-iteration vectors per (bank, leg): (rows, shape[leg])
         # MPS symbols: cores t:..._core0.._coreK-1 -> per (core count, banks) signature, the (n_symbols, K) row matrix
         cores = defaultdict(dict)
@@ -102,6 +113,9 @@ class TNConstraints:
             for b, r in self._canonical(touched).items():
                 touched[b] = torch.unique(torch.cat(([touched[b]] if b in touched else []) + r))
         for b, rows in touched.items():
+            if self.scope != 'all':
+                rows = rows[self.in_scope[b][rows]]
+                if len(rows) == 0: continue
             if self.is_word[b]:
                 if self.norm == 'all': self._renorm(b, rows)
                 continue
