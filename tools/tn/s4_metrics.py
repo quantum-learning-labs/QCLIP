@@ -14,8 +14,10 @@ def val_curve(run):
 print(' | '.join(['run', 'best_ep', 'val@25', 'val@50', 'val@100', 'val@last', 'val_best'] + [l for _, l in TEST]))
 for d in sys.argv[1:]:
     run = Path(d).name
-    try: b = json.load(open(f'{d}/benchmark_best.json')); r, ep = b['results'], b['epoch']
-    except (FileNotFoundError, KeyError): r, ep = {}, None
+    r, ep = {}, None
+    for name in ('benchmark_best_e300.json', 'benchmark_best_final.json', 'benchmark_best.json'):   # re-benchmarks first
+        try: b = json.load(open(f'{d}/{name}')); r, ep = b['results'], b['epoch']; break
+        except (FileNotFoundError, KeyError): pass
     v = val_curve(run)
     at = lambda e: f"{v[e]:.4f}" if e in v else '-'
     last = max(v) if v else None

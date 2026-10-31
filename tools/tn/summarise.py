@@ -31,7 +31,10 @@ def load(glob_pat):
     glob_pat, _, which = glob_pat.partition('@')
     runs = []
     for d in sorted(d for g in glob_pat.split(',') for d in glob.glob(str(CKPT / g))):   # 'a,b': union of globs
-        b, m = Path(d) / f'benchmark_{which or "last"}.json', Path(d) / 'run_meta.json'
+        m = Path(d) / 'run_meta.json'
+        # @best: a later re-benchmark of best.pt (benchmark_best_e300 / _final, never overwritten) wins over benchmark_best
+        names = [f'benchmark_best_{x}.json' for x in ('e300', 'final')] + ['benchmark_best.json'] if which == 'best' else [f'benchmark_{which or "last"}.json']
+        b = next((Path(d) / x for x in names if (Path(d) / x).exists()), Path(d) / names[-1])
         if b.exists() and m.exists():
             bj = json.load(open(b))
             runs.append({'name': Path(d).name, 'res': bj['results'], 'meta': json.load(open(m)), 'epoch': bj.get('epoch')})
