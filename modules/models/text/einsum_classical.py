@@ -14,7 +14,7 @@ class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
     def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False,
-                 head: str = 'affine'):
+                 head: str = 'affine', hybrid: bool = False, word_base: float = None, centre: bool = False):
         super().__init__()
         # scale_free (text.scale_free, levelwise only): divide every intermediate of the contraction by its (detached) max |entry|,
         # per sentence. The network is multilinear, so this only rescales each sentence vector by a positive number, which
@@ -26,6 +26,18 @@ class TNModel(nn.Module):
         # bow (text.arch: bow, step-4b lexical baseline): the caption's word vectors ('w:' symbols of the decoupled compile)
         # averaged, then a linear map word_dim -> out_dim (bow_proj) and the same head; the type tensors are never used
         self.bow, self.bow_proj = bow, None
+        # step 4c (composition that keeps recall; levelwise only). hybrid (text.compose: hybrid): sentence = unit(TN) +
+        # mix * unit(bow_proj(mean of the word vectors)), mix learned (init 1): a lexical path beside the TN.
+        # word_base (text.word_base: alpha): word vector = base + d_w, base one shared learned vector, the bank rows hold
+        # d_w (init scaled by alpha): around base the multilinear TN is to first order additive in the words, each word
+        # still entering through its own leg. centre (text.centre, needs word_base): subtract the same network with every
+        # word set to base (the caption's 'empty' structure term), so captions are compared by their word contributions
+        if (hybrid or word_base is not None or centre) and engine != 'levelwise':
+            raise ValueError("text.compose: hybrid / text.word_base / text.centre need text.tn_engine: levelwise")
+        if centre and word_base is None:
+            raise ValueError("text.centre needs text.word_base")
+        self.hybrid, self.word_scale, self.centre = hybrid, word_base, centre
+        self.extra = None   # nn.ParameterDict of the step-4c parameters ('word_base', 'mix'), built with the banks
         self.capture = None   # a list: every forward appends its pre-LayerNorm outputs (analysis tools)
         # init 'glorot': step-1 scheme (shape only). 'norm': std 1/sqrt(dim of the leg towards the sentence output) (the
         # compiler's 'out' per symbol, majority over its uses), so each tensor maps unit-norm inputs to a unit-norm
@@ -160,8 +172,24 @@ class TNModel(nn.Module):
                     self._init_tensor(shape, out=banks[b][r], std=self._norm_std(name, shape))
         for b, t in enumerate(banks):
             self.register_parameter(f'bank{b}', nn.Parameter(t))
-        if self.bow and self.bow_proj is None:
+        if (self.bow or self.hybrid) and self.bow_proj is None:
             self.bow_proj = nn.Linear(next(s[0] for s in self.bank_shapes if len(s) == 1), self.out_dim, bias=False)
+        if self.word_scale is not None:
+            wbanks = {self.sym_loc[n][0] for n in self.symbols if n.startswith('w:')}
+            if len(wbanks) != 1 or any(not n.startswith('w:') for n in self.symbols if self.sym_loc[n][0] in wbanks):
+                raise ValueError("text.word_base needs the decoupled compile: all word vectors ('w:') in one bank of their own")
+            self._word_bank = wbanks.pop()
+        if (self.word_scale is not None or self.hybrid) and self.extra is None:
+            extra = {}
+            if self.word_scale is not None:
+                dim = self.bank_shapes[self._word_bank][0]
+                if init:
+                    with torch.no_grad():
+                        self._bank(self._word_bank).mul_(self.word_scale)
+                extra['word_base'] = nn.Parameter(torch.randn(dim) / math.sqrt(dim) if init else torch.empty(dim))
+            if self.hybrid:
+                extra['mix'] = nn.Parameter(torch.ones(()))
+            self.extra = nn.ParameterDict(extra)
 
     def _save_to_state_dict(self, destination, prefix, keep_vars):
         # one entry per symbol (views into the banks; torch.save stores each bank once): same keys as before packing
@@ -215,7 +243,8 @@ class TNModel(nn.Module):
                 b = self.bank_shapes.index(shape)
                 gen = torch.Generator().manual_seed(seed * 1_000_003 + zlib.crc32(name.encode()))
                 self.sym_loc[name] = (b, self._bank(b).shape[0] + len(rows[b]))
-                rows[b].append(self._init_tensor(shape, gen, std=self._norm_std(name, shape)).data)
+                t = self._init_tensor(shape, gen, std=self._norm_std(name, shape)).data
+                rows[b].append(t * self.word_scale if self.word_scale is not None and name.startswith('w:') else t)
             for b, ts in rows.items():
                 self.register_parameter(f'bank{b}', nn.Parameter(torch.cat([self._bank(b).data, torch.stack(ts).to(device)])))
         return {"oov_sentence_frac": n_oov_sent / max(n_sent, 1), "oov_tensor_frac": n_oov_tensors / max(n_tensors, 1),
@@ -243,6 +272,9 @@ class TNModel(nn.Module):
                 for q, val in zip(('min', 'med', 'max'), torch.quantile(x.cpu(), qs).tolist()):
                     out[f'{name}_{q}'] = val
         out['head_w'] = float(self.norm_head.weight.norm()) if self.norm_head.weight is not None else float('nan')
+        if self.extra is not None:
+            for k, v in self.extra.items():
+                out[k] = float(v.norm())
         return out
 
     def param_breakdown(self):
@@ -328,7 +360,10 @@ class TNModel(nn.Module):
             groups[sid].append((i, rows))
 
         if self.engine == 'levelwise':
-            output = self._levelwise(groups)
+            output = self._centred(groups) if self.centre else self._levelwise(groups)
+            if self.hybrid:
+                output = (torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
+                          + self.extra['mix'] * torch.nn.functional.normalize(self._bow_vec(batch), p=2, dim=-1, eps=1e-12))
             self._record(output)
             output = self.norm_head(output)
             return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
@@ -362,6 +397,13 @@ class TNModel(nn.Module):
         return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
 
     def _bow_forward(self, batch):
+        output = self._bow_vec(batch)
+        self._record(output)
+        output = self.norm_head(output)
+        return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
+
+    def _bow_vec(self, batch):
+        # bow_proj of the mean word vector of each caption (pre-head)
         rows, seg, b = [], [], None
         for i, (_, tensor_arr) in enumerate(batch):
             for d in tensor_arr:
@@ -379,12 +421,36 @@ class TNModel(nn.Module):
             else:
                 leaf = self._bank(b).index_select(0, uniq)
             vecs = leaf.index_select(0, torch.from_numpy(inv).to(device))
+            if self.word_scale is not None:
+                vecs = vecs + self.extra['word_base']
             seg = torch.tensor(seg, device=device)
             summed = torch.zeros(len(batch), vecs.shape[1], device=device).index_add_(0, seg, vecs)
             output = self.bow_proj(summed / torch.bincount(seg, minlength=len(batch)).clamp_min(1).unsqueeze(1))
-        self._record(output)
-        output = self.norm_head(output)
-        return torch.nn.functional.normalize(output, p=2, dim=-1, eps=1e-12)
+        return output
+
+    def _centred(self, groups):
+        # text.centre: TN(caption) - TN(same caption, every word = base), computed as two levelwise passes. The structure
+        # term depends on the caption's type tensors, not just its structure: one base pass per distinct (structure,
+        # type-tensor rows) of the batch. Under scale_free both passes track their per-sentence log scale, so the
+        # difference is exact up to one positive factor per sentence; then unit norm (the difference can be small next
+        # to the LayerNorm eps)
+        real, ls = self._levelwise(groups, track=True)
+        wb, keyed = self._word_bank, {}
+        base_groups, to_base = defaultdict(list), np.empty(len(ls), dtype=np.int64)
+        for sid, items in groups.items():
+            types = [j for j, b in enumerate(self._structs[sid][3]) if b != wb]
+            for i, rows in items:
+                key = (sid, tuple(rows[j] for j in types))
+                k = keyed.get(key)
+                if k is None:
+                    k = keyed[key] = len(keyed)
+                    base_groups[sid].append((k, rows))
+                to_base[i] = k
+        base, bls = self._levelwise(base_groups, track=True, base_only=True)
+        idx = torch.from_numpy(to_base).to(real.device)
+        bls = bls.index_select(0, idx); top = torch.maximum(ls, bls)   # both factors <= 1: no overflow
+        diff = real * (ls - top).exp().unsqueeze(1) - base.index_select(0, idx) * (bls - top).exp().unsqueeze(1)
+        return torch.nn.functional.normalize(diff, p=2, dim=-1, eps=1e-30)
 
     def _expression(self, struct, tensor_shapes):
         # contraction expression of a structure; path cached without the group size: the batch index is on every
@@ -532,8 +598,10 @@ class TNModel(nn.Module):
         final = (shape, used, put(rows[inverse]))
         return np.concatenate(chunks), leaves, rounds, final
 
-    def _levelwise(self, groups, schedule=None):
-        # runs the batch's schedule (_schedule; `schedule` = one planned ahead of time)
+    def _levelwise(self, groups, schedule=None, track=False, base_only=False):
+        # runs the batch's schedule (_schedule; `schedule` = one planned ahead of time). word_base: word rows are base +
+        # bank row; base_only: every word is base (text.centre's structure term). track: also return each sentence's log
+        # scale (sum of the scale_free divisors along its contraction; 0 without scale_free): true output = out * exp(.)
         device = self._bank(0).device
         idx, leaves, rounds, final = schedule if schedule is not None else self._schedule(groups)
         idx = torch.from_numpy(idx)
@@ -541,31 +609,57 @@ class TNModel(nn.Module):
             idx = idx.pin_memory().to(device, non_blocking=True)
         sl = lambda span: idx[span[0]:span[1]]
 
-        pieces = defaultdict(list)
+        pieces, scales = defaultdict(list), defaultdict(list)
         def run_take(spec):
             shape, used, span = spec
             return _Take.apply(sl(span), *[pieces[shape][pid] for pid in used])
+        def take_scale(spec):
+            shape, used, span = spec
+            src = [scales[shape][pid] for pid in used]
+            return (torch.cat(src) if len(src) > 1 else src[0]).index_select(0, sl(span))
+        wb = self._word_bank if self.word_scale is not None else None
         for b, shape, uspan, ispan in leaves:
-            if torch.is_grad_enabled():   # training: RowAdam updates exactly these rows from the leaf's gradient
-                leaf = self._bank(b).detach().index_select(0, sl(uspan)).requires_grad_()
-                self._active.append((b, sl(uspan), leaf))
+            if base_only and b == wb:
+                piece = self.extra['word_base'].expand(ispan[1] - ispan[0], -1)
             else:
-                leaf = self._bank(b).index_select(0, sl(uspan))
-            pieces[shape].append(leaf.index_select(0, sl(ispan)))   # one row per use
+                if torch.is_grad_enabled():   # training: RowAdam updates exactly these rows from the leaf's gradient
+                    leaf = self._bank(b).detach().index_select(0, sl(uspan)).requires_grad_()
+                    self._active.append((b, sl(uspan), leaf))
+                else:
+                    leaf = self._bank(b).index_select(0, sl(uspan))
+                piece = leaf.index_select(0, sl(ispan))   # one row per use
+                if b == wb:
+                    piece = piece + self.extra['word_base']
+            pieces[shape].append(piece)
+            if track:
+                scales[shape].append(piece.new_zeros(piece.shape[0]))
         for gathers, ops, out_shapes in rounds:
             operands = [[None] * n for _, n, _ in ops]
+            op_scales = [[None] * n for _, n, _ in ops] if track else None
             for spec, slots, sizes in gathers:
                 for (k, p), part in zip(slots, run_take(spec).split(sizes)):
                     operands[k][p] = part
-            results = defaultdict(list)
-            for (eq, _, out_shape), ins in zip(ops, operands):
+                if track:
+                    for (k, p), part in zip(slots, take_scale(spec).split(sizes)):
+                        op_scales[k][p] = part
+            results, res_scales = defaultdict(list), defaultdict(list)
+            for j, ((eq, _, out_shape), ins) in enumerate(zip(ops, operands)):
                 r = torch.einsum(eq, ins)
                 if self.scale_free:
-                    r = r / r.detach().abs().flatten(1).amax(dim=1).clamp_min(1e-30).view(-1, *([1] * (r.dim() - 1)))
+                    m = r.detach().abs().flatten(1).amax(dim=1).clamp_min(1e-30)
+                    r = r / m.view(-1, *([1] * (r.dim() - 1)))
                 results[out_shape].append(r)
+                if track:
+                    s = sum(op_scales[j])
+                    res_scales[out_shape].append(s + m.log() if self.scale_free else s)
             for shape in out_shapes:   # planned order: one new piece per output shape
                 rs = results[shape]
                 pieces[shape].append(torch.cat(rs) if len(rs) > 1 else rs[0])
+                if track:
+                    ss = res_scales[shape]
+                    scales[shape].append(torch.cat(ss) if len(ss) > 1 else ss[0])
+        if track:
+            return run_take(final), take_scale(final)
         return run_take(final)
 
 
