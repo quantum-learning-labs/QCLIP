@@ -7,7 +7,7 @@
 #    acceptance, contrast and variance terms, and beta = log(D_disc/D_ps) / log(a_ps) (0: no contrast loss,
 #    0.5: costs equal, 1: Theorem A's p0 scaling);
 #  - the same quantities binned by k (post-selected / discarded qubits per circuit).
-# usage: shotcost_report.py <dir with npz/json> [out.json]
+# usage: shotcost_report.py <dir[,dir...] with npz/json> [out.json]
 import glob, json, os, re, sys, collections
 import numpy as np
 from scipy.stats import norm
@@ -21,12 +21,21 @@ def var(m, ro):
     return np.maximum(1 - m * m, 1e-12) if ro == 'destructive_swap' else np.maximum(m * (1 - m), 1e-12)
 
 
-def load(d):
-    out = {}
-    for f in sorted(glob.glob(f'{d}/*.npz')):
+def load(dirs):
+    out = {}   # later directories override earlier ones (e.g. e0_n3, derived with pair indices, over e0)
+    for f in sorted(f for d in dirs.split(',') for f in glob.glob(f'{d}/*.npz')):
         meta = json.load(open(f[:-4] + '.json'))
-        out[os.path.basename(f)[:-4]] = (dict(np.load(f)), meta)
+        x = dict(np.load(f))
+        x.setdefault('idx', np.arange(len(x['m_pos'])))
+        out[os.path.basename(f)[:-4]] = (x, meta)
     return out
+
+
+def align(xa, xb):
+    # restrict two checkpoints' arrays to the dataset rows both kept (post-selection drops pairs with an empty output register)
+    common = np.intersect1d(xa['idx'], xb['idx'])
+    sel = lambda x: {k: v[np.searchsorted(x['idx'], common)] for k, v in x.items()}
+    return sel(xa), sel(xb)
 
 
 def family(ckpt_name):
@@ -86,9 +95,9 @@ def main():
         kp = ps.get((r['set'], r['text_n'], seed))
         if kp is None:
             continue
-        xd, xp = data[k][0], data[kp][0]
-        if len(xd['m_pos']) != len(xp['m_pos']):
-            print('pair count mismatch', k, kp); continue
+        xd, xp = align(data[k][0], data[kp][0])
+        if not (np.array_equal(xd['k_pos'], xp['k_pos']) and np.array_equal(xd['nq_pos'], xp['nq_pos'])):
+            print('pair alignment check failed (k/nq differ)', k, kp); continue
         both = (xd['m_pos'] > xd['m_neg']) & (xp['m_pos'] > xp['m_neg'])
         out = {'ps': kp, 'common_correct': int(both.sum())}
         for ro in READOUTS:

@@ -1,0 +1,9 @@
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_discard_n3_tl3_pw0_s0/best.pt
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_discard_n3_tl3_pw0_s1/best.pt
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_discard_n3_tl3_pw0_s2/best.pt
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_discard_n3_tl3_pw0_ws_s0/best.pt
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_discard_n3_tl3_pw0_ws_s1/best.pt
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_discard_n3_tl3_pw0_ws_s2/best.pt
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_nodiscard_n3_tl3_qlr3e-3_s0/best.pt
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_nodiscard_n3_tl3_qlr3e-3_s1/best.pt
+/cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc3_nodiscard_n3_tl3_qlr3e-3_s2/best.pt

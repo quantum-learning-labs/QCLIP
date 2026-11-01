@@ -20,7 +20,7 @@ from modules.data_pipeline.engine import DataEngine
 from modules.compilation.quantum.emul import BackendManager
 
 SWAP_SETS = {'swap_full': 'data/svo-probes/processed/swap_full.pkl', 'swap_animate': 'data/svo-probes/processed/swap_animate.pkl'}
-K = 16   # max Hamming weight stored
+K = 32   # max Hamming weight stored
 
 
 def branches(qc_txt, out_q):
@@ -39,7 +39,7 @@ def by_h(vals, hw):
     return out
 
 
-def run_one(ckpt, sets, out, limit, seed):
+def run_one(ckpt, sets, out, limit, seed, e0_out=None):
     name = ckpt.parent.name
     config, DEV, _ = setup_exp(resolve_eval_config(None, ckpt), seed=seed)
     for s, path in SWAP_SETS.items():
@@ -63,32 +63,57 @@ def run_one(ckpt, sets, out, limit, seed):
         qlimit = de.describe_einsum(text_model, c_eval, return_metrics=True)['max'][0]
         bm = BackendManager(config, qlimit)
         bm.transpile = lambda circs, **kw: circs
-        cap = []
-        bm._compute_uncompute = lambda qt, qi, oq: (cap.append((bm._strip_clbits(qt), bm._strip_clbits(qi), list(oq))), QuantumCircuit(1))[1]
-        pos, _ = bm.compile_circuits(de.get_dataset(c_eval, s), text_model, image_model, limit)
-        n = len(pos)
-        assert len(cap) == 2 * n
+        cap, cur = [], [None]
+        ds = de.get_dataset(c_eval, s)
+        class Track:   # records the dataset index being compiled, so frames can be tied to rows (some pairs are dropped)
+            def __len__(self): return len(ds)
+            def __getitem__(self, i): cur[0] = i; return ds[i]
+        def cu(qt, qi, oq):
+            if len(oq) == 0:
+                raise ValueError('empty output register')   # the original compose() fails here too: pair dropped
+            cap.append((cur[0], bm._strip_clbits(qt), bm._strip_clbits(qi), list(oq)))
+            return QuantumCircuit(1)
+        bm._compute_uncompute = cu
+        bm.compile_circuits(Track(), text_model, image_model, limit)
+        by_idx = {}
+        for c in cap:
+            by_idx.setdefault(c[0], []).append(c[1:])
+        rows = [i for i in sorted(by_idx) if len(by_idx[i]) == 2]
+        frames = [by_idx[i] for i in rows]
+        n = len(rows)
+        print(f'{name} {s}: {n} pairs from {len(ds)} rows (dropped {len(ds) - n})', flush=True)
         P, U, G, Q, KK = [np.zeros((n, 2, K + 1)) for _ in range(2)] + [np.zeros((n, K + 1)) for _ in range(2)] + [np.zeros((n, 2), int)]
         image_choice = s in ('val', 'std')
         for i in range(n):
-            (tp, ip, op), (tn, iN, on) = cap[2 * i], cap[2 * i + 1]
+            (tp, ip, op), (tn, iN, on) = frames[i]
             vp, vn = Statevector(ip).data, Statevector(iN).data
+            if image_choice and i < 3:
+                assert tp == tn and op == on, 'image choice: pos/neg text circuits differ'
+            shared = branches(tp, op) if image_choice else None   # one caption: one text state for both frames
             for j, (qt, oq, v) in enumerate(((tp, op, vp), (tn, on, vn))):
-                phi, hw, k = branches(qt, oq)
+                phi, hw, k = shared if shared is not None else branches(qt, oq)
                 P[i, j] = by_h((np.abs(phi) ** 2).sum(0), hw)
                 U[i, j] = by_h(np.abs(v.conj() @ phi) ** 2, hw)
                 KK[i, j] = k
             if image_choice:   # O = |vp><vp| - |vn><vn| on the shared text state (one caption, two images)
-                if i < 3:
-                    assert tp == tn and op == on, 'image choice: pos/neg text circuits differ'
-                phi, hw, _ = branches(tp, op)
+                phi, hw, _ = shared
                 a, b = vp.conj() @ phi, vn.conj() @ phi            # <vp|phi_b>, <vn|phi_b>
                 c = vp.conj() @ vn
                 G[i] = by_h(np.abs(a) ** 2 - np.abs(b) ** 2, hw)
                 # <phi|O^2|phi> = |a|^2 + |b|^2 - 2 Re(conj(a) c b)   (O^2 = Pp + Pn - c|vp><vn| - c*|vn><vp|)
                 Q[i] = by_h(np.abs(a) ** 2 + np.abs(b) ** 2 - 2 * np.real(np.conj(a) * c * b), hw)
-        np.savez(f, P=P, U=U, G=G, Q=Q, k=KK)
+        idx = np.array(rows)
+        np.savez(f, P=P, U=U, G=G, Q=Q, k=KK, idx=idx)
         m = (U[:, :, 0] / np.maximum(P[:, :, 0], 1e-300)) if not discard else U.sum(-1)
+        if e0_out is not None and s != 'val':   # E0-format copy (shotcost.py's fields), derived from the exact branch terms
+            a = P[:, :, 0] if not discard else np.ones_like(m)
+            nq = KK + np.array([[len(frames[i][j][2]) for j in range(2)] for i in range(n)])
+            np.savez(e0_out / f'{name}__{s}.npz', m_pos=m[:, 0], m_neg=m[:, 1], a_pos=a[:, 0], a_neg=a[:, 1], k_pos=KK[:, 0], k_neg=KK[:, 1],
+                     nq_pos=nq[:, 0], nq_neg=nq[:, 1], idx=idx)
+            json.dump({'checkpoint': str(ckpt), 'discard': discard, 'set': s, 'pairs': n, 'text_n': config['text'].get('n'),
+                       'embedding_qubits': config['embedding_qubits'], 'git': git_state(), 'derived_from': str(f),
+                       'exact_acc': float(np.mean((m[:, 0] > m[:, 1]) + 0.5 * (m[:, 0] == m[:, 1]))), 'accept_mean': float(a.mean()),
+                       'k_mean': float(KK.mean())}, open(e0_out / f'{name}__{s}.json', 'w'), indent=1, default=str)
         meta = {'checkpoint': str(ckpt), 'epoch': ck.get('epoch'), 'discard': discard, 'set': s, 'pairs': n,
                 'text_n': config['text'].get('n'), 'git': git_state(), 'exact_acc': float(np.mean((m[:, 0] > m[:, 1]) + 0.5 * (m[:, 0] == m[:, 1]))),
                 'image_choice': image_choice, 'k_mean': float(KK.mean()), 'wall_s': time.time() - t}
@@ -103,10 +128,13 @@ def main():
     p.add_argument('-l', '--limit', type=int, default=None)
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('-o', '--out', required=True)
+    p.add_argument('--e0_out', default=None, help='also write shotcost.py-format npz (m, a, k, nq, idx) for non-val sets here')
     a = p.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
+    e0 = Path(a.e0_out) if a.e0_out else None
+    if e0: e0.mkdir(parents=True, exist_ok=True)
     for c in a.checkpoints:
-        run_one(Path(c), a.sets.split(','), out, a.limit, a.seed)
+        run_one(Path(c), a.sets.split(','), out, a.limit, a.seed, e0)
     print('done', flush=True)
 
 

@@ -21,7 +21,7 @@ def costs(f, discard):
     DO = G @ w; VO = Q @ (w * w) - DO ** 2
     if not discard:   # PS on O with rejected shots charged: ratio estimator, per accepted shot var (Q0/a - (G0/a)^2), charge 1/a
         DO = G[:, 0] / a[:, 0]; VO = (Q[:, 0] / a[:, 0] - DO ** 2) / a[:, 0]
-    return {'D': D, 'cu': 2 * Vcu / np.maximum(D, 1e-300) ** 2, 'O': VO / np.maximum(DO, 1e-300) ** 2, 'ok': D > 0, 'okO': DO > 0}
+    return {'idx': b['idx'] if 'idx' in b.files else np.arange(len(D)), 'D': D, 'cu': 2 * Vcu / np.maximum(D, 1e-300) ** 2, 'O': VO / np.maximum(DO, 1e-300) ** 2, 'ok': D > 0, 'okO': DO > 0}
 
 
 ms = lambda v: f'{np.mean(v):6.2f}+-{np.std(v, ddof=1) if len(v) > 1 else 0:.2f}'
@@ -38,6 +38,9 @@ for fam in ORDER:
     for ck, disc, n, s, f in fams.get(fam, []):
         if not disc or (n, s) not in ps: continue
         cd, cp = costs(f, True), costs(ps[(n, s)], False)
+        common = np.intersect1d(cd['idx'], cp['idx'])
+        cd = {k: v[np.searchsorted(cd['idx'], common)] for k, v in cd.items()}
+        cp = {k: v[np.searchsorted(cp['idx'], common)] for k, v in cp.items()}
         both = cd['ok'] & cp['ok']
         g = lambda x: float(np.exp(np.mean(np.log(x[both]))))
         rows.append((g(cd['cu']) / g(cp['cu']), g(cd['O']) / g(cp['O']), g(cd['O']) / g(cp['cu']), g(cp['O']) / g(cp['cu']), g(cd['O']) / g(cd['cu'])))
