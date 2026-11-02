@@ -87,12 +87,13 @@ def main():
                        'geo': {k: float(np.exp(np.mean(v))) for k, v in dc.items()}}
         res['per_ckpt'][key] = row
     # paired: discard ckpt vs PS ckpt of the same seed, text_n and set
-    ps = {(r['set'], r['text_n'], re.search(r'_s(\d+)__', k + '__').group(1)): k for k, r in res['per_ckpt'].items() if not r['discard']}
+    tag = lambda k: 'sc2' if k.startswith('hp_sc2_') else 'older'   # sc2 re-trains n=2 with the xo1 seeds: pair within a sweep
+    ps = {(r['set'], r['text_n'], tag(k), re.search(r'_s(\d+)__', k + '__').group(1)): k for k, r in res['per_ckpt'].items() if not r['discard']}
     for k, r in res['per_ckpt'].items():
         if not r['discard']:
             continue
         seed = re.search(r'_s(\d+)__', k + '__').group(1)
-        kp = ps.get((r['set'], r['text_n'], seed))
+        kp = ps.get((r['set'], r['text_n'], tag(k), seed))
         if kp is None:
             continue
         xd, xp = align(data[k][0], data[kp][0])

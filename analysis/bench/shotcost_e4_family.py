@@ -7,7 +7,9 @@ import numpy as np
 NAMES = {'hp_hp2_nodiscard_tl3_qlr3e-3': 'PS m4', 'hp_hp2_discard_tl3_pw0': 'plain m4', 'hp_do1_discard_tl3_pw0_initnd': 'warm m4',
          'hp_kd1_discard_kd_ws': 'distill m4', 'hp_xo1_nodiscard_n2_tl3_qlr0.003': 'PS m8', 'hp_xo1_discard_n2_tl3_pw0': 'plain m8',
          'hp_xo1_discard_n2_tl3_pw0_ws': 'warm m8', 'hp_sc3_nodiscard_n3_tl3_qlr3e-3': 'PS m10', 'hp_sc3_discard_n3_tl3_pw0': 'plain m10',
-         'hp_sc3_discard_n3_tl3_pw0_ws': 'warm m10'}
+         'hp_sc3_discard_n3_tl3_pw0_ws': 'warm m10',
+         'hp_sc2_nodiscard_n2_tl3_qlr3e-3': 'PS m8 sc2', 'hp_sc2_discard_n2_tl3_pw0': 'plain m8 sc2',
+         'hp_sc2_discard_n2_tl3_pw0_ws': 'warm m8 sc2', 'hp_sc2_discard_n2_tl3_pw0_kd': 'distill m8 sc2'}
 ORDER = list(NAMES.values())
 d, rj = sys.argv[1], json.load(open(sys.argv[2]))
 
@@ -30,14 +32,15 @@ for f in sorted(glob.glob(f'{d}/*__std.npz')):
     ck = os.path.basename(f)[:-len('__std.npz')]
     meta = json.load(open(f[:-4] + '.json'))
     fams[NAMES.get(re.sub(r'_s\d+$', '', ck), ck)].append((ck, meta['discard'], meta['text_n'], re.search(r'_s(\d+)$', ck).group(1), f))
-ps = {(n, s): f for fam, xs in fams.items() for ck, disc, n, s, f in xs if not disc}
+ps = {(n, ('sc2' if ck.startswith('hp_sc2_') else 'older'), s): f for fam, xs in fams.items() for ck, disc, n, s, f in xs if not disc}   # within one sweep tag
 print('== paired discard/PS cost ratio (geo-mean over pairs both rank correctly, mean+-sd over seeds); <1 = discard cheaper')
 print(f"{'model':11s} seeds  {'cu/cu':>12s} {'O/O':>12s} {'disc O/ps cu':>13s}   PS: O/cu      disc: O/cu")
 for fam in ORDER:
     rows = []
     for ck, disc, n, s, f in fams.get(fam, []):
-        if not disc or (n, s) not in ps: continue
-        cd, cp = costs(f, True), costs(ps[(n, s)], False)
+        key = (n, ('sc2' if ck.startswith('hp_sc2_') else 'older'), s)
+        if not disc or key not in ps: continue
+        cd, cp = costs(f, True), costs(ps[key], False)
         common = np.intersect1d(cd['idx'], cp['idx'])
         cd = {k: v[np.searchsorted(cd['idx'], common)] for k, v in cd.items()}
         cp = {k: v[np.searchsorted(cp['idx'], common)] for k, v in cp.items()}

@@ -5,7 +5,9 @@ R = json.load(open(sys.argv[1]))
 NAMES = {'hp_hp2_nodiscard_tl3_qlr3e-3': 'PS m4', 'hp_hp2_discard_tl3_pw0': 'plain m4', 'hp_do1_discard_tl3_pw0_initnd': 'warm m4',
          'hp_kd1_discard_kd_ws': 'distill m4', 'hp_xo1_nodiscard_n2_tl3_qlr0.003': 'PS m8', 'hp_xo1_discard_n2_tl3_pw0': 'plain m8',
          'hp_xo1_discard_n2_tl3_pw0_ws': 'warm m8', 'hp_sc3_nodiscard_n3_tl3_qlr3e-3': 'PS m10', 'hp_sc3_discard_n3_tl3_pw0': 'plain m10',
-         'hp_sc3_discard_n3_tl3_pw0_ws': 'warm m10'}
+         'hp_sc3_discard_n3_tl3_pw0_ws': 'warm m10',
+         'hp_sc2_nodiscard_n2_tl3_qlr3e-3': 'PS m8 sc2', 'hp_sc2_discard_n2_tl3_pw0': 'plain m8 sc2',
+         'hp_sc2_discard_n2_tl3_pw0_ws': 'warm m8 sc2', 'hp_sc2_discard_n2_tl3_pw0_kd': 'distill m8 sc2'}
 ORDER = list(NAMES.values())
 ms = lambda v: f'{np.mean(v):7.3f}+-{np.std(v, ddof=1) if len(v) > 1 else 0:.3f}'
 def fmt_shots(v, n):
