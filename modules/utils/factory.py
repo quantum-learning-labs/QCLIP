@@ -39,7 +39,8 @@ def build_experiment(config, device):
         compiler = config['text']
         obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_dim'],
                  'sem': compiler.get('word_dim', 128)}
-        mps_proc = MPS(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'], root_bond=config['text'].get('root_bond_dim'))
+        mps_proc = MPS(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'], root_bond=config['text'].get('root_bond_dim'),
+                       out_bond=config['text'].get('out_bond_dim'), share_out=config['text'].get('share_out', False))
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc, decouple=compiler.get('decouple', False),
                             orient=compiler.get('init', 'glorot') == 'norm')
         
