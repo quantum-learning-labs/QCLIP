@@ -14,7 +14,8 @@ class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
     def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False,
-                 head: str = 'affine', hybrid: bool = False, word_base: float = None, centre: bool = False):
+                 head: str = 'affine', hybrid: bool = False, word_base: float = None, centre: bool = False,
+                 mix_fixed: float = None):
         super().__init__()
         # scale_free (text.scale_free, levelwise only): divide every intermediate of the contraction by its (detached) max |entry|,
         # per sentence. The network is multilinear, so this only rescales each sentence vector by a positive number, which
@@ -37,6 +38,11 @@ class TNModel(nn.Module):
         if centre and word_base is None:
             raise ValueError("text.centre needs text.word_base")
         self.hybrid, self.word_scale, self.centre = hybrid, word_base, centre
+        # mix_fixed (text.mix_fixed, hybrid only): mix held at this value, not learned (step 4c: a learned mix grows 1 -> 5.9
+        # and the lexical path drowns the TN)
+        if mix_fixed is not None and not hybrid:
+            raise ValueError("text.mix_fixed needs text.compose: hybrid")
+        self.mix_fixed = mix_fixed
         self.extra = None   # nn.ParameterDict of the step-4c parameters ('word_base', 'mix'), built with the banks
         self.capture = None   # a list: every forward appends its pre-LayerNorm outputs (analysis tools)
         # init 'glorot': step-1 scheme (shape only). 'norm': std 1/sqrt(dim of the leg towards the sentence output) (the
@@ -188,7 +194,8 @@ class TNModel(nn.Module):
                         self._bank(self._word_bank).mul_(self.word_scale)
                 extra['word_base'] = nn.Parameter(torch.randn(dim) / math.sqrt(dim) if init else torch.empty(dim))
             if self.hybrid:
-                extra['mix'] = nn.Parameter(torch.ones(()))
+                extra['mix'] = (nn.Parameter(torch.ones(())) if self.mix_fixed is None
+                                else nn.Parameter(torch.tensor(float(self.mix_fixed)), requires_grad=False))
             self.extra = nn.ParameterDict(extra)
 
     def _save_to_state_dict(self, destination, prefix, keep_vars):

@@ -55,7 +55,7 @@ def build_experiment(config, device):
                              init=config['text'].get('init', 'glorot'), scale_free=config['text'].get('scale_free', False),
                              bow=config['text'].get('arch') == 'bow', head=config['text'].get('head', 'affine'),
                              hybrid=config['text'].get('compose', 'tn') == 'hybrid', word_base=config['text'].get('word_base'),
-                             centre=config['text'].get('centre', False)).to(device)
+                             centre=config['text'].get('centre', False), mix_fixed=config['text'].get('mix_fixed')).to(device)
         loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
         
     elif model_type == "vqc":
