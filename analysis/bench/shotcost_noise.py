@@ -17,6 +17,101 @@ from modules.utils.factory import build_experiment
 from modules.utils.general import setup_exp, CheckpointManager, resolve_eval_config, git_state
 from modules.data_pipeline.engine import DataEngine
 from modules.compilation.quantum.emul import BackendManager
+from qiskit.circuit import Delay
+from qiskit.circuit.library import XGate
+from qiskit.converters import circuit_to_dag
+from qiskit.transpiler import PassManager
+from qiskit.transpiler.passes import ALAPScheduleAnalysis, PadDelay, PadDynamicalDecoupling
+from qiskit_aer.noise.passes import RelaxationNoisePass
+
+
+def two_colour(cmap, n):
+    col, adj = {}, {q: set() for q in range(n)}
+    for a, b in cmap.get_edges():
+        if a < n and b < n: adj[a].add(b); adj[b].add(a)
+    for s0 in range(n):
+        if s0 in col: continue
+        col[s0], stack = 0, [s0]
+        while stack:
+            q = stack.pop()
+            for r in adj[q]:
+                if r not in col: col[r] = 1 - col[q]; stack.append(r)
+                elif col[r] == col[q]: raise ValueError('coupling map not bipartite')
+    return col, adj
+
+
+def honest_variant(nb, circs, dd, det_khz, zz_khz, seed, force_rebuild=False):
+    # Same layout/routing as the honest profile (idle off during transpile), then optional staggered DD (colour 0: X-X,
+    # colour 1: X-X-X-X; orthogonal sign patterns refocus detuning and ZZ between neighbours), then a time-segment rebuild
+    # adding coherent idle errors (fixed per-qubit detuning; static ZZ on coupled pairs idle at the same time) as noise-free
+    # unitaries, then the honest Markovian idle channel (T1/T2 relaxation on every delay).
+    idle = nb.honest['idle']; nb.honest['idle'] = False
+    tc = nb.transpile(circs, batch_size=256, optimization_level=1)
+    nb.honest['idle'] = idle
+    tgt, dt = nb.hardware_profile.target, nb.hardware_profile.dt
+    nphys = tc[0].num_qubits
+    col, adj = two_colour(nb.coupling_map, nphys)
+    rng = np.random.default_rng(seed)
+    det = rng.normal(0.0, det_khz * 1e3, nphys)                # Hz, fixed per physical qubit
+    qp = tgt.qubit_properties
+    t1s = [q.t1 if q and q.t1 else float('inf') for q in qp]
+    t2s = [min(q.t2, 1.99 * q.t1) if q and q.t1 and q.t2 else float('inf') for q in qp]
+    relax = PassManager([RelaxationNoisePass(t1s, t2s, dt=dt, op_types=[Delay])])
+    out = []
+    for c in tc:
+        if dd:
+            c = PassManager([ALAPScheduleAnalysis(target=tgt), PadDynamicalDecoupling(target=tgt, dd_sequence=[XGate(), XGate()],
+                             qubits=[q for q in range(nphys) if col[q] == 0])]).run(c)
+            c = PassManager([ALAPScheduleAnalysis(target=tgt), PadDynamicalDecoupling(target=tgt, dd_sequence=[XGate()] * 4,
+                             qubits=[q for q in range(nphys) if col[q] == 1])]).run(c)
+        c = PassManager([ALAPScheduleAnalysis(target=tgt), PadDelay(target=tgt)]).run(c)
+        if det_khz or zz_khz or force_rebuild:
+            c = rebuild_coherent(c, tgt, dt, det, adj, zz_khz * 1e3)
+        out.append(relax.run(c))
+    return out
+
+
+def rebuild_coherent(c, tgt, dt, det, adj, zz_hz):
+    dag = circuit_to_dag(c)
+    sa = ALAPScheduleAnalysis(target=tgt); sa.run(dag)
+    st = sa.property_set['node_start_time']
+    qi = {q: i for i, q in enumerate(c.qubits)}
+    nodes = list(dag.topological_op_nodes())
+    dur = lambda nd: nd.op.duration if nd.op.name == 'delay' else (tgt.durations().get(nd.op.name, [qi[q] for q in nd.qargs], unit='dt') if nd.op.name not in ('barrier',) else 0)
+    order = sorted(range(len(nodes)), key=lambda k: (st[nodes[k]], k))
+    idle = {q: [] for q in range(c.num_qubits)}
+    for nd in nodes:
+        if nd.op.name == 'delay':
+            q = qi[nd.qargs[0]]; idle[q].append((st[nd], st[nd] + nd.op.duration))
+    bounds = sorted({0} | {st[nd] for nd in nodes} | {st[nd] + int(dur(nd) or 0) for nd in nodes})
+    for q in idle: idle[q].sort()
+    ptr = {q: 0 for q in idle}
+    new = QuantumCircuit(*c.qregs, *c.cregs)
+    k = 0
+    for b0, b1 in zip(bounds, bounds[1:] + [None]):
+        while k < len(order) and st[nodes[order[k]]] == b0:
+            nd = nodes[order[k]]; k += 1
+            if nd.op.name != 'delay':
+                new.append(nd.op, nd.qargs, nd.cargs)
+        if b1 is None: break
+        seg = b1 - b0
+        I = []
+        for q in range(c.num_qubits):   # idle intervals per qubit are time-ordered: advance a pointer
+            iv = idle[q]
+            while ptr[q] < len(iv) and iv[ptr[q]][1] <= b0: ptr[q] += 1
+            if ptr[q] < len(iv) and iv[ptr[q]][0] <= b0 and b1 <= iv[ptr[q]][1]: I.append(q)
+        for q in I:
+            new.delay(seg, q, unit='dt')
+            ph = 2 * np.pi * det[q] * seg * dt
+            new.unitary(np.diag([np.exp(-0.5j * ph), np.exp(0.5j * ph)]), [q], label='coh_det')
+        if zz_hz:
+            Is = set(I)
+            for q in I:
+                for r in adj.get(q, ()):
+                    if r > q and r in Is:   # static ZZ: conditional phase 2 pi zz t, RZZ(theta) with theta = pi zz t... applied as diag
+                        th = np.pi * zz_hz * seg * dt
+                        new.unitary(np.diag(np.exp(-0.5j * th * np.array([1, -1, -1, 1]))), [q, r], label='coh_zz')
+    return new
 
 NOISY = {'ibm_kingston': ('backend', 'FakeKingston'), 'honest_miami': ('honest', 'FakeMiami'), 'ibm_miami': ('backend', 'FakeMiami')}
 K = 32
@@ -65,7 +160,13 @@ def main():
     ap.add_argument('--qmax', type=int, default=12)
     ap.add_argument('--shots', type=int, default=2 ** 20)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--dd', action='store_true', help='honest only: staggered X-X / X-X-X-X dynamical decoupling')
+    ap.add_argument('--det_khz', type=float, default=0.0, help='honest only: coherent idle detuning, per-qubit N(0, sigma) kHz')
+    ap.add_argument('--zz_khz', type=float, default=0.0, help='honest only: static ZZ (kHz) between coupled idle qubits')
+    ap.add_argument('--rebuild', action='store_true', help='honest only: force the variant pipeline (check: equals plain honest)')
     a = ap.parse_args()
+    variant = a.dd or a.det_khz or a.zz_khz or a.rebuild
+    suffix = ('+dd' if a.dd else '') + (f'+det{a.det_khz:g}' if a.det_khz else '') + (f'+zz{a.zz_khz:g}' if a.zz_khz else '') + ('+rb' if a.rebuild and not (a.dd or a.det_khz or a.zz_khz) else '')
     ckpt = Path(a.checkpoint); name = ckpt.parent.name
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     config, DEV, _ = setup_exp(resolve_eval_config(None, ckpt), seed=a.seed)
@@ -112,7 +213,7 @@ def main():
         vals = np.zeros(2 ** len(oq)); vals[0], vals[1] = lp, lm
         meta_c.append((n, oq, vals))
     for prof in a.profiles.split(','):
-        f = out / f'{name}__{prof}.npz'
+        f = out / f'{name}__{prof}{suffix if prof == "honest_miami" else ""}.npz'
         if f.exists(): print('exists, skip', f, flush=True); continue
         t0 = time.time()
         if prof == 'ideal':
@@ -126,7 +227,10 @@ def main():
             cfg['emulate'].update(noise=True, noise_profile=profile, backend='density_matrix',
                                   aer_options={'batched_shots_gpu': False, 'shot_branching_enable': False})
             nb = BackendManager(cfg, a.qmax, hardware_profile=getattr(fake_provider, cls)())
-            tc = nb.transpile(circs, batch_size=256, optimization_level=1)
+            if variant and prof == 'honest_miami':
+                tc = honest_variant(nb, circs, a.dd, a.det_khz, a.zz_khz, a.seed, a.rebuild)
+            else:
+                tc = nb.transpile(circs, batch_size=256, optimization_level=1)
             nb.backend.set_options(seed_simulator=1000 + a.seed)
             probs = []
             for j in range(0, len(tc), 128):
@@ -143,7 +247,8 @@ def main():
             G[r], Q[r] = stats(probs[3 * r + 2], oq, n, vals)
         np.savez(f, P=P, U=U, G=G, Q=Q, k=KK, idx=np.array(rows))
         m = (U[:, :, 0] / np.maximum(P[:, :, 0], 1e-300)) if not discard else U.sum(-1)
-        meta = {'checkpoint': str(ckpt), 'discard': discard, 'set': 'std', 'profile': prof, 'pairs': N, 'qmax': a.qmax, 'shots': a.shots,
+        meta = {'checkpoint': str(ckpt), 'discard': discard, 'set': 'std', 'profile': prof + (suffix if prof == 'honest_miami' else ''),
+                'dd': a.dd, 'det_khz': a.det_khz, 'zz_khz': a.zz_khz, 'pairs': N, 'qmax': a.qmax, 'shots': a.shots,
                 'text_n': config['text'].get('n'), 'git': git_state(), 'wall_s': time.time() - t0,
                 'acc_cu': float(np.mean(m[:, 0] > m[:, 1])), 'acc_O_native': float(np.mean((G.sum(-1) if discard else G[:, 0]) > 0))}
         json.dump(meta, open(f.with_suffix('.json'), 'w'), indent=1, default=str)
