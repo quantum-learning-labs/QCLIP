@@ -1,0 +1,280 @@
+<meta charset="utf-8">
+<title>Readout Cost Figures</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of figure panels; each panel = question, controls, chart, caption, table view. */
+:root {
+  --bg: #f6f7f9; --surface: #fcfcfb; --fg: #14171c; --fg2: #4b5260; --muted: #7a8190; --line: #dfe3ea; --grid: #eceff4;
+  --chip: #e9edf3; --chip-on: #14171c; --chip-on-fg: #f6f7f9; --accent: #2a78d6;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s7: #6250d6;
+  --q1: #9ec5f4; --q2: #5598e7; --q3: #1c5cab; --q4: #0d366b;
+  --display: "Newsreader", "Iowan Old Style", Georgia, serif; --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121418; --surface: #1a1a19; --fg: #eef0f3; --fg2: #c0c5cf; --muted: #8b92a0; --line: #2c313a; --grid: #23272e;
+  --chip: #242931; --chip-on: #eef0f3; --chip-on-fg: #121418; --accent: #3987e5;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s7: #9085e9;
+  --q1: #184f95; --q2: #2a78d6; --q3: #6da7ec; --q4: #b7d3f6; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121418; --surface: #1a1a19; --fg: #eef0f3; --fg2: #c0c5cf; --muted: #8b92a0; --line: #2c313a; --grid: #23272e;
+  --chip: #242931; --chip-on: #eef0f3; --chip-on-fg: #121418; --accent: #3987e5;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s7: #9085e9;
+  --q1: #184f95; --q2: #2a78d6; --q3: #6da7ec; --q4: #b7d3f6; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 980px; margin: 0 auto; padding-block: 28px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font: 500 12px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font: 600 clamp(28px, 4.4vw, 40px)/1.1 var(--display); margin: 0; text-wrap: balance; }
+h2 { font: 600 24px/1.2 var(--display); margin: 0; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; color: var(--fg2); }
+.lede { font-size: 16px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 18px; font: 400 13px/1.4 var(--mono); color: var(--fg2); }
+.facts b { color: var(--fg); font-weight: 500; }
+section.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding-block: 20px; padding-inline: clamp(14px, 3vw, 24px); display: grid; gap: 14px; min-width: 0; }
+.fig-head { display: grid; gap: 6px; }
+.tag { font: 500 12px/1 var(--mono); color: var(--accent); letter-spacing: .04em; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.group > span { font: 500 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-right: 2px; }
+button.chip { font: 500 13px/1 var(--body); color: var(--fg); background: var(--chip); border: 1px solid transparent; border-radius: 999px; padding: 7px 12px; cursor: pointer; }
+button.chip[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-fg); }
+button.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chart { position: relative; height: 340px; min-width: 0; }
+.chart.short { height: 300px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--fg2); }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.legend i.dash { background: none !important; border-top: 3px dashed; height: 0; }
+.cap { font-size: 13.5px; color: var(--fg2); max-width: 78ch; }
+.cap b { color: var(--fg); font-weight: 600; }
+.pending { font: 500 12px/1.4 var(--mono); color: var(--muted); border-left: 2px solid var(--line); padding-left: 10px; }
+details { font-size: 13px; }
+summary { cursor: pointer; color: var(--fg2); font-weight: 500; }
+.tbl { overflow-x: auto; margin-top: 8px; }
+table { border-collapse: collapse; font: 400 12.5px/1.4 var(--mono); font-variant-numeric: tabular-nums; min-width: 100%; }
+th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 500; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+.two > div { min-width: 0; display: grid; gap: 10px; }
+h3 { font: 600 15px/1.3 var(--body); margin: 0; }
+footer { font-size: 12.5px; color: var(--muted); display: grid; gap: 6px; }
+footer code { font-family: var(--mono); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">qclip · SVO-probes image choice · discard vs post-selection</div>
+  <h1>Readout cost figures</h1>
+  <p class="lede">Accuracy against circuit size, two-qubit gate count, energy per decision and dynamic decoupling, for the post-selection (PS) model and three discard models.</p>
+  <div class="facts" id="facts"></div>
+</header>
+
+<section class="fig" id="f1">
+  <div class="fig-head"><div class="tag">Figure 1</div><h2>Qubits against accuracy</h2>
+  <p>Text-register qubits per circuit grow with the noun-wire size n (n=1: 7, n=2: 10, n=3: 13). Accuracy is exact (unlimited shots) or the expected accuracy at a fixed shot budget per decision, mean over seeds.</p></div>
+  <div class="controls">
+    <div class="group" data-ctl="f1m"><span>Metric</span><button class="chip" data-v="exact" aria-pressed="true">Exact</button><button class="chip" data-v="256">256 shots</button><button class="chip" data-v="1024">1024 shots</button><button class="chip" data-v="4096">4096 shots</button></div>
+    <div class="group" data-ctl="f1r"><span>Readout</span><button class="chip" data-v="cu" aria-pressed="true">Compute-uncompute</button><button class="chip" data-v="O">Optimal (O)</button></div>
+  </div>
+  <div class="legend" id="lg1"></div>
+  <div class="chart"><canvas id="c1" aria-label="Accuracy against text-register qubits"></canvas></div>
+  <p class="cap" id="cap1"></p>
+  <div class="two">
+    <div><h3>Under device noise (300 test pairs, 2<sup>20</sup> shots per circuit)</h3>
+      <div class="legend" id="lg1b"></div>
+      <div class="chart short"><canvas id="c1b" aria-label="Accuracy under noise profiles"></canvas></div></div>
+    <div><h3>Within each size, by circuit qubits (exact, pooled seeds)</h3>
+      <div class="legend" id="lg1c"></div>
+      <div class="chart short"><canvas id="c1c" aria-label="Accuracy by per-pair qubits"></canvas></div></div>
+  </div>
+  <details><summary>Table view</summary><div class="tbl" id="t1"></div></details>
+</section>
+
+<section class="fig" id="f2">
+  <div class="fig-head"><div class="tag">Figure 2</div><h2>Two-qubit gates against accuracy</h2>
+  <p>Pairs binned by the logical CNOT count of their compute-uncompute circuit (basis rz, sx, x, cx). Gate counts depend on the sentence, not the trained angles, so one count serves every model of a size.</p></div>
+  <div class="controls">
+    <div class="group" data-ctl="f2n"><span>Size</span><button class="chip" data-v="1" aria-pressed="true">n=1</button><button class="chip" data-v="2">n=2</button><button class="chip" data-v="3">n=3</button></div>
+    <div class="group" data-ctl="f2m"><span>Metric</span><button class="chip" data-v="exact" aria-pressed="true">Exact</button><button class="chip" data-v="cu@1024">1024 shots</button></div>
+  </div>
+  <div class="legend" id="lg2"></div>
+  <div class="chart"><canvas id="c2" aria-label="Accuracy against logical CNOT count"></canvas></div>
+  <h3>Under noise, by Kingston-native two-qubit gates (seed-0 models, 300 test pairs, many shots)</h3>
+  <div class="legend" id="lg2b"></div>
+  <div class="chart short"><canvas id="c2b" aria-label="Noisy accuracy against native two-qubit gates"></canvas></div>
+  <p class="cap" id="cap2"></p>
+  <details><summary>Table view</summary><div class="tbl" id="t2"></div></details>
+</section>
+
+<section class="fig" id="f3">
+  <div class="fig-head"><div class="tag">Figure 3</div><h2>Energy per decision against qubits</h2>
+  <p>QPU energy = (shots to the accuracy target × time per shot + fixed per-circuit overhead) × machine power, with time per shot from transpiled circuits (Kingston schedule; IonQ native gates run one after another). GPU: exact classical simulation of the same decision, measured with NVML.</p></div>
+  <div class="controls">
+    <div class="group" data-ctl="f3t"><span>Target</span><button class="chip" data-v="swap_full" aria-pressed="true">swap_full 0.80</button><button class="chip" data-v="std">test std 0.75</button></div>
+    <div class="group" data-ctl="f3o"><span>QPU cost</span><button class="chip" data-v="all" aria-pressed="true">Shots + overhead</button><button class="chip" data-v="shots">Shots only</button></div>
+  </div>
+  <div class="legend" id="lg3"></div>
+  <div class="chart"><canvas id="c3" aria-label="Energy per decision, log scale"></canvas></div>
+  <p class="pending" id="pend3"></p>
+  <p class="cap" id="cap3"></p>
+  <details><summary>Table view</summary><div class="tbl" id="t3"></div></details>
+</section>
+
+<section class="fig" id="f4">
+  <div class="fig-head"><div class="tag">Figure 4</div><h2>Dynamic decoupling</h2>
+  <p>Honest noise profile (pessimistic device model) with staggered X-X / X-X-X-X decoupling on the two colours of the coupling graph, with and without a coherent idle error (per-qubit detuning σ = 10 kHz and 20 kHz static ZZ between idle neighbours). n=2 seed-0 models, 300 test pairs.</p></div>
+  <div class="controls">
+    <div class="group" data-ctl="f4m"><span>Metric</span><button class="chip" data-v="acc" aria-pressed="true">Many shots</button><button class="chip" data-v="@1024">1024 shots</button></div>
+    <div class="group" data-ctl="f4r"><span>Readout</span><button class="chip" data-v="cu" aria-pressed="true">Compute-uncompute</button><button class="chip" data-v="O">Optimal (O)</button></div>
+  </div>
+  <div class="legend" id="lg4"></div>
+  <div class="chart short"><canvas id="c4" aria-label="Accuracy by decoupling arm"></canvas></div>
+  <p class="pending" id="pend4"></p>
+  <p class="cap" id="cap4"></p>
+  <details><summary>Table view</summary><div class="tbl" id="t4"></div></details>
+</section>
+
+<footer>
+  <div>Sources: <code>results/shotcost/viz/viz_data.json</code> (branch <code>shotcost</code>, quantum-learning-labs/QCLIP), built by <code>analysis/bench/viz_data.py</code> from the exact branch terms (E4), the noise runs (E6/V4), gate counts (V2) and device statistics (V3).</div>
+  <div>Energy constants: IBM 25 kW, 250 µs repetition delay, 2 s job overhead over 190 circuits (public figures, assumed); IonQ 5 kW, 1.5 ms per shot, 10 s per circuit, gates in series (Knitter et al. 2026, arXiv 2605.02798). CLIP ViT-B/32: 0.36 J per decision (RTX 3090 Ti, NVML).</div>
+</footer>
+</div>
+
+<script type="application/json" id="viz-data">/*DATA*/</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const METH = { PS: 'Post-selection', plain: 'Discard, plain', warm: 'Discard, warm start', distill: 'Discard, distilled' };
+const MSLOT = { PS: '--s1', plain: '--s2', warm: '--s3', distill: '--s4' };
+const PROF = [['ideal', 'Noiseless'], ['ibm_kingston', 'Kingston'], ['honest_miami', 'Honest']];
+const ARMS = [['honest_miami', 'Honest'], ['honest_miami+dd', '+ DD'], ['honest_miami+det10+zz20', '+ coherent idle'], ['honest_miami+dd+det10+zz20', '+ coherent idle + DD']];
+const MODEL = ck => ck.startsWith('hp_do1') ? ['warm', 1] : ck.includes('nodiscard') ? ['PS', 2] : ck.includes('_ws_') ? ['warm', 2] : ['plain', 2];
+const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const state = { f1m: 'exact', f1r: 'cu', f2n: '1', f2m: 'exact', f3t: 'swap_full', f3o: 'all', f4m: 'acc', f4r: 'cu' };
+const charts = {};
+let D = null;
+const pct = v => v == null ? '–' : (100 * v).toFixed(1) + '%';
+const num = v => v == null ? '–' : v >= 1e4 ? v.toExponential(2) : v >= 100 ? Math.round(v).toString() : v.toFixed(v >= 10 ? 1 : 2);
+
+function baseOpts(yTitle, opts = {}) {
+  const fg2 = tok('--fg2'), grid = tok('--grid'), muted = tok('--muted');
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: opts.mode || 'nearest', intersect: false },
+    plugins: { legend: { display: false }, tooltip: { backgroundColor: tok('--surface'), titleColor: tok('--fg'), bodyColor: fg2, borderColor: tok('--line'), borderWidth: 1, padding: 10, callbacks: opts.tt || {} } },
+    scales: {
+      x: { type: opts.xType || 'category', title: { display: !!opts.xTitle, text: opts.xTitle, color: muted }, grid: { color: grid, drawTicks: false }, ticks: { color: fg2, padding: 6 }, border: { color: tok('--line') }, ...(opts.x || {}) },
+      y: { type: opts.yType || 'linear', title: { display: true, text: yTitle, color: muted }, grid: { color: grid, drawTicks: false }, ticks: { color: fg2, padding: 6, callback: opts.yFmt || (v => v) }, border: { display: false }, ...(opts.y || {}) }
+    }
+  };
+}
+function draw(id, cfg) { if (charts[id]) charts[id].destroy(); charts[id] = new Chart(document.getElementById(id), cfg); }
+function legend(id, items) { document.getElementById(id).innerHTML = items.map(([l, c, dash]) => `<span><i class="${dash ? 'dash' : ''}" style="${dash ? 'border-color' : 'background'}:${c}"></i>${l}</span>`).join(''); }
+function table(id, head, rows) { document.getElementById(id).innerHTML = `<table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }
+const line = (label, color, data, extra = {}) => ({ label, data, borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, pointBorderColor: tok('--surface'), pointBorderWidth: 2, tension: 0, ...extra });
+
+function fig1() {
+  const key = state.f1m === 'exact' ? 'exact' : `${state.f1r}@${state.f1m}`;
+  const sizes = [1, 2, 3], labels = sizes.map(n => { const r = D.v1.find(x => x.n === n); return `${Math.round(r.nq)} qubits (n=${n})`; });
+  const ds = Object.keys(METH).map(m => line(METH[m], tok(MSLOT[m]), sizes.map(n => { const r = D.v1.find(x => x.n === n && x.method === m); return r ? 100 * r[key] : null; }), { spanGaps: false, _m: m }));
+  legend('lg1', Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]));
+  draw('c1', { type: 'line', data: { labels, datasets: ds }, options: baseOpts('Accuracy (%)', { mode: 'index', yFmt: v => v + '%', tt: { label: c => { const n = sizes[c.dataIndex], r = D.v1.find(x => x.n === n && x.method === c.dataset._m); return r ? `${c.dataset.label}: ${pct(r[key])} ± ${(100 * r[key + '_sd']).toFixed(1)} (${r.seeds} seeds)` : ''; } } }) });
+  const ps3 = D.v1.find(x => x.n === 3 && x.method === 'PS'), pl3 = D.v1.find(x => x.n === 3 && x.method === 'plain');
+  document.getElementById('cap1').innerHTML = `Exact accuracy falls with size for every model. At a fixed budget post-selection falls faster: at n=3 and 1024 shots per decision it scores <b>${pct(ps3['cu@1024'])}</b> against <b>${pct(pl3['cu@1024'])}</b> for plain discard, the reverse of the exact ranking, because post-selection keeps only ~0.5% of its shots at that size.`;
+  // 1b noisy
+  const ro = state.f1r, models = [['warm', 1], ['PS', 2], ['plain', 2], ['warm', 2]];
+  const qcol = ['--q1', '--q2', '--q4'].map(tok);
+  const nb = PROF.map(([p, pl], i) => ({ label: pl, data: models.map(([m, n]) => { const r = D.noisy.find(x => x.profile === p && MODEL(x.ckpt)[0] === m && MODEL(x.ckpt)[1] === n); return r ? 100 * r[`${ro}_acc`] : null; }), backgroundColor: qcol[i], borderColor: tok('--surface'), borderWidth: 2, borderRadius: 4, borderSkipped: 'bottom' }));
+  legend('lg1b', PROF.map(([, pl], i) => [pl, qcol[i]]));
+  draw('c1b', { type: 'bar', data: { labels: models.map(([m, n]) => [`n=${n}`, METH[m].replace('Discard, ', '')]), datasets: nb }, options: baseOpts('Accuracy (%)', { mode: 'index', yFmt: v => v + '%', y: { min: 50, max: 90 }, tt: { label: c => `${c.dataset.label}: ${c.raw == null ? 'pending' : c.raw.toFixed(1) + '%'}` } }) });
+  // 1c bins
+  const bins = D.v1_bins.filter(b => b.method === 'PS' || b.method === 'warm');
+  const nqs = [...new Set(bins.map(b => b.nq))].sort((a, b) => a - b);
+  const cd = [];
+  for (const m of ['PS', 'warm']) for (const n of [1, 2, 3]) {
+    const pts = nqs.map(q => { const b = bins.find(x => x.method === m && x.n === n && x.nq === q); return b ? 100 * b.exact : null; });
+    if (pts.some(v => v != null)) cd.push(line(`${METH[m]}, n=${n}`, tok(MSLOT[m]), pts, { borderDash: n === 1 ? [] : n === 2 ? [6, 4] : [2, 3], spanGaps: true, _n: n, _m: m }));
+  }
+  legend('lg1c', [[METH.PS, tok('--s1')], [METH.warm, tok('--s3')], ['n=1 solid · n=2 dashed · n=3 dotted', tok('--muted')]]);
+  draw('c1c', { type: 'line', data: { labels: nqs.map(q => q + ''), datasets: cd }, options: baseOpts('Exact accuracy (%)', { xTitle: 'Text-register qubits of the pair', yFmt: v => v + '%', tt: { label: c => { const b = bins.find(x => x.method === c.dataset._m && x.n === c.dataset._n && x.nq === nqs[c.dataIndex]); return b ? `${c.dataset.label}: ${pct(b.exact)} (${b.pairs} pairs)` : ''; } } }) });
+  table('t1', ['size', 'model', 'seeds', 'qubits', 'exact', 'CU@256', 'CU@1024', 'CU@4096', 'O@256', 'O@1024', 'O@4096'],
+    D.v1.map(r => [`n=${r.n}`, METH[r.method], r.seeds, Math.round(r.nq), pct(r.exact), pct(r['cu@256']), pct(r['cu@1024']), pct(r['cu@4096']), pct(r['O@256']), pct(r['O@1024']), pct(r['O@4096'])]));
+}
+
+function fig2() {
+  const n = +state.f2n, key = state.f2m;
+  const rows = D.v2.filter(r => r.n === n);
+  const xs = [...new Set(rows.map(r => r.cx_lo))].sort((a, b) => a - b);
+  const ds = Object.keys(METH).filter(m => rows.some(r => r.method === m)).map(m => line(METH[m], tok(MSLOT[m]), xs.map(x => { const r = rows.find(q => q.method === m && q.cx_lo === x); return r ? 100 * r[key] : null; }), { spanGaps: true, _m: m }));
+  legend('lg2', ds.map(d => [d.label, d.borderColor]));
+  draw('c2', { type: 'line', data: { labels: xs.map(x => `${x}–${x + 9}`), datasets: ds }, options: baseOpts('Accuracy (%)', { mode: 'index', xTitle: 'Logical CNOTs per compute-uncompute circuit', yFmt: v => v + '%', tt: { label: c => { const r = rows.find(q => q.method === c.dataset._m && q.cx_lo === xs[c.dataIndex]); return r ? `${c.dataset.label}: ${pct(r[key])} (${r.pairs} pairs)` : ''; } } }) });
+  // noisy runs at their mean native 2q count (counts vary across sizes, barely within one); Kingston solid, honest dashed
+  const nd = [];
+  for (const m of ['PS', 'plain', 'warm']) for (const p of ['ideal', 'ibm_kingston', 'honest_miami']) {
+    const pts = D.noisy.filter(r => r.profile === p && MODEL(r.ckpt)[0] === m && r.nat2q_mean != null).sort((a, b) => a.nat2q_mean - b.nat2q_mean)
+      .map(r => ({ x: r.nat2q_mean, y: 100 * r.cu_acc, _r: r }));
+    const lab = { ideal: 'noiseless', ibm_kingston: 'Kingston', honest_miami: 'honest' }[p];
+    if (pts.length) nd.push(line(`${METH[m]}, ${lab}`, tok(MSLOT[m]), pts, { borderDash: p === 'honest_miami' ? [6, 4] : p === 'ideal' ? [1, 3] : [], pointStyle: p === 'honest_miami' ? 'rectRot' : 'circle' }));
+  }
+  legend('lg2b', [[METH.PS, tok('--s1')], [METH.plain, tok('--s2')], [METH.warm, tok('--s3')], ['noiseless dotted · Kingston solid · honest dashed', tok('--muted')]]);
+  draw('c2b', { type: 'line', data: { datasets: nd }, options: baseOpts('Accuracy, many shots (%)', { xType: 'linear', xTitle: 'Kingston-native two-qubit gates per circuit (mean over the run\'s pairs)', yFmt: v => v + '%', y: { min: 60, max: 90 },
+    tt: { label: c => `${c.dataset.label}: ${c.raw.y.toFixed(1)}% at ${Math.round(c.raw.x)} gates (n=${c.raw._r.text_n})` } }) });
+  document.getElementById('cap2').innerHTML = `Without noise, accuracy changes little with the CNOT count inside a size. Under noise the gate count matters across sizes: warm-start discard keeps 85.0% under the honest profile at n=1 (about 110 native two-qubit gates) but drops to 67.3% at n=2 (about 179), while post-selection at n=2 keeps 79.7%. Discard's smaller margins make it more sensitive to gate errors. Post-selection at n=1 under noise is still pending.`;
+  table('t2', ['size', 'model', 'CNOT bin', 'pairs', 'exact', '1024 shots'], D.v2.map(r => [`n=${r.n}`, METH[r.method], `${r.cx_lo}–${r.cx_lo + 9}`, r.pairs, pct(r.exact), pct(r['cu@1024'])]));
+}
+
+function fig3() {
+  const rows = D.v3_qpu.filter(r => r.set === state.f3t), sh = state.f3o === 'shots';
+  const sizes = [1, 2, 3], xq = n => { const r = D.v1.find(x => x.n === n); return r ? r.nq : null; };
+  const ds = [];
+  for (const m of ['PS', 'warm']) for (const [plat, lab, dash] of [['ibm', 'IBM', []], ['ionq', 'IonQ', [6, 4]]]) {
+    const pts = sizes.map(n => rows.find(r => r.n === n && r.method === m)).filter(Boolean).map(r => ({ x: r.nq, y: r[sh ? `${plat}_J_shots_only` : `${plat}_J`], _r: r }));
+    if (pts.length) ds.push(line(`${METH[m]}, ${lab}`, tok(MSLOT[m]), pts, { borderDash: dash }));
+  }
+  const g = D.v3_gpu_models || [], gs = D.v3_gpu_scaling || [];
+  if (g.length) ds.push(line('GPU, exact simulation (our models)', tok('--s7'), g.map(r => ({ x: r.nq_mean, y: r.J_gross_per_decision, _g: r }))));
+  if (gs.length) ds.push(line('GPU, scaling probe (per circuit)', tok('--s7'), gs.map(r => ({ x: r.n, y: Math.max(r.J_gross / r.circuits, 1e-4), _s: r })), { borderDash: [2, 3], pointRadius: 3 }));
+  const xmax = gs.length ? Math.max(...gs.map(r => r.n)) + 1 : 14;
+  ds.push(line('CLIP ViT-B/32 (GPU)', tok('--muted'), [{ x: 6, y: D.notes.clip_J_per_decision }, { x: xmax, y: D.notes.clip_J_per_decision }], { borderDash: [1, 4], pointRadius: 0, pointHoverRadius: 0 }));
+  legend('lg3', ds.map(d => [d.label, d.borderColor, (d.borderDash || []).length > 0]));
+  draw('c3', { type: 'line', data: { datasets: ds }, options: baseOpts('Energy per decision (J, log)', { xType: 'linear', yType: 'logarithmic', xTitle: 'Text-register qubits', x: { min: 6, max: xmax }, y: { min: 0.1 }, yFmt: v => { const l = Math.log10(v); return Math.abs(l - Math.round(l)) < 1e-6 ? (v >= 1000 ? (v / 1000) + ' kJ' : v + ' J') : ''; },
+    tt: { label: c => { const r = c.raw; if (r._r) return `${c.dataset.label}: ${num(r.y)} J · ${Math.round(r._r.shots_per_decision)} shots/decision (${r._r.seeds_reaching} seeds reach the target)`; if (r._g) return `${c.dataset.label}: ${r.y.toFixed(3)} J per decision`; if (r._s) return `${c.dataset.label}: ${r.y.toFixed(3)} J at ${r.x} qubits`; return `${c.dataset.label}: ${r.y} J`; } } }) });
+  document.getElementById('pend3').textContent = g.length ? '' : 'GPU measurement pending: it needs a free pool GPU to itself (NVML). The page updates when it lands.';
+  const p3 = rows.find(r => r.n === 3 && r.method === 'PS'), w3 = rows.find(r => r.n === 3 && r.method === 'warm');
+  document.getElementById('cap3').innerHTML = p3 && w3 ? `Fixed overheads dominate IonQ (10 s per circuit); switch to <b>Shots only</b> to compare readouts. At 13 qubits the warm-start discard model needs <b>${Math.round(w3.shots_per_decision)}</b> shots per decision against <b>${Math.round(p3.shots_per_decision)}</b> for post-selection, so its shot energy is lower by the same factor.` : 'Not every model reaches this target at every size; missing points are models that never reach it.';
+  table('t3', ['size', 'model', 'target', 'shots/decision', 'IBM J', 'IBM J (shots)', 'IonQ J', 'IonQ J (shots)', 'IBM s/shot', 'IonQ s/shot'],
+    D.v3_qpu.map(r => [`n=${r.n}`, METH[r.method], `${r.set} ${r.target}`, Math.round(r.shots_per_decision), num(r.ibm_J), num(r.ibm_J_shots_only), num(r.ionq_J), num(r.ionq_J_shots_only), r.ibm_shot_s.toExponential(2), r.ionq_shot_s.toExponential(2)]));
+}
+
+function fig4() {
+  const key = state.f4m === 'acc' ? `${state.f4r}_acc` : `${state.f4r}@1024`;
+  const ds = ['PS', 'warm'].map(m => ({ label: METH[m], data: ARMS.map(([p]) => { const r = D.noisy.find(x => x.profile === p && MODEL(x.ckpt)[0] === m && MODEL(x.ckpt)[1] === 2); return r ? 100 * r[key] : null; }), backgroundColor: tok(MSLOT[m]), borderColor: tok('--surface'), borderWidth: 2, borderRadius: 4, borderSkipped: 'bottom' }));
+  legend('lg4', ['PS', 'warm'].map(m => [METH[m], tok(MSLOT[m])]));
+  draw('c4', { type: 'bar', data: { labels: ARMS.map(a => a[1]), datasets: ds }, options: baseOpts('Accuracy (%)', { mode: 'index', yFmt: v => v + '%', y: { min: 50, max: 90 }, tt: { label: c => `${c.dataset.label}: ${c.raw == null ? 'pending' : c.raw.toFixed(1) + '%'}` } }) });
+  const missing = ARMS.filter(([p]) => !D.noisy.some(x => x.profile === p && MODEL(x.ckpt)[1] === 2)).map(a => a[1]);
+  document.getElementById('pend4').textContent = missing.length ? `Pending (need a free pool GPU): ${missing.join(', ')}.` : '';
+  const g = (m, p) => D.noisy.find(x => x.profile === p && MODEL(x.ckpt)[0] === m && MODEL(x.ckpt)[1] === 2);
+  const a = g('PS', 'honest_miami'), b = g('PS', 'honest_miami+dd'), c = g('warm', 'honest_miami'), d = g('warm', 'honest_miami+dd');
+  document.getElementById('cap4').innerHTML = a && b && c && d ? `With only Markovian idle noise, decoupling moves post-selection from <b>${pct(a[key])}</b> to <b>${pct(b[key])}</b> and warm-start discard from <b>${pct(c[key])}</b> to <b>${pct(d[key])}</b> (300 pairs: one pair is 0.33 points). In this arm the idle noise is T1/T2 relaxation only; the coherent-idle arms test the errors decoupling is designed to remove.` : '';
+  table('t4', ['model', 'arm', 'CU many shots', 'CU 1024', 'O many shots', 'O 1024', 'CU median |margin|'],
+    D.noisy.filter(r => MODEL(r.ckpt)[1] === 2 && r.profile.startsWith('honest')).map(r => [METH[MODEL(r.ckpt)[0]], (ARMS.find(a => a[0] === r.profile) || [0, r.profile])[1], pct(r.cu_acc), pct(r['cu@1024']), pct(r.O_acc), pct(r['O@1024']), r.cu_margin.toFixed(4)]));
+}
+
+function renderAll() { if (!D) return; fig1(); fig2(); fig3(); fig4(); }
+document.querySelectorAll('.group[data-ctl]').forEach(g => g.addEventListener('click', e => {
+  const b = e.target.closest('button.chip'); if (!b) return;
+  g.querySelectorAll('button.chip').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+  state[g.dataset.ctl] = b.dataset.v; renderAll();
+}));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
+new MutationObserver(renderAll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+try {
+  D = JSON.parse(document.getElementById('viz-data').textContent);
+  const seeds = D.v1.reduce((s, r) => s + r.seeds, 0);
+  document.getElementById('facts').innerHTML = `<span><b>${seeds}</b> trained models</span><span><b>3</b> sizes: 7, 10, 13 qubits</span><span><b>1,833</b> test pairs per model</span><span>noise: Kingston and honest profiles</span>`;
+  renderAll();
+} catch (err) { document.querySelector('.wrap').insertAdjacentHTML('beforeend', `<p class="pending">Figures failed to render (${err}).</p>`); }
+</script>
