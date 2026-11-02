@@ -72,45 +72,57 @@ def honest_variant(nb, circs, dd, det_khz, zz_khz, seed, force_rebuild=False):
 
 
 def rebuild_coherent(c, tgt, dt, det, adj, zz_hz):
+    # Coherent idle errors with merged phases: detuning and static ZZ are diagonal, commute with each other, and nothing
+    # non-diagonal acts on a qubit while it idles, so each idle window's phases are summed and emitted once, just before the
+    # next gate on that qubit (ZZ: on either qubit of the pair) or at the end. Delays are kept whole (honest relaxation on them).
+    # Approximation: phase vs relaxation ordering within a window (second order); the unitary part is exact.
     dag = circuit_to_dag(c)
     sa = ALAPScheduleAnalysis(target=tgt); sa.run(dag)
     st = sa.property_set['node_start_time']
     qi = {q: i for i, q in enumerate(c.qubits)}
     nodes = list(dag.topological_op_nodes())
-    dur = lambda nd: nd.op.duration if nd.op.name == 'delay' else (tgt.durations().get(nd.op.name, [qi[q] for q in nd.qargs], unit='dt') if nd.op.name not in ('barrier',) else 0)
     order = sorted(range(len(nodes)), key=lambda k: (st[nodes[k]], k))
     idle = {q: [] for q in range(c.num_qubits)}
     for nd in nodes:
         if nd.op.name == 'delay':
-            q = qi[nd.qargs[0]]; idle[q].append((st[nd], st[nd] + nd.op.duration))
-    bounds = sorted({0} | {st[nd] for nd in nodes} | {st[nd] + int(dur(nd) or 0) for nd in nodes})
+            idle[qi[nd.qargs[0]]].append((st[nd], st[nd] + nd.op.duration))
     for q in idle: idle[q].sort()
-    ptr = {q: 0 for q in idle}
+    pend_det = np.zeros(c.num_qubits)
+    zz = {}   # (q, r) -> sorted [(overlap_end, theta)]; emitted once overlap_end <= flush time
+    if zz_hz:
+        for q in range(c.num_qubits):
+            for r in adj.get(q, ()):
+                if q < r < c.num_qubits:
+                    ov = []
+                    for a0, a1 in idle[q]:
+                        for b0, b1 in idle[r]:
+                            lo, hi = max(a0, b0), min(a1, b1)
+                            if hi > lo: ov.append((hi, np.pi * zz_hz * (hi - lo) * dt))
+                    if ov: zz[(q, r)] = sorted(ov)
+    zptr = {k: 0 for k in zz}
     new = QuantumCircuit(*c.qregs, *c.cregs)
-    k = 0
-    for b0, b1 in zip(bounds, bounds[1:] + [None]):
-        while k < len(order) and st[nodes[order[k]]] == b0:
-            nd = nodes[order[k]]; k += 1
-            if nd.op.name != 'delay':
-                new.append(nd.op, nd.qargs, nd.cargs)
-        if b1 is None: break
-        seg = b1 - b0
-        I = []
-        for q in range(c.num_qubits):   # idle intervals per qubit are time-ordered: advance a pointer
-            iv = idle[q]
-            while ptr[q] < len(iv) and iv[ptr[q]][1] <= b0: ptr[q] += 1
-            if ptr[q] < len(iv) and iv[ptr[q]][0] <= b0 and b1 <= iv[ptr[q]][1]: I.append(q)
-        for q in I:
-            new.delay(seg, q, unit='dt')
-            ph = 2 * np.pi * det[q] * seg * dt
-            new.unitary(np.diag([np.exp(-0.5j * ph), np.exp(0.5j * ph)]), [q], label='coh_det')
-        if zz_hz:
-            Is = set(I)
-            for q in I:
-                for r in adj.get(q, ()):
-                    if r > q and r in Is:   # static ZZ: conditional phase 2 pi zz t, RZZ(theta) with theta = pi zz t... applied as diag
-                        th = np.pi * zz_hz * seg * dt
-                        new.unitary(np.diag(np.exp(-0.5j * th * np.array([1, -1, -1, 1]))), [q, r], label='coh_zz')
+    def flush(qs, t):
+        for q in qs:
+            if pend_det[q]:
+                ph = pend_det[q]; pend_det[q] = 0.0
+                new.unitary(np.diag([np.exp(-0.5j * ph), np.exp(0.5j * ph)]), [q], label='coh_det')
+        for (q, r), ov in zz.items():
+            if q not in qs and r not in qs: continue
+            th = 0.0
+            while zptr[(q, r)] < len(ov) and (t is None or ov[zptr[(q, r)]][0] <= t):
+                th += ov[zptr[(q, r)]][1]; zptr[(q, r)] += 1
+            if th:
+                new.unitary(np.diag(np.exp(-0.5j * th * np.array([1, -1, -1, 1]))), [q, r], label='coh_zz')
+    for k in order:
+        nd = nodes[k]
+        if nd.op.name == 'delay':
+            q = qi[nd.qargs[0]]
+            new.append(nd.op, nd.qargs, nd.cargs)
+            pend_det[q] += 2 * np.pi * det[q] * nd.op.duration * dt
+        else:
+            flush([qi[q] for q in nd.qargs], st[nd])
+            new.append(nd.op, nd.qargs, nd.cargs)
+    flush(list(range(c.num_qubits)), None)
     return new
 
 NOISY = {'ibm_kingston': ('backend', 'FakeKingston'), 'honest_miami': ('honest', 'FakeMiami'), 'ibm_miami': ('backend', 'FakeMiami')}
