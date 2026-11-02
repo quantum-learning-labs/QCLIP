@@ -33,6 +33,31 @@ class Meter:
         return (self.mj() - e0) / 1e3 / k, (time.time() - t0) / k
 
 
+def qpu_stats(a, out):
+    kingston = fake_provider.FakeKingston()
+    with open(out / 'qpu_stats.csv', 'w', newline='') as f3:
+        w3 = csv.writer(f3)
+        w3.writerow(['ckpt', 'text_n', 'idx', 'nq', 'kind', 'ibm_duration_s', 'ibm_n2q', 'ibm_n1q', 'ionq_n1q', 'ionq_n2q'])
+        for c in a.checkpoints:
+            ckpt = Path(c)
+            config, qlimit, fr = frames(ckpt, 0)
+            # QPU statistics (CPU): CU-pos and O circuits of the first qpu_pairs pairs
+            sample = []
+            for i, ((qt, qip, oq), (_, qin, _)) in fr[:a.qpu_pairs]:
+                cs = build(qt, qip, qin, oq)
+                sample += [(i, 'cu', cs[0]), (i, 'O', cs[2])]
+            ibm = transpile([x for _, _, x in sample], backend=kingston, optimization_level=1, seed_transpiler=0)
+            ion = transpile([x for _, _, x in sample], basis_gates=IONQ_BASIS, optimization_level=1, seed_transpiler=0)
+            for (i, kind, x), bi, io in zip(sample, ibm, ion):
+                ob, oi = bi.count_ops(), io.count_ops()
+                n2b = sum(v for k, v in ob.items() if k in TWO_Q); n1b = sum(v for k, v in ob.items() if k not in TWO_Q | {'measure', 'barrier', 'delay'})
+                n2i = sum(v for k, v in oi.items() if k in TWO_Q); n1i = sum(v for k, v in oi.items() if k not in TWO_Q | {'measure', 'barrier'})
+                w3.writerow([ckpt.parent.name, config['text'].get('n'), i, x.num_qubits, kind, float(bi.estimate_duration(kingston.target, unit='s')),
+                             n2b, n1b, n1i, n2i])
+            f3.flush()
+            print(ckpt.parent.name, 'qpu stats done', flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('-cp', '--checkpoints', nargs='+', required=True)
@@ -41,16 +66,19 @@ def main():
     ap.add_argument('--qpu_pairs', type=int, default=100)
     ap.add_argument('--nmax', type=int, default=30)
     ap.add_argument('--layers', type=int, default=20)
+    ap.add_argument('--qpu_only', action='store_true', help='only the CPU part (c); runs without a GPU')
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
+    if a.qpu_only or not (out / 'qpu_stats.csv').exists():
+        qpu_stats(a, out)
+    if a.qpu_only:
+        return
     m = Meter(); idle = m.idle_W()
     print(f'GPU {m.name}, idle {idle:.1f} W', flush=True)
     sim = AerSimulator(method='statevector', device='GPU', precision='double')
-    kingston = fake_provider.FakeKingston()
-    with open(out / 'gpu_models.csv', 'w', newline='') as f1, open(out / 'qpu_stats.csv', 'w', newline='') as f3:
-        w1, w3 = csv.writer(f1), csv.writer(f3)
+    with open(out / 'gpu_models.csv', 'w', newline='') as f1:
+        w1 = csv.writer(f1)
         w1.writerow(['gpu', 'ckpt', 'text_n', 'pairs', 'nq_mean', 'nq_max', 'J_gross', 'J_net', 'seconds', 'J_net_per_decision', 'J_gross_per_decision', 'idle_W'])
-        w3.writerow(['ckpt', 'text_n', 'idx', 'nq', 'kind', 'ibm_duration_s', 'ibm_n2q', 'ibm_n1q', 'ionq_n1q', 'ionq_n2q'])
         for c in a.checkpoints:
             ckpt = Path(c)
             config, qlimit, fr = frames(ckpt, 0)
@@ -66,20 +94,6 @@ def main():
             w1.writerow([m.name, ckpt.parent.name, config['text'].get('n'), len(circs), np.mean(nq), max(nq), J, J - idle * s, s,
                          (J - idle * s) / len(circs), J / len(circs), idle]); f1.flush()
             print(ckpt.parent.name, f'GPU {J:.1f} J gross over {s:.1f} s for {len(circs)} decisions', flush=True)
-            # QPU statistics (CPU): CU-pos and O circuits of the first qpu_pairs pairs
-            sample = []
-            for i, ((qt, qip, oq), (_, qin, _)) in fr[:a.qpu_pairs]:
-                cs = build(qt, qip, qin, oq)
-                sample += [(i, 'cu', cs[0]), (i, 'O', cs[2])]
-            ibm = transpile([x for _, _, x in sample], backend=kingston, optimization_level=1, seed_transpiler=0)
-            ion = transpile([x for _, _, x in sample], basis_gates=IONQ_BASIS, optimization_level=1, seed_transpiler=0)
-            for (i, kind, x), bi, io in zip(sample, ibm, ion):
-                ob, oi = bi.count_ops(), io.count_ops()
-                n2b = sum(v for k, v in ob.items() if k in TWO_Q); n1b = sum(v for k, v in ob.items() if k not in TWO_Q | {'measure', 'barrier', 'delay'})
-                n2i = sum(v for k, v in oi.items() if k in TWO_Q); n1i = sum(v for k, v in oi.items() if k not in TWO_Q | {'measure', 'barrier'})
-                w3.writerow([ckpt.parent.name, config['text'].get('n'), i, x.num_qubits, kind, float(bi.estimate_duration(kingston.target, unit='s')),
-                             n2b, n1b, n1i, n2i])
-            f3.flush()
     with open(out / 'gpu_scaling.csv', 'w', newline='') as f2:
         w2 = csv.writer(f2); w2.writerow(['gpu', 'n', 'layers', 'circuits', 'J_gross', 'J_net', 'seconds', 'J_net_per_circuit', 'idle_W'])
         rng = np.random.default_rng(0)
