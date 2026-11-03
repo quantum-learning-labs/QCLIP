@@ -55,7 +55,20 @@ def rel_target(acc):                      # 95% of the model's own edge over cha
 
 
 rows = []
-for f in sorted(glob.glob(f'{R}/e4_sc4/hp_sc4_*__*.npz')):
+def latest(pattern_dirs, name_glob):           # one file per basename; later dirs (reruns) fill gaps only
+    seen = {}
+    for d in pattern_dirs:
+        for f in sorted(glob.glob(f'{R}/{d}/{name_glob}')):
+            seen.setdefault(os.path.basename(f), f)
+    return [seen[k] for k in sorted(seen)]
+
+
+def read_csvs(name):
+    fs = sorted(glob.glob(f'{R}/viz_sc4*/{name}'))
+    return pd.concat([pd.read_csv(f) for f in fs], ignore_index=True) if fs else None
+
+
+for f in latest(('e4_sc4', 'e4_sc4_rerun'), 'hp_sc4_*__*.npz'):
     ck, tset = os.path.basename(f)[:-4].split('__')
     p = parse(ck)
     if p is None or tset not in ('std', 'swap_full'): continue
@@ -76,10 +89,9 @@ df = pd.DataFrame(rows)
 out = {'per_seed': rows, 'agg': [], 'gates': [], 'qpu': [], 'gpu': [], 'noisy': [], 'notes': {'cost_model': COST, 'budgets': BUDGETS}}
 
 # gate counts (sentence-only: one count per config, from the PS seed-0 checkpoint)
-gp = f'{R}/viz_sc4/gates.csv'
+g = read_csvs('gates.csv')
 gates = None
-if os.path.exists(gp):
-    g = pd.read_csv(gp)
+if g is not None:
     g = pd.concat([g, pd.DataFrame([parse(c) or {} for c in g.ckpt])], axis=1).dropna(subset=['e'])
     gates = g.groupby(['e', 'n']).agg(cx_cu=('cx_cu_pos', 'mean'), cx_O=('cx_O', 'mean'), nat2q_cu=('nat2q_cu_pos', 'mean'),
                                       nat2q_O=('nat2q_O', 'mean'), gate_nq=('nq', 'mean')).reset_index()
@@ -106,9 +118,8 @@ if len(df):
         out['agg'].append(a)
 
 # QPU energy per decision: shots to target x time per shot + per-circuit overhead, x machine power
-qp = f'{R}/viz_sc4/qpu_stats.csv'
-if os.path.exists(qp) and out['agg']:
-    qs = pd.read_csv(qp)
+qs = read_csvs('qpu_stats.csv')
+if qs is not None and out['agg']:
     qs = pd.concat([qs, pd.DataFrame([parse(c) or {} for c in qs.ckpt])], axis=1).dropna(subset=['e'])
     st = qs.groupby(['e', 'n', 'kind']).mean(numeric_only=True)
     for a in out['agg']:
@@ -125,13 +136,12 @@ if os.path.exists(qp) and out['agg']:
                     'ibm_J': (S * t_ibm + circ * o_ibm) * COST['ibm']['W'], 'ionq_J': (S * t_ion + circ * o_ion) * COST['ionq']['W'],
                     'ibm_J_shots_only': S * t_ibm * COST['ibm']['W'], 'ionq_J_shots_only': S * t_ion * COST['ionq']['W'],
                     'ibm_shot_s': float(t_ibm), 'ionq_shot_s': float(t_ion), 'ibm_n2q': float(s.ibm_n2q), 'ionq_n2q': float(s.ionq_n2q)})
-gm = f'{R}/viz_sc4/gpu_models.csv'
-if os.path.exists(gm):
-    g = pd.read_csv(gm)
+g = read_csvs('gpu_models.csv')
+if g is not None:
     out['gpu'] = [dict(r, **(parse(r['ckpt']) or {})) for r in g.to_dict('records')]
 
 # noisy runs
-for f in sorted(glob.glob(f'{R}/e6_sc4/*.npz')):
+for f in latest(('e6_sc4', 'e6_sc4_rerun'), '*.npz'):
     ck, prof = os.path.basename(f)[:-4].split('__')
     p = parse(ck)
     if p is None: continue
