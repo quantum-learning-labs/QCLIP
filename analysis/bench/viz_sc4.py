@@ -41,7 +41,7 @@ def shots_to(D, V, circ, t):
 
 
 R, OUT = sys.argv[1], sys.argv[2]
-PAT = re.compile(r'hp_sc4_(nodiscard|discard)_e(\d+)_n(\d+)_tl2_(qlr3e-3|pw0|pw0_ws)_s(\d+)')
+PAT = re.compile(r'hp_sc4_(nodiscard|discard)_e(\d+)_n(\d+)_tl2_(qlr3e-3|pw0|pw0_ws)(?:_r\d+)?_s(\d+)')
 METH = {'qlr3e-3': 'PS', 'pw0': 'plain', 'pw0_ws': 'warm'}
 
 
