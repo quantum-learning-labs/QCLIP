@@ -66,6 +66,7 @@ footer code { font-family: var(--mono); font-size: 12px; }
 </style>
 
 <div class="wrap">
+<p class="pending" id="errbox" hidden></p>
 <header>
   <div class="eyebrow">qclip · SVO-probes image choice · discard vs post-selection</div>
   <h1>Readout cost figures</h1>
@@ -145,7 +146,7 @@ footer code { font-family: var(--mono); font-size: 12px; }
 </div>
 
 <script type="application/json" id="viz-data">/*DATA*/</script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>/*CHARTJS*/</script>
 <script>
 const METH = { PS: 'Post-selection', plain: 'Discard, plain', warm: 'Discard, warm start', distill: 'Discard, distilled' };
 const MSLOT = { PS: '--s1', plain: '--s2', warm: '--s3', distill: '--s4' };
@@ -264,7 +265,15 @@ function fig4() {
     D.noisy.filter(r => MODEL(r.ckpt)[1] === 2 && r.profile.startsWith('honest')).map(r => [METH[MODEL(r.ckpt)[0]], (ARMS.find(a => a[0] === r.profile) || [0, r.profile])[1], pct(r.cu_acc), pct(r['cu@1024']), pct(r.O_acc), pct(r['O@1024']), r.cu_margin.toFixed(4)]));
 }
 
-function renderAll() { if (!D) return; fig1(); fig2(); fig3(); fig4(); }
+function showErr(what, err) {
+  const box = document.getElementById('errbox'); box.hidden = false;
+  box.insertAdjacentHTML('beforeend', `<div>${what} failed to render: ${err}</div>`);
+}
+function renderAll() {
+  if (!D) return;
+  if (typeof Chart === 'undefined') { showErr('Charts', 'chart library did not load'); return; }
+  [fig1, fig2, fig3, fig4].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + (i + 1), err); } });
+}
 document.querySelectorAll('.group[data-ctl]').forEach(g => g.addEventListener('click', e => {
   const b = e.target.closest('button.chip'); if (!b) return;
   g.querySelectorAll('button.chip').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
@@ -277,5 +286,5 @@ try {
   const seeds = D.v1.reduce((s, r) => s + r.seeds, 0);
   document.getElementById('facts').innerHTML = `<span><b>${seeds}</b> trained models</span><span><b>3</b> sizes: 7, 10, 13 qubits</span><span><b>1,833</b> test pairs per model</span><span>noise: Kingston and honest profiles</span>`;
   renderAll();
-} catch (err) { document.querySelector('.wrap').insertAdjacentHTML('beforeend', `<p class="pending">Figures failed to render (${err}).</p>`); }
+} catch (err) { showErr('Page', err); }
 </script>
