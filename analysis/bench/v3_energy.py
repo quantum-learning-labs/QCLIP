@@ -68,6 +68,7 @@ def main():
     ap.add_argument('--layers', type=int, default=20)
     ap.add_argument('--qpu_only', action='store_true', help='only the CPU part (c); runs without a GPU')
     ap.add_argument('--scaling_only', action='store_true', help='only the scaling probe (b)')
+    ap.add_argument('--no_scaling', action='store_true', help='skip the scaling probe (b)')
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     if a.qpu_only or not (out / 'qpu_stats.csv').exists():
@@ -97,6 +98,8 @@ def main():
             w1.writerow([m.name, ckpt.parent.name, config['text'].get('n'), len(circs), np.mean(nq), max(nq), J, J - idle * s, s,
                          (J - idle * s) / len(circs), J / len(circs), idle]); f1.flush()
             print(ckpt.parent.name, f'GPU {J:.1f} J gross over {s:.1f} s for {len(circs)} decisions', flush=True)
+    if a.no_scaling:
+        return
     with open(out / 'gpu_scaling.csv', 'w', newline='') as f2:
         w2 = csv.writer(f2); w2.writerow(['gpu', 'n', 'layers', 'circuits', 'J_gross', 'J_net', 'seconds', 'J_net_per_circuit', 'idle_W'])
         rng = np.random.default_rng(0)
