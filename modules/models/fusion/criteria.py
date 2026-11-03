@@ -429,6 +429,7 @@ class Bures_InfoNCE(BaseInfoNCELoss):
 
 
 class Pauli_InfoNCE(BaseInfoNCELoss):
+    HS_MAX_QUBITS = 6
     def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, num_qubits: int = 3, eps: float = 1e-8, purity_weight = 0.1, spread_weight: float = 0.0):
         super().__init__(temperature=temperature, label_smoothing=label_smoothing)
         self.spread_weight = spread_weight  # same text-spreading term as FS/HS_InfoNCE (lambda_reg), off by default
@@ -443,8 +444,11 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
         Z = torch.tensor([[1, 0], [0, -1]], dtype=torch.complex64)
         paulis = [I, X, Y, Z]
         
+        # > HS_MAX_QUBITS: no explicit basis (4^q x 2^q x 2^q, ~34 GB at q=8). The Pauli cosine is computed from
+        # Hilbert-Schmidt products instead: sum_{P != I} Tr(rho P) Tr(sigma P) = d Tr(rho sigma) - 1 (unit trace).
+        self.use_hs = num_qubits > self.HS_MAX_QUBITS
         basis_list = []
-        for p_tuple in itertools.product(paulis, repeat=num_qubits):
+        for p_tuple in (() if self.use_hs else itertools.product(paulis, repeat=num_qubits)):
             if all(torch.equal(p, I) for p in p_tuple):
                 continue
             p_tensor = p_tuple[0]
@@ -452,7 +456,7 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
                 p_tensor = torch.kron(p_tensor, p)
             basis_list.append(p_tensor)
             
-        self.register_buffer("pauli_basis", torch.stack(basis_list), persistent=False)
+        self.register_buffer("pauli_basis", torch.stack(basis_list) if basis_list else torch.zeros(0), persistent=False)
 
     def get_hyperparams(self) -> Dict[str, Any]:
         hp = super().get_hyperparams()
@@ -475,7 +479,15 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
 
     def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
         rho_text, rho_image, _ = self._ensure_density_matrices(text_emb, image_emb)
-        
+        if self.use_hs:
+            d = self.dim_hilbert
+            cross = torch.real(torch.einsum('amn,bnm->ab', rho_text, rho_image))            # Tr(rho_a sigma_b)
+            pt = torch.real(torch.einsum('amn,anm->a', rho_text, rho_text))
+            pi = torch.real(torch.einsum('bmn,bnm->b', rho_image, rho_image))
+            nt = torch.sqrt(torch.clamp(d * pt - 1, min=0)).clamp(min=self.eps)
+            ni = torch.sqrt(torch.clamp(d * pi - 1, min=0)).clamp(min=self.eps)
+            return (d * cross - 1) / (nt[:, None] * ni[None, :])
+
         v_text = self._to_pauli_vector(rho_text)    # [B_txt, 63]
         v_image = self._to_pauli_vector(rho_image)  # [B_img, 63]
         
@@ -500,9 +512,11 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
             return spread
 
         rho_text, rho_image, _ = self._ensure_density_matrices(text_emb, image_emb)
-        v_text = self._to_pauli_vector(rho_text)
-        
-        text_purity = self._compute_purity_from_pauli(v_text)
+        if self.use_hs:
+            text_purity = torch.clamp(torch.real(torch.einsum('amn,anm->a', rho_text, rho_text)), min=1.0 / self.dim_hilbert, max=1.0)
+        else:
+            v_text = self._to_pauli_vector(rho_text)
+            text_purity = self._compute_purity_from_pauli(v_text)
         text_purity_loss = (1.0 - text_purity).mean()
 
         loss_purity = text_purity_loss
