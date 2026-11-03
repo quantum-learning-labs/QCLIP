@@ -67,6 +67,7 @@ def main():
     ap.add_argument('--nmax', type=int, default=30)
     ap.add_argument('--layers', type=int, default=20)
     ap.add_argument('--qpu_only', action='store_true', help='only the CPU part (c); runs without a GPU')
+    ap.add_argument('--scaling_only', action='store_true', help='only the scaling probe (b)')
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     if a.qpu_only or not (out / 'qpu_stats.csv').exists():
@@ -76,7 +77,9 @@ def main():
     m = Meter(); idle = m.idle_W()
     print(f'GPU {m.name}, idle {idle:.1f} W', flush=True)
     sim = AerSimulator(method='statevector', device='GPU', precision='double')
-    with open(out / 'gpu_models.csv', 'w', newline='') as f1:
+    if a.scaling_only:
+        a.checkpoints = []
+    with open(out / 'gpu_models.csv' if not a.scaling_only else out / 'gpu_models_unused.csv', 'w', newline='') as f1:
         w1 = csv.writer(f1)
         w1.writerow(['gpu', 'ckpt', 'text_n', 'pairs', 'nq_mean', 'nq_max', 'J_gross', 'J_net', 'seconds', 'J_net_per_decision', 'J_gross_per_decision', 'idle_W'])
         for c in a.checkpoints:
@@ -104,7 +107,7 @@ def main():
                 for L in range(a.layers):
                     for q in range(n): qc.ry(rng.uniform(0, 2 * np.pi), q); qc.rz(rng.uniform(0, 2 * np.pi), q)
                     for q in range(L % 2, n - 1, 2): qc.cx(q, q + 1)
-                qc.save_expectation_value(Pauli('Z'), [0]); cs.append(qc)   # tiny result: no 2^n host transfer
+                qc.save_expectation_value(Pauli('Z' * n), list(range(n))); cs.append(qc)   # all-qubit observable: no light-cone truncation; tiny result
             tcs = transpile(cs, sim, optimization_level=0)
             try:
                 sim.run(tcs[:1]).result()
