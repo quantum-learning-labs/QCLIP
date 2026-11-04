@@ -57,16 +57,7 @@
   <details><summary>Table view</summary><div class="tbl" id="t3"></div></details>
 </section>
 
-<section class="fig" id="f4">
-  <div class="fig-head"><div class="tag">Figure 4</div><h2>Dynamic decoupling</h2>
-  <p>Honest noise profile with staggered X-X / X-X-X-X decoupling on the two colours of the coupling graph, with and without a coherent idle error (per-qubit detuning σ = 10 kHz and 20 kHz static ZZ between idle neighbours). Seed-0 models, 300 test pairs, 2<sup>20</sup> shots; bars ±1 standard error over pairs.</p></div>
-  <div class="controls"><div class="group" data-ctl="m4"><span>Model</span><button class="chip" data-v="PS" aria-pressed="true">Post-selection</button><button class="chip" data-v="warm">Discard, warm start</button></div></div>
-  <div class="legend" id="lg4"></div>
-  <div class="chart short"><canvas id="c4" aria-label="Accuracy by decoupling arm"></canvas></div>
-  <p class="pending" id="pend4"></p>
-  <p class="cap" id="cap4"></p>
-  <details><summary>Table view</summary><div class="tbl" id="t4"></div></details>
-</section>
+<!-- Figure 4 (dynamic decoupling) shelved 2026-11-04 by the user; fig4() kept below, data in e6_sc4/*+dd* -->
 
 <footer>
   <div>Sweep sc4: 10 model sizes × {PS, plain discard, warm-start discard} × 3 seeds, 2 text layers. Data: <code>results/shotcost/viz/viz_sc4.json</code> (branch <code>shotcost</code>, quantum-learning-labs/QCLIP), built by <code>analysis/bench/viz_sc4.py</code> from exact branch evaluations, noise runs, gate counts and device statistics.</div>
@@ -234,7 +225,7 @@ function showErr(what, err) { const box = document.getElementById('errbox'); box
 function renderAll() {
   if (!S) return;
   if (typeof Chart === 'undefined') { showErr('Charts', 'chart library did not load'); return; }
-  [fig1, fig2, fig3, fig4].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + (i + 1), err); } });
+  [fig1, fig2, fig3].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + (i + 1), err); } });
 }
 document.querySelectorAll('.group').forEach(g => g.addEventListener('click', e => {
   const b = e.target.closest('button.chip'); if (!b) return;

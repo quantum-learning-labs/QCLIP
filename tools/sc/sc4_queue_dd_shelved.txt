@@ -1,0 +1,18 @@
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e4_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 10 --o_max 6 --dd
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e4_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 10 --o_max 6 --dd
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e6_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 12 --o_max 5 --dd
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e6_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 12 --o_max 5 --dd
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e8_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 12 --o_max 6 --dd
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e8_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 12 --o_max 6 --dd
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e4_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 10 --o_max 6 --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e4_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 10 --o_max 6 --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e6_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 12 --o_max 5 --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e6_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 12 --o_max 5 --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e8_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 12 --o_max 6 --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e8_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 12 --o_max 6 --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e4_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 10 --o_max 6 --dd --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e4_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 10 --o_max 6 --dd --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e6_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 12 --o_max 5 --dd --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e6_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 12 --o_max 5 --dd --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_nodiscard_e8_n1_tl2_qlr3e-3_s0/best.pt --profiles honest_miami --qmax 12 --o_max 6 --dd --det_khz 10 --zz_khz 20
+-cp /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_sc4_discard_e8_n1_tl2_pw0_ws_s0/best.pt --profiles honest_miami --qmax 12 --o_max 6 --dd --det_khz 10 --zz_khz 20
