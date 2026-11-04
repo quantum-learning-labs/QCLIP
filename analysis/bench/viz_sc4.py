@@ -65,7 +65,8 @@ def latest(pattern_dirs, name_glob):           # one file per basename; later di
 
 def read_csvs(name):
     fs = sorted(glob.glob(f'{R}/viz_sc4*/{name}'))
-    return pd.concat([pd.read_csv(f) for f in fs], ignore_index=True) if fs else None
+    dfs = [d for d in (pd.read_csv(f) for f in fs) if len(d)]            # header-only placeholders would make columns object-typed
+    return pd.concat(dfs, ignore_index=True) if dfs else None
 
 
 for f in latest(('e4_sc4', 'e4_sc4_rerun'), 'hp_sc4_*__*.npz'):
