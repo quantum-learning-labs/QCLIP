@@ -39,12 +39,13 @@ def by_h(vals, hw):
     return out
 
 
-def run_one(ckpt, sets, out, limit, seed, e0_out=None):
+def run_one(ckpt, sets, out, limit, seed, e0_out=None, trace_mode=None):
     name = ckpt.parent.name
     config, DEV, _ = setup_exp(resolve_eval_config(None, ckpt), seed=seed)
     for s, path in SWAP_SETS.items():
         if s in sets and s not in config['dataset']['test']:
             config['dataset']['test'][s] = dict(config['dataset']['test']['swap'], text_path=path)
+    if trace_mode: config['text']['trace_mode'] = trace_mode
     discard = config['text'].get('discard', False)
     ansatz, image_model, text_model, _ = build_experiment(config, DEV)
     de = DataEngine(config, ansatz, DEV)
@@ -128,13 +129,14 @@ def main():
     p.add_argument('-l', '--limit', type=int, default=None)
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('-o', '--out', required=True)
+    p.add_argument('--trace_mode', default=None, help='override text.trace_mode (psi|auto|doubled); auto keeps n=4 discard evals small')
     p.add_argument('--e0_out', default=None, help='also write shotcost.py-format npz (m, a, k, nq, idx) for non-val sets here')
     a = p.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     e0 = Path(a.e0_out) if a.e0_out else None
     if e0: e0.mkdir(parents=True, exist_ok=True)
     for c in a.checkpoints:
-        run_one(Path(c), a.sets.split(','), out, a.limit, a.seed, e0)
+        run_one(Path(c), a.sets.split(','), out, a.limit, a.seed, e0, a.trace_mode)
     print('done', flush=True)
 
 
