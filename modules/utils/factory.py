@@ -66,7 +66,8 @@ def build_experiment(config, device):
                                             env_qubits=config['vision'].get('env_qubits', 0)).to(device)
 
         text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['text'].get('discard', False),
-                              renorm=bool(config['text'].get('postselect_types'))).to(device)
+                              renorm=bool(config['text'].get('postselect_types')),
+                              trace_mode=config['text'].get('trace_mode', 'psi')).to(device)
         discard = config['text'].get('discard', False)
         loss_name = config.get('loss', 'pauli' if discard else 'fs')
         if loss_name in ('pauli', 'uj') and not discard:

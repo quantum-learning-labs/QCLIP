@@ -1,3 +1,4 @@
+import opt_einsum as oe
 from tqdm import tqdm
 from typing import Any, Dict, List, Tuple
 import torch
@@ -8,7 +9,7 @@ from modules.compilation.quantum.gates import *
 from modules.utils.general import get_device
 
 class VQCModel(nn.Module):
-    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64, renorm=False):
+    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64, renorm=False, trace_mode='psi'):
         super().__init__()
         self.symbols: List[str] = []
         self.params = nn.ParameterList([])
@@ -19,6 +20,11 @@ class VQCModel(nn.Module):
         self.precision: torch.dtype = precision
         self.discard = discard
         self.renorm = renorm  # unit-trace density matrices (hybrid circuits post-select some wires)
+        # discard only: 'psi' = contract |psi> over all open wires, then rho = psi psi^dag (2^nq per sentence);
+        # 'auto' = per circuit structure, use a doubled ket/bra network that traces each discarded wire inside the
+        # contraction when opt_einsum rates it cheaper (same rho to float precision; n=4 peak 68.7G -> 4.2M elements)
+        assert trace_mode in ('psi', 'auto', 'doubled'), trace_mode
+        self.trace_mode = trace_mode
 
         h_gate = torch.tensor([[1.0, 1.0], [1.0, -1.0]], dtype=precision) / (2.0**0.5)
         cx_gate = torch.block_diag(
@@ -133,6 +139,18 @@ class VQCModel(nn.Module):
 
     GATE_FNS = {'Rz': Rz, 'Rx': Rx, 'Ry': Ry, 'CRz': CRz, 'CRx': CRx, 'CRy': CRy}
 
+    def _doubled_str(self, einsum_str):
+        # ket network + conjugate bra copy (fresh indices) with the discarded output wires shared = traced;
+        # output: batch, ket sentence wires, bra sentence wires -> rho[b, i, j] = sum_t psi[b, i, t] conj(psi[b, j, t])
+        inp, out = einsum_str.split('->'); terms = inp.split(',')
+        sent, traced = out[:self.out_q], set(out[self.out_q:])
+        used = set(einsum_str) - set(',->'); m, k = {}, 0
+        for c in sorted(used - traced):
+            while oe.get_symbol(k) in used or oe.get_symbol(k) == '$' or oe.get_symbol(k) in m.values(): k += 1
+            m[c] = oe.get_symbol(k); k += 1
+        bra = [''.join(c if c in traced else m[c] for c in t) for t in terms]
+        return ','.join('$' + t for t in terms + bra) + '->$' + sent + ''.join(m[c] for c in sent)
+
     def _plan(self, einsum_str, tensors, nominal_batch=64):
         # Per circuit structure: the batched contraction (path searched once, valid for any
         # minibatch size) and which operand slots are static gates / which op type each
@@ -153,8 +171,14 @@ class VQCModel(nn.Module):
                     param_pos.append(pos)
                     n_wires = 2 if gate['op_type'].startswith('C') else 1
                     shapes.append((nominal_batch, *[2] * (2 * n_wires)))
-            self.plan_cache[einsum_str] = {'expr': contract_expression(batched_str, *shapes), 'n_ops': len(tensors),
-                                           'static': static, 'param_pos': param_pos, 'by_type': dict(by_type)}
+            plan = {'expr': contract_expression(batched_str, *shapes), 'n_ops': len(tensors),
+                    'static': static, 'param_pos': param_pos, 'by_type': dict(by_type), 'doubled': False}
+            if self.discard and self.trace_mode != 'psi':
+                dbl = self._doubled_str(einsum_str)
+                use = self.trace_mode == 'doubled' or (oe.contract_path(dbl, *(shapes * 2), shapes=True)[1].opt_cost
+                                                       < oe.contract_path(batched_str, *shapes, shapes=True)[1].opt_cost)
+                if use: plan.update(expr=contract_expression(dbl, *(shapes * 2)), doubled=True)
+            self.plan_cache[einsum_str] = plan
         return self.plan_cache[einsum_str]
 
     def forward(self, batch_recipes):
@@ -187,6 +211,13 @@ class VQCModel(nn.Module):
                         gate_batch = self.GATE_FNS[op_type](angles[:, cols])  # [minibatch, len(cols), 2, 2(, 2, 2)]
                         for j, c in enumerate(cols):
                             operands[plan['param_pos'][c]] = gate_batch[:, j]
+                if plan['doubled']:
+                    d = 2 ** self.out_q
+                    rho = plan['expr'](*operands, *[o.conj() for o in operands], backend='torch').reshape(minibatch_size, d, d)
+                    if self.renorm:
+                        rho = rho / rho.diagonal(dim1=1, dim2=2).sum(-1).real.clamp(min=1e-12)[:, None, None]
+                    results[list(indices)] = rho
+                    continue
                 group_out = plan['expr'](*operands, backend='torch')
 
                 if self.discard:
