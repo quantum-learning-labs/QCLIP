@@ -66,9 +66,17 @@ class BaseDatasetRetriever():
         cache_root = (self.data_root / ".hf-cache").resolve()
         os.environ.setdefault("HF_HOME", str(cache_root))
 
-    def retrieve(self):
+    def retrieve(self, fetch_images: bool = True, workers: int = 32):
         """Unified execution execution method with validation checks."""
         self.raw_dir.mkdir(parents=True, exist_ok=True)
+        if self.dataset_name == "svo-probes":   # code-only: DeepMind CSV + image URLs + our split manifest (see svo_probes.py)
+            from modules.data_pipeline import svo_probes
+            splits, missing = svo_probes.fetch(self.raw_dir, images=fetch_images, workers=workers)
+            if len(missing):
+                print(f"svo-probes: {len(missing)} image links are dead (listed in {self.raw_dir / 'images_missing.csv'}); "
+                      f"rows using them are dropped from retriever.data (raw pickles stay complete)")
+            self.data = svo_probes.drop_missing(splits, missing)
+            return self.data
         ds = {}
         if self.subsets is not None:
             for subset in self.subsets:

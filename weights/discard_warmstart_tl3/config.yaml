@@ -1,0 +1,94 @@
+model_type: vqc
+mlflow_db: mlf_dbs/hp3_pool.db
+batch_size: 256
+qlr: 0.01
+clr: 0.0001
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_qubits: 3
+out_dim: 512
+emulate:
+  set: swap
+  noise: false
+  optimization_level: 1
+  resolution: 10000
+  num_runs: 10
+  backend: statevector
+  measurement_method: destructive_swap
+text:
+  n: 1
+  s: 1
+  p: 1
+  layers: 3
+  curry: true
+  spider: false
+  discard: true
+vision:
+  layers: 2
+  method: mlp
+dataset:
+  name: svo-probes
+  class: modules.data_pipeline.datasets.SVODataset
+  collate_fn: modules.data_pipeline.datasets.svo_collate_fn
+  eval_mapper: modules.models.fusion.engine.svo_mapper
+  train:
+    text_path: data/svo-probes/processed/train.pkl
+    img_path: data/svo-probes/processed/image_embeddings.pt
+  val:
+    text_path: data/svo-probes/processed/val.pkl
+    img_path: data/svo-probes/processed/image_embeddings.pt
+    diagnostics:
+    - evaluate_image_choice
+    - diagnostic_image_choice
+  test:
+    std:
+      class: modules.data_pipeline.datasets.SVODataset
+      collate_fn: modules.data_pipeline.datasets.svo_collate_fn
+      text_path: data/svo-probes/processed/test.pkl
+      img_path: data/svo-probes/processed/image_embeddings.pt
+      task: evaluate_image_choice
+    swap:
+      class: modules.data_pipeline.datasets.SwapDataset
+      collate_fn: modules.data_pipeline.datasets.swap_collate_fn
+      text_path: data/svo-probes/processed/swap.pkl
+      img_path: data/svo-probes/processed/image_embeddings.pt
+      task: evaluate_text_choice
+_dataset:
+  name: aro
+  class: modules.data_pipeline.datasets.ARODataset
+  collate_fn: modules.data_pipeline.datasets.aro_collate_fn
+  eval_mapper: modules.models.fusion.engine.aro_mapper
+  train:
+    text_path: data/aro/processed/train.pkl
+    img_path: data/aro/processed/image_embeddings.pt
+  val:
+    text_path: data/aro/processed/val.pkl
+    img_path: data/aro/processed/image_embeddings.pt
+    diagnostics:
+    - evaluate_text_choice
+    - diagnostic_text_choice
+  test:
+    att:
+      class: modules.data_pipeline.datasets.ARODataset
+      collate_fn: modules.data_pipeline.datasets.aro_collate_fn
+      text_path: data/aro/processed/test_att.pkl
+      img_path: data/aro/processed/image_embeddings.pt
+      task: evaluate_text_choice
+    rel:
+      class: modules.data_pipeline.datasets.ARODataset
+      collate_fn: modules.data_pipeline.datasets.aro_collate_fn
+      text_path: data/aro/processed/test_rel.pkl
+      img_path: data/aro/processed/image_embeddings.pt
+      task: evaluate_text_choice
+purity_weight: 0.0
+checkpoint_every: 1
+overrides:
+- mlflow_db=mlf_dbs/hp3_pool.db
+- text.layers=3
+- purity_weight=0.0
+- checkpoint_every=1
+seed: 6
+init_from: /cs/research/pplv/comp_bridge/qclip_snapshots/ckpt_from_hpc/hp_hp2_nodiscard_tl3_qlr3e-3_s6/best.pt
+run_name: hp_do1_discard_tl3_pw0_initnd_s6
+git_commit: 52fa8d8d0708db57ffdef04e182501bf73d9bd33
