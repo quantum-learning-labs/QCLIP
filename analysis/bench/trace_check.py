@@ -55,6 +55,19 @@ def rho_doubled(model, recipes):
     return out
 
 
+def recipes_of(df):
+    # (einsum, symbols) recipes from every *_einsum / *_symbols column pair of a compiled split (list cells expanded)
+    out = []
+    for col in [c for c in df.columns if c.endswith('_einsum')]:
+        sc = col[:-len('_einsum')] + '_symbols'
+        if sc not in df.columns: continue
+        for e, t in zip(df[col], df[sc]):
+            if isinstance(e, float): continue
+            if isinstance(e, (list, tuple)) and e and isinstance(e[0], str) and '->' in e[0]: out += list(zip(e, t))
+            else: out.append((e, t))
+    return out
+
+
 def path_stats(einsum_str, tensors, out_q, B=64):
     inp, out = einsum_str.split('->')
     shp = [(B, *[2] * len(t)) for t in inp.split(',')]
@@ -80,10 +93,9 @@ def main():
         c_val = de.compile_text('val')
         de.text_init(text_model, pd.concat([de.compile_text('train'), c_val], ignore_index=True))
         CheckpointManager.load_model(ckpt, image_model, text_model, DEV); text_model.to('cpu'); text_model.eval()
-        ds = de.get_dataset(c_val, 'val')
         r = {'e': config['embedding_qubits'], 'n': config['text'].get('n'), 'out_q': text_model.out_q}
         # (1) equality on real sentences (float64 copy of the model for a clean comparison as well)
-        recipes = [ds[i]['caption'] for i in range(min(a.n_eq, len(ds)))]
+        recipes = recipes_of(c_val)[:a.n_eq]
         with torch.no_grad():
             ref = text_model(recipes); new = rho_doubled(text_model, recipes)
         diff = (ref - new).abs().amax(dim=(1, 2))
@@ -91,13 +103,11 @@ def main():
                  ref_trace_min=float(ref.diagonal(dim1=1, dim2=2).sum(-1).real.min()))
         # (2) path statistics per distinct sentence structure (val + test std)
         stats = []
-        for split, comp in (('val', c_val), ('std', de.compile_text('std'))):
-            d2 = de.get_dataset(comp, split); seen = set()
-            for i in range(len(d2)):
-                for key in ('caption',):
-                    s, t = d2[i][key]
-                    if s in seen: continue
-                    seen.add(s); stats.append(path_stats(s, t, text_model.out_q))
+        seen = set()
+        for comp in (c_val, de.compile_text('std')):
+            for s, t in recipes_of(comp):
+                if s in seen: continue
+                seen.add(s); stats.append(path_stats(s, t, text_model.out_q))
         st = pd.DataFrame(stats)
         r.update(structures=len(st), nq_max=int(st.nq.max()),
                  cur_largest_max=int(st.cur_largest.max()), dbl_largest_max=int(st.dbl_largest.max()),
