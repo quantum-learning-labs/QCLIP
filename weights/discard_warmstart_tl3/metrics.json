@@ -1,0 +1,10 @@
+{
+ "seed": 6,
+ "selected_on": "best validation hard_neg_acc of 10 seeds",
+ "epoch": 8,
+ "discard": true,
+ "std_hard_neg_acc": 0.8554,
+ "std_n": 1833,
+ "swap_hard_neg_acc": 0.8842,
+ "swap_n": 95
+}

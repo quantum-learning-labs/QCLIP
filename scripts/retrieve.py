@@ -3,11 +3,11 @@ from modules.utils.general import get_device
 from modules.data_pipeline.embeddings import ImgStream, embed_images
 from modules.data_pipeline.retrieval import BaseDatasetRetriever
 from pathlib import Path
-import os
+import os, sys
 
 if __name__ == '__main__':
-    DATASET = 'aro'
-    PARSER_PATH = '/cs/research/pplv/comp_bridge/bobcat'
+    DATASET = sys.argv[1] if len(sys.argv) > 1 else 'aro'     # e.g. `python scripts/retrieve.py svo-probes`
+    PARSER_PATH = os.environ.get('BOBCAT_PATH', '/cs/research/pplv/comp_bridge/bobcat')   # Bobcat parser model dir
     ROOT_PATH = os.getcwd()
     OUT_DIR = ROOT_PATH + '/data/' + DATASET + '/processed'
     IMG_PATH = ROOT_PATH + '/data/' + DATASET + '/raw/images.zip'
@@ -24,7 +24,7 @@ if __name__ == '__main__':
 
     #fname = os.path.basename(f)
     generator = ImgStream(IMG_PATH, file_type='zip')
-    embed_images(generator, f'{OUT_DIR}/images_embeddings.pt', device=DEV)
+    embed_images(generator, f'{OUT_DIR}/image_embeddings.pt', device=DEV)
     # for f in os.listdir(IMG_PATH):
     #     if f.endswith('.zip'):
     #         fname = os.path.basename(f)
