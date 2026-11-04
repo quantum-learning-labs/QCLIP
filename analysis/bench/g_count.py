@@ -43,10 +43,13 @@ def frames(ckpt, seed):
     return config, qlimit, [(i, by[i]) for i in sorted(by) if len(by[i]) == 2]
 
 
-def build(qt, qip, qin, oq):
+def build(qt, qip, qin, oq, o_max=6):
+    # O-readout circuit = a general unitary on the output register: its synthesis grows ~4^e (killed the job at e=7),
+    # so above o_max output qubits it is skipped (None) and only the CU circuits are built
     n = qt.num_qubits; out = []
-    W, _, _ = o_unitary(Statevector(qip).data, Statevector(qin).data)
+    W = o_unitary(Statevector(qip).data, Statevector(qin).data)[0] if len(oq) <= o_max else None
     for img in (qip, qin, None):
+        if img is None and W is None: out.append(None); continue
         qc = QuantumCircuit(n, n); qc.compose(qt, inplace=True)
         if img is not None: qc.compose(img.inverse(), qubits=oq, inplace=True)
         else: qc.unitary(W, oq)
@@ -60,6 +63,7 @@ def main():
     ap.add_argument('-o', '--out', required=True)
     ap.add_argument('--native', type=int, default=300)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--o_max', type=int, default=6, help='skip the O-readout circuit above this many output qubits')
     a = ap.parse_args()
     out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
     new = not out.exists()
@@ -69,8 +73,9 @@ def main():
         for c in a.checkpoints:
             t0 = time.time(); ckpt = Path(c)
             config, qlimit, fr = frames(ckpt, a.seed)
-            circ = [build(qt, qip, qin, oq) for _, ((qt, qip, oq), (_, qin, _)) in fr]
-            flat = [x for cs in circ for x in cs]
+            circ = [build(qt, qip, qin, oq, a.o_max) for _, ((qt, qip, oq), (_, qin, _)) in fr]
+            has_o = all(cs[2] is not None for cs in circ)
+            flat = [x if x is not None else cs[0] for cs in circ for x in cs]   # placeholder (CU-pos) where O was skipped
             logical = transpile(flat, basis_gates=['rz', 'sx', 'x', 'cx'], optimization_level=1, seed_transpiler=a.seed, num_processes=4)
             cfg = copy.deepcopy(config); cfg['emulate'].update(noise=False)
             nb = BackendManager(cfg, qlimit, hardware_profile=fake_provider.FakeKingston())
@@ -79,6 +84,7 @@ def main():
                 L = [n2q(logical[3 * r + j]) for j in range(3)]
                 N = [n2q(nat[3 * r + j]) for j in range(3)] if r < a.native else ['', '', '']
                 d = nat[3 * r + 2].depth(lambda ins: ins.operation.name not in ('barrier', 'delay')) if r < a.native else ''
+                if not has_o: L[2] = ''; N[2] = ''; d = ''
                 w.writerow([ckpt.parent.name, config['text'].get('n'), i, flat[3 * r].num_qubits, *L, *N, d])
             fh.flush()
             print(ckpt.parent.name, f'{len(fr)} pairs, qlimit {qlimit}, {time.time() - t0:.0f}s', flush=True)

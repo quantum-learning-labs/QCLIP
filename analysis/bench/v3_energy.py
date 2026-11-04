@@ -44,8 +44,8 @@ def qpu_stats(a, out):
             # QPU statistics (CPU): CU-pos and O circuits of the first qpu_pairs pairs
             sample = []
             for i, ((qt, qip, oq), (_, qin, _)) in fr[:a.qpu_pairs]:
-                cs = build(qt, qip, qin, oq)
-                sample += [(i, 'cu', cs[0]), (i, 'O', cs[2])]
+                cs = build(qt, qip, qin, oq, a.o_max)
+                sample += [(i, 'cu', cs[0])] + ([(i, 'O', cs[2])] if cs[2] is not None else [])
             ibm = transpile([x for _, _, x in sample], backend=kingston, optimization_level=1, seed_transpiler=0)
             ion = transpile([x for _, _, x in sample], basis_gates=IONQ_BASIS, optimization_level=1, seed_transpiler=0)
             for (i, kind, x), bi, io in zip(sample, ibm, ion):
@@ -69,6 +69,7 @@ def main():
     ap.add_argument('--qpu_only', action='store_true', help='only the CPU part (c); runs without a GPU')
     ap.add_argument('--scaling_only', action='store_true', help='only the scaling probe (b)')
     ap.add_argument('--no_scaling', action='store_true', help='skip the scaling probe (b)')
+    ap.add_argument('--o_max', type=int, default=6, help='O-readout circuits only up to this many output qubits')
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     if a.qpu_only or not (out / 'qpu_stats.csv').exists():
@@ -89,7 +90,8 @@ def main():
             fr = fr[:a.pairs]
             circs = []
             for _, ((qt, qip, oq), (_, qin, _)) in fr:
-                o = build(qt, qip, qin, oq)[2].remove_final_measurements(inplace=False)
+                cs = build(qt, qip, qin, oq, a.o_max)
+                o = (cs[2] if cs[2] is not None else cs[0]).remove_final_measurements(inplace=False)   # CU-pos above o_max
                 o.save_statevector(); circs.append(o)
             tc = transpile(circs, sim, optimization_level=1, seed_transpiler=0)
             sim.run(tc[:4]).result()                       # warm-up (JIT / context)
