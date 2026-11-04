@@ -148,6 +148,7 @@ for f in latest(('e6_sc4', 'e6_sc4_rerun'), '*.npz'):
     x = np.load(f); disc = p['method'] != 'PS'
     r = dict(p, ckpt=ck, profile=prof, pairs=int(len(x['P'])))
     for kk, (D, V, c) in {'cu': cu_stats(x['P'], x['U'], disc), 'O': o_stats(x['P'], x['G'], x['Q'], disc)}.items():
+        if np.isnan(D).all(): continue                 # O readout skipped above o_max output qubits
         r[f'{kk}_acc'] = float(np.mean(D > 0)); r[f'{kk}_acc_se'] = float(np.sqrt(r[f'{kk}_acc'] * (1 - r[f'{kk}_acc']) / len(D)))
         for b in BUDGETS: r[f'{kk}@{b}'] = exp_acc(D, V, c, b)
     out['noisy'].append(r)

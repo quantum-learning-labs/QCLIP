@@ -170,6 +170,7 @@ def main():
     ap.add_argument('--profiles', default='ideal,ibm_kingston,honest_miami')
     ap.add_argument('-n', '--pairs', type=int, default=300)
     ap.add_argument('--qmax', type=int, default=12)
+    ap.add_argument('--o_max', type=int, default=6, help='O-readout circuit only up to this many output qubits (its synthesis grows ~4^e)')
     ap.add_argument('--shots', type=int, default=2 ** 20)
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--dd', action='store_true', help='honest only: staggered X-X / X-X-X-X dynamical decoupling')
@@ -210,12 +211,14 @@ def main():
     rows = [i for i in sorted(by) if len(by[i]) == 2][:a.pairs]
     print(f'{name}: {len(rows)} pairs with <= {a.qmax} text qubits (of {len(ds)} rows)', flush=True)
     circs, meta_c = [], []
+    with_O = all(len(by[i][0][2]) <= a.o_max for i in rows)
+    stride = 3 if with_O else 2
     for i in rows:
         (qt, qip, oq), (_, qin, _) = by[i]
         n = qt.num_qubits
         vp, vn = Statevector(qip).data, Statevector(qin).data
-        W, lp, lm = o_unitary(vp, vn)
-        for kind, img in (('cu_pos', qip), ('cu_neg', qin), ('O', None)):
+        W, lp, lm = o_unitary(vp, vn) if with_O else (None, 0.0, 0.0)
+        for kind, img in (('cu_pos', qip), ('cu_neg', qin), ('O', None))[:stride]:
             qc = QuantumCircuit(n, n)
             qc.compose(qt, inplace=True)
             if img is not None: qc.compose(img.inverse(), qubits=oq, inplace=True)
@@ -254,15 +257,16 @@ def main():
         P, U, G, Q, KK = np.zeros((N, 2, K + 1)), np.zeros((N, 2, K + 1)), np.zeros((N, K + 1)), np.zeros((N, K + 1)), np.zeros((N, 2), int)
         for r, (n, oq, vals) in enumerate(meta_c):
             for j in range(2):
-                P[r, j], U[r, j] = stats(probs[3 * r + j], oq, n)
+                P[r, j], U[r, j] = stats(probs[stride * r + j], oq, n)
                 KK[r, j] = n - len(oq)
-            G[r], Q[r] = stats(probs[3 * r + 2], oq, n, vals)
+            if with_O: G[r], Q[r] = stats(probs[3 * r + 2], oq, n, vals)
+            else: G[r], Q[r] = np.nan, np.nan
         np.savez(f, P=P, U=U, G=G, Q=Q, k=KK, idx=np.array(rows))
         m = (U[:, :, 0] / np.maximum(P[:, :, 0], 1e-300)) if not discard else U.sum(-1)
         meta = {'checkpoint': str(ckpt), 'discard': discard, 'set': 'std', 'profile': prof + (suffix if prof == 'honest_miami' else ''),
                 'dd': a.dd, 'det_khz': a.det_khz, 'zz_khz': a.zz_khz, 'pairs': N, 'qmax': a.qmax, 'shots': a.shots,
                 'text_n': config['text'].get('n'), 'git': git_state(), 'wall_s': time.time() - t0,
-                'acc_cu': float(np.mean(m[:, 0] > m[:, 1])), 'acc_O_native': float(np.mean((G.sum(-1) if discard else G[:, 0]) > 0))}
+                'acc_cu': float(np.mean(m[:, 0] > m[:, 1])), 'with_O': with_O, 'acc_O_native': float(np.mean((G.sum(-1) if discard else G[:, 0]) > 0))}
         json.dump(meta, open(f.with_suffix('.json'), 'w'), indent=1, default=str)
         print(name, prof, {k: meta[k] for k in ('pairs', 'acc_cu', 'acc_O_native', 'wall_s')}, flush=True)
     print('done', flush=True)
