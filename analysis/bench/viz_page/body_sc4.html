@@ -56,7 +56,19 @@
   <details><summary>Table view</summary><div class="tbl" id="t3"></div></details>
 </section>
 
-<!-- Figure 4 (dynamic decoupling) shelved 2026-11-04 by the user; fig4() kept below, data in e6_sc4/*+dd* -->
+<!-- dynamic decoupling figure shelved 2026-11-04 by the user; fig4() kept below, data in e6_sc4/*+dd* -->
+<section class="fig" id="fig-acc">
+  <div class="fig-head"><div class="tag">Figure 4</div><h2>Shots per accuracy against qubits</h2>
+  <p>Shots per decision needed to reach a fixed accuracy (expected test accuracy at that many shots, same sentence pairs as above), against the total qubits of the circuit. A model that cannot reach the accuracy even with unlimited shots has no point: its exact accuracy is below the target.</p></div>
+  <div class="controls">
+    <div class="group" data-ctl="acc"><span>Accuracy</span><button class="chip" data-v="60">60%</button><button class="chip" data-v="65">65%</button><button class="chip" data-v="70" aria-pressed="true">70%</button><button class="chip" data-v="75">75%</button></div>
+  </div>
+  <div class="legend" id="lgA"></div>
+  <div class="chart"><canvas id="cA" aria-label="Shots per decision to reach a fixed accuracy, log scale"></canvas></div>
+  <p class="cap" id="capA"></p>
+  <details><summary>Table view</summary><div class="tbl" id="tA"></div></details>
+</section>
+
 
 <footer>
   <div>Sweep sc4: 10 model sizes × {PS, plain discard, warm-start discard} × 3 seeds, 2 text layers. Data: <code>results/shotcost/viz/viz_sc4.json</code> (branch <code>shotcost</code>, quantum-learning-labs/QCLIP), built by <code>analysis/bench/viz_sc4.py</code> from exact branch evaluations, noise runs, gate counts and device statistics.</div>
@@ -71,7 +83,7 @@ const METH = { PS: 'Post-selection', plain: 'Discard, plain', warm: 'Discard, wa
 const MSLOT = { PS: '--s1', plain: '--s2', warm: '--s3' };
 const ARMS = [['honest_miami', 'Honest'], ['honest_miami+dd', '+ DD'], ['honest_miami+det10+zz20', '+ coherent idle'], ['honest_miami+dd+det10+zz20', '+ coherent idle + DD']];
 const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const state = { ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS' };
+const state = { acc: '70', ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS' };
 const charts = {};
 let D = null, S = null;
 const pct = v => v == null ? '–' : (100 * v).toFixed(1) + '%';
@@ -220,11 +232,30 @@ function fig4() {
   document.getElementById('cap4').innerHTML = `Markovian (T1/T2) idle noise cannot be refocused, so decoupling alone changes little; the coherent idle error costs accuracy and decoupling recovers it. Readout follows the Figure 1 control.`;
 }
 
+function figAcc() {
+  const t = state.acc, key = `${state.ro}_to_a${t}`, A = agg('std'), ds = [], rows = [];
+  for (const m of Object.keys(METH)) {
+    const pts = A.filter(a => a.method === m && a[key] != null).sort((a, b) => a.nq - b.nq || a.n - b.n).map(a => { const se = a[key + '_logse'] || 0;
+      return { x: a.nq, y: a[key], eb: [a[key] * Math.exp(-se), a[key] * Math.exp(se)], row: a }; });
+    if (pts.length) ds.push(series(METH[m], tok(MSLOT[m]), pts));
+  }
+  legend('lgA', Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]));
+  draw('cA', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Shots per decision', { yType: 'logarithmic', xTitle: 'Total qubits in the circuit (mean per sentence)', yFmt: v => num(v), xTicks: { stepSize: 1 },
+    tt: { label: c => { const a = c.dataset._rows[c.dataIndex]; return `${c.dataset.label}: ${num(c.parsed.y)} shots to ${t}% (${cfgLabel(a)}, ${a[key + '_reached']}/${a.seeds} seeds reach it)`; } } }) });
+  for (const a of A.slice().sort((x, y) => x.nq - y.nq || x.n - y.n || x.method.localeCompare(y.method)))
+    rows.push([cfgLabel(a), METH[a.method], a.nq.toFixed(1), pct(a.exact), a[key] != null ? num(a[key]) : `not reached (exact ${pct(a.exact)})`, a[key] != null ? `${a[key + '_reached']}/${a.seeds}` : `0/${a.seeds}`]);
+  table('tA', ['Config', 'Model', 'Qubits', 'Exact', `Shots to ${t}%`, 'Seeds reaching'], rows);
+  const big = A.filter(a => a.method === 'PS' && a[key] != null).sort((a, b) => b.nq - a.nq)[0], w = big && A.find(a => a.method === 'warm' && a.e === big.e && a.n === big.n && a[key] != null);
+  const lost = A.filter(a => a.method === 'PS' && a[key] == null).sort((a, b) => a.nq - b.nq)[0];
+  document.getElementById('capA').innerHTML = (big && w ? `At ${Math.round(big.nq)} qubits post-selection needs <b>${num(big[key])}</b> shots to reach ${t}% and warm-start discard <b>${num(w[key])}</b> (${(big[key] / w[key]).toFixed(1)}×). ` : '')
+    + (lost ? `Post-selection cannot reach ${t}% at all from ${Math.round(lost.nq)} qubits (exact ${pct(lost.exact)}); ` : '') + `the discard models keep a roughly flat shot count as qubits are added while post-selection's grows, because its acceptance collapses.`;
+}
+
 function showErr(what, err) { const box = document.getElementById('errbox'); box.hidden = false; box.insertAdjacentHTML('beforeend', `<div>${what} failed to render: ${err}</div>`); }
 function renderAll() {
   if (!S) return;
   if (typeof Chart === 'undefined') { showErr('Charts', 'chart library did not load'); return; }
-  [fig1, fig2, fig3].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + (i + 1), err); } });
+  [fig1, fig2, fig3, figAcc].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + (i + 1), err); } });
 }
 document.querySelectorAll('.group').forEach(g => g.addEventListener('click', e => {
   const b = e.target.closest('button.chip'); if (!b) return;

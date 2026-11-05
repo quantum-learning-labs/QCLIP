@@ -8,6 +8,7 @@ from scipy.stats import norm
 
 # helpers copied from viz_data.py (importing it would run that script)
 BUDGETS = (256, 1024, 4096)          # shots per decision
+ACC_T = (0.60, 0.65, 0.70, 0.75)     # fixed accuracy targets for the shots-per-accuracy figure
 COST = {'ibm': dict(rep=250e-6, job=2.0, per_job=190, W=25e3), 'ionq': dict(t1=1.1e-4, t2=9e-4, shot=1.5e-3, circ=10.0, W=5e3)}
 
 
@@ -83,6 +84,7 @@ for f in latest(('e4_sc4', 'e4_sc4_rerun'), 'hp_sc4_*__*.npz'):
         for b in BUDGETS: r[f'{kk}@{b}'] = exp_acc(D, V, c, b)
         r[f'{kk}_to_abs'] = shots_to(D, V, c, 0.75 if tset == 'std' else 0.80)
         r[f'{kk}_to_rel'] = shots_to(D, V, c, rel_target(acc))
+        for t in ACC_T: r[f'{kk}_to_a{round(100 * t)}'] = shots_to(D, V, c, t)
         ok = D > 0                                   # geometric-mean shots per correctly ranked pair (cost to resolve its sign at 1 sd)
         r[f'{kk}_geo_shots'] = float(np.exp(np.mean(np.log(c * V[ok] / D[ok] ** 2)))) if ok.any() else None
     rows.append(r)
@@ -105,11 +107,11 @@ if len(df):
         a = {'e': int(e), 'n': int(n), 'method': meth, 'set': tset, 'seeds': len(q)}
         for c in num:
             v = q[c].dropna().astype(float)
-            if c.endswith(('_to_abs', '_to_rel', '_geo_shots')):            # shot counts: geometric mean, SE on the log scale
+            if c.endswith(('_to_abs', '_to_rel', '_geo_shots')) or re.search(r'_to_a\d+$', c):            # shot counts: geometric mean, SE on the log scale
                 lv = np.log(v[v > 0])
                 a[c] = float(np.exp(lv.mean())) if len(lv) else None
                 a[c + '_logse'] = float(lv.std(ddof=1) / np.sqrt(len(lv))) if len(lv) > 1 else None
-                if c.endswith('_to_abs'): a[c + '_reached'] = int(len(lv))
+                if c.endswith('_to_abs') or re.search(r'_to_a\d+$', c): a[c + '_reached'] = int(len(lv))
             else:
                 a[c] = float(v.mean()) if len(v) else None
                 a[c + '_se'] = float(v.std(ddof=1) / np.sqrt(len(v))) if len(v) > 1 else None
