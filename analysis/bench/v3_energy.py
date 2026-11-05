@@ -69,6 +69,8 @@ def main():
     ap.add_argument('--qpu_only', action='store_true', help='only the CPU part (c); runs without a GPU')
     ap.add_argument('--scaling_only', action='store_true', help='only the scaling probe (b)')
     ap.add_argument('--no_scaling', action='store_true', help='skip the scaling probe (b)')
+    ap.add_argument('--precision', default='double', choices=['double', 'single'])
+    ap.add_argument('--nq_cap', type=int, default=0, help='skip decisions whose circuit has more qubits than this (statevector memory)')
     ap.add_argument('--o_max', type=int, default=6, help='O-readout circuits only up to this many output qubits')
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
@@ -78,16 +80,16 @@ def main():
         return
     m = Meter(); idle = m.idle_W()
     print(f'GPU {m.name}, idle {idle:.1f} W', flush=True)
-    sim = AerSimulator(method='statevector', device='GPU', precision='double')
+    sim = AerSimulator(method='statevector', device='GPU', precision=a.precision)
     if a.scaling_only:
         a.checkpoints = []
     with open(out / 'gpu_models.csv' if not a.scaling_only else out / 'gpu_models_unused.csv', 'w', newline='') as f1:
         w1 = csv.writer(f1)
-        w1.writerow(['gpu', 'ckpt', 'text_n', 'pairs', 'nq_mean', 'nq_max', 'J_gross', 'J_net', 'seconds', 'J_net_per_decision', 'J_gross_per_decision', 'idle_W'])
+        w1.writerow(['gpu', 'ckpt', 'text_n', 'pairs', 'nq_mean', 'nq_max', 'J_gross', 'J_net', 'seconds', 'J_net_per_decision', 'J_gross_per_decision', 'idle_W', 'precision'])
         for c in a.checkpoints:
             ckpt = Path(c)
             config, qlimit, fr = frames(ckpt, 0)
-            fr = fr[:a.pairs]
+            fr = [x for x in fr if not a.nq_cap or max(x[1][0][0].num_qubits, x[1][1][0].num_qubits) <= a.nq_cap][:a.pairs]
             circs = []
             for _, ((qt, qip, oq), (_, qin, _)) in fr:
                 cs = build(qt, qip, qin, oq, a.o_max)
@@ -98,7 +100,7 @@ def main():
             J, s = m.run(lambda: sim.run(tc).result())
             nq = [x.num_qubits for x in circs]
             w1.writerow([m.name, ckpt.parent.name, config['text'].get('n'), len(circs), np.mean(nq), max(nq), J, J - idle * s, s,
-                         (J - idle * s) / len(circs), J / len(circs), idle]); f1.flush()
+                         (J - idle * s) / len(circs), J / len(circs), idle, a.precision]); f1.flush()
             print(ckpt.parent.name, f'GPU {J:.1f} J gross over {s:.1f} s for {len(circs)} decisions', flush=True)
     if a.no_scaling:
         return

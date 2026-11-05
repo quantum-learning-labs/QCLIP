@@ -42,7 +42,7 @@ def shots_to(D, V, circ, t):
 
 
 R, OUT = sys.argv[1], sys.argv[2]
-PAT = re.compile(r'hp_sc4_(nodiscard|discard)_e(\d+)_n(\d+)_tl2_(qlr3e-3|pw0|pw0_ws)(?:_r\d+)?_s(\d+)')
+PAT = re.compile(r'hp_sc4i?_(nodiscard|discard)_e(\d+)_n(\d+)_tl2_(qlr3e-3|pw0|pw0_ws)(?:_r\d+)?_s(\d+)')
 METH = {'qlr3e-3': 'PS', 'pw0': 'plain', 'pw0_ws': 'warm'}
 
 
@@ -142,6 +142,15 @@ if qs is not None and out['agg']:
 g = read_csvs('gpu_models.csv')
 if g is not None:
     out['gpu'] = [dict(r, **(parse(r['ckpt']) or {})) for r in g.to_dict('records')]
+
+# inference-only cost inputs: structure statistics of the circuits per (e, n, readout), from trained AND untrained (hp_sc4i_*) checkpoints
+q2 = read_csvs('qpu_stats.csv')
+if q2 is not None:
+    q2 = pd.concat([q2, pd.DataFrame([parse(c) or {} for c in q2.ckpt])], axis=1).dropna(subset=['e'])
+    st2 = q2.groupby(['e', 'n', 'kind']).agg(nq=('nq', 'mean'), ibm_duration_s=('ibm_duration_s', 'mean'), ibm_n2q=('ibm_n2q', 'mean'), ibm_n1q=('ibm_n1q', 'mean'),
+                                              ionq_n1q=('ionq_n1q', 'mean'), ionq_n2q=('ionq_n2q', 'mean'), circuits=('idx', 'count')).reset_index()
+    st2[['e', 'n']] = st2[['e', 'n']].astype(int)
+    out['inf_qpu'] = st2.to_dict('records')
 
 # noisy runs
 for f in latest(('e6_sc4', 'e6_sc4_rerun'), '*.npz'):
