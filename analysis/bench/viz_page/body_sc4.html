@@ -10,9 +10,8 @@
 
 <section class="fig" id="f1">
   <div class="fig-head"><div class="tag">Figure 1</div><h2>Qubits against accuracy</h2>
-  <p>x = qubits of a typical sentence circuit (e + 3n + 1). Exact = unlimited shots; otherwise the expected accuracy at a fixed number of shots per decision. Points are means over 3 seeds, bars ±1 standard error.</p></div>
+  <p>x = total qubits of the sentence circuit (output + all wires + auxiliaries, mean over sentences; = e + 3n + 1 for a typical sentence). Each model size is one point; sizes reached by growing the output register and by growing the qubits per wire sit on the same line. Exact = unlimited shots; otherwise the expected accuracy at a fixed number of shots per decision. Points are means over 3 seeds, bars ±1 standard error.</p></div>
   <div class="controls">
-    <div class="group" data-ctl="ax"><span>Axis</span><button class="chip" data-v="e" aria-pressed="true">Output qubits e</button><button class="chip" data-v="n">Qubits per wire n</button><button class="chip" data-v="both">Both</button></div>
     <div class="group" data-ctl="f1m"><span>Metric</span><button class="chip" data-v="exact" aria-pressed="true">Exact</button><button class="chip" data-v="256">256 shots</button><button class="chip" data-v="1024">1024 shots</button><button class="chip" data-v="4096">4096 shots</button></div>
     <div class="group" data-ctl="ro"><span>Readout</span><button class="chip" data-v="cu" aria-pressed="true">Compute-uncompute</button><button class="chip" data-v="O">Optimal (O)</button></div>
   </div>
@@ -72,7 +71,7 @@ const METH = { PS: 'Post-selection', plain: 'Discard, plain', warm: 'Discard, wa
 const MSLOT = { PS: '--s1', plain: '--s2', warm: '--s3' };
 const ARMS = [['honest_miami', 'Honest'], ['honest_miami+dd', '+ DD'], ['honest_miami+det10+zz20', '+ coherent idle'], ['honest_miami+dd+det10+zz20', '+ coherent idle + DD']];
 const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const state = { ax: 'e', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS' };
+const state = { ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS' };
 const charts = {};
 let D = null, S = null;
 const pct = v => v == null ? '–' : (100 * v).toFixed(1) + '%';
@@ -106,8 +105,8 @@ function table(id, head, rows) { document.getElementById(id).innerHTML = `<table
 const series = (label, color, pts, extra = {}) => ({ label, data: pts.map(p => ({ x: p.x, y: p.y })), _eb: pts.map(p => p.eb), _rows: pts.map(p => p.row), borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, pointBorderColor: tok('--surface'), pointBorderWidth: 2, tension: 0, showLine: true, ...extra });
 
 // which configs belong to the chosen axis
-const onAxis = (a, ax) => ax === 'e' ? a.n === 1 : ax === 'n' ? a.e === 3 : true;
-const axes = () => state.ax === 'both' ? [['e', []], ['n', [6, 4]]] : [[state.ax, []]];
+const onAxis = () => true;   // every model size is one point on one line (x = total circuit qubits); no per-axis split
+const axes = () => [['all', []]];
 const cfgLabel = a => `e=${a.e}, n=${a.n}`;
 const agg = (set = 'std') => S.agg.filter(a => a.set === set);
 
@@ -126,19 +125,19 @@ function fig1() {
   const key = state.f1m === 'exact' ? 'exact' : `${state.ro}@${state.f1m}`;
   const A = agg(), ds = [], rows = [];
   for (const [ax, dash] of axes()) for (const m of Object.keys(METH)) {
-    const pts = A.filter(a => a.method === m && onAxis(a, ax)).sort((a, b) => a.nq - b.nq).map(a => { const se = a[key + '_se'] || 0;
+    const pts = A.filter(a => a.method === m && onAxis(a, ax)).sort((a, b) => a.nq - b.nq || a.n - b.n).map(a => { const se = a[key + '_se'] || 0;
       return { x: a.nq, y: 100 * a[key], eb: [100 * (a[key] - se), 100 * (a[key] + se)], row: a }; });
-    if (pts.length) ds.push(series(`${METH[m]}${state.ax === 'both' ? (ax === 'e' ? ' (e axis)' : ' (n axis)') : ''}`, tok(MSLOT[m]), pts, { borderDash: dash }));
+    if (pts.length) ds.push(series(METH[m], tok(MSLOT[m]), pts, { borderDash: dash }));
   }
-  legend('lg1', Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]).concat(state.ax === 'both' ? [['n axis (dashed)', tok('--muted'), true]] : []));
-  draw('c1', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Accuracy (%)', { xTitle: 'Qubits per sentence circuit (typical)', yFmt: v => v + '%', xTicks: { stepSize: 1 },
+  legend('lg1', Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]));
+  draw('c1', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Accuracy (%)', { xTitle: 'Total qubits in the circuit (mean per sentence)', yFmt: v => v + '%', xTicks: { stepSize: 1 },
     tt: { label: c => { const a = c.dataset._rows[c.dataIndex]; return `${c.dataset.label}: ${c.parsed.y.toFixed(1)}% ± ${(100 * (a[key + '_se'] || 0)).toFixed(1)} (${cfgLabel(a)}, ${a.seeds} seeds)`; } } }) });
-  for (const a of A.filter(a => onAxis(a, state.ax)).sort((a, b) => a.n - b.n || a.e - b.e || a.method.localeCompare(b.method)))
+  for (const a of A.slice().sort((a, b) => a.nq - b.nq || a.n - b.n || a.method.localeCompare(b.method)))
     rows.push([cfgLabel(a), METH[a.method], a.nq.toFixed(1), pct(a.exact) + ' ± ' + (100 * (a.exact_se || 0)).toFixed(1), pct(a[`${state.ro}@1024`]), a.acceptance ? a.acceptance.toFixed(4) : '–', a.seeds]);
   table('t1', ['Config', 'Model', 'Qubits', 'Exact', `${state.ro.toUpperCase()} @1024`, 'PS acceptance', 'Seeds'], rows);
-  const ps = A.filter(a => a.method === 'PS' && a.n === 1), wm = A.filter(a => a.method === 'warm' && a.n === 1);
-  const pn = A.filter(a => a.method === 'PS' && a.e === 3).sort((a, b) => a.n - b.n);
-  document.getElementById('cap1').innerHTML = `Along the output axis (n=1) accuracy is flat: PS ${pct(Math.min(...ps.map(a => a.exact)))}–${pct(Math.max(...ps.map(a => a.exact)))}, warm-start discard ${pct(Math.min(...wm.map(a => a.exact)))}–${pct(Math.max(...wm.map(a => a.exact)))}. Along the wire axis (e=3) PS acceptance falls from ${pn.map(a => a.acceptance.toFixed(3)).join(' → ')} as more qubits are post-selected, so its fixed-budget accuracy drops much faster than its exact accuracy.`;
+  const PSs = A.filter(a => a.method === 'PS'), WMs = A.filter(a => a.method === 'warm'), nqs = A.map(a => a.nq);
+  const accs = PSs.slice().sort((a, b) => a.nq - b.nq).map(a => a.acceptance).filter(v => v != null);
+  document.getElementById('cap1').innerHTML = `Over ${Math.round(Math.min(...nqs))}–${Math.round(Math.max(...nqs))} total qubits, exact accuracy ranges ${pct(Math.min(...PSs.map(a => a.exact)))}–${pct(Math.max(...PSs.map(a => a.exact)))} for PS and ${pct(Math.min(...WMs.map(a => a.exact)))}–${pct(Math.max(...WMs.map(a => a.exact)))} for warm-start discard. PS acceptance falls from ${accs[0].toFixed(3)} to ${accs[accs.length - 1].toFixed(4)} as qubits are added (more post-selected wires), so its fixed-budget accuracy drops much faster than its exact accuracy.`;
   // 1b noisy
   const N = noisyAgg().filter(r => r.profile === state.prof), ds2 = [];
   for (const [ax, dash] of axes()) for (const m of ['PS', 'warm']) {
@@ -147,18 +146,18 @@ function fig1() {
     if (pts.length) ds2.push(series(METH[m], tok(MSLOT[m]), pts, { borderDash: dash }));
   }
   legend('lg1b', ['PS', 'warm'].map(m => [METH[m], tok(MSLOT[m])]));
-  draw('c1b', { type: 'scatter', data: { datasets: ds2 }, options: baseOpts('Accuracy (%)', { xTitle: 'Qubits per sentence circuit (typical)', yFmt: v => v + '%', xTicks: { stepSize: 1 },
+  draw('c1b', { type: 'scatter', data: { datasets: ds2 }, options: baseOpts('Accuracy (%)', { xTitle: 'Total qubits in the circuit (mean per sentence)', yFmt: v => v + '%', xTicks: { stepSize: 1 },
     tt: { label: c => { const r = c.dataset._rows[c.dataIndex]; return `${c.dataset.label}: ${c.parsed.y.toFixed(1)}% (${cfgLabel(r)}, ${r.seeds} seed${r.seeds > 1 ? 's' : ''})`; } } }) });
   document.getElementById('cap1b').innerHTML = N.length ? `Seeds per point vary (1–3) while runs finish; bars are ±1 SE over seeds, or over the 300 pairs for a single seed.` : 'Noise runs for this profile are still running.';
 }
 
 function fig2() {
   const A = agg().filter(a => a[state.gx] != null), ds = [];
-  for (const m of Object.keys(METH)) for (const [ax, dash] of [['e', []], ['n', [6, 4]]]) {
+  for (const m of Object.keys(METH)) for (const [ax, dash] of [['all', []]]) {
     const pts = A.filter(a => a.method === m && onAxis(a, ax)).sort((a, b) => a[state.gx] - b[state.gx]).map(a => ({ x: a[state.gx], y: 100 * a.exact, eb: [100 * (a.exact - (a.exact_se || 0)), 100 * (a.exact + (a.exact_se || 0))], row: a }));
     if (pts.length) ds.push(series(METH[m], tok(MSLOT[m]), pts, { borderDash: dash }));
   }
-  legend('lg2', Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]).concat([['output axis solid · wire axis dashed', tok('--muted'), true]]));
+  legend('lg2', Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]));
   draw('c2', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Exact accuracy (%)', { xTitle: state.gx === 'cx_cu' ? 'Logical CNOTs per compute-uncompute circuit' : 'Kingston-native two-qubit gates per circuit', yFmt: v => v + '%',
     tt: { label: c => { const a = c.dataset._rows[c.dataIndex]; return `${c.dataset.label}: ${c.parsed.y.toFixed(1)}% at ${Math.round(c.parsed.x)} gates (${cfgLabel(a)})`; } } }) });
   table('t2', ['Config', 'Qubits', 'Logical CNOT (CU)', 'Logical CNOT (O)', 'Kingston 2q (CU)', 'Kingston 2q (O)'],
@@ -170,18 +169,18 @@ function fig3() {
   const tg = state.tg, ro = state.ro, A = agg('std');
   const key = `${ro}_to_${tg}`, ds = [];
   for (const [ax, dash] of axes()) for (const m of Object.keys(METH)) {
-    const pts = A.filter(a => a.method === m && onAxis(a, ax) && a[key] != null).sort((a, b) => a.nq - b.nq).map(a => { const se = a[key + '_logse'] || 0;
+    const pts = A.filter(a => a.method === m && onAxis(a, ax) && a[key] != null).sort((a, b) => a.nq - b.nq || a.n - b.n).map(a => { const se = a[key + '_logse'] || 0;
       return { x: a.nq, y: a[key], eb: [a[key] * Math.exp(-se), a[key] * Math.exp(se)], row: a }; });
     if (pts.length) ds.push(series(METH[m], tok(MSLOT[m]), pts, { borderDash: dash }));
   }
   legend('lg3a', Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]));
-  draw('c3a', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Shots per decision', { yType: 'logarithmic', xTitle: 'Qubits per sentence circuit (typical)', yFmt: v => num(v), xTicks: { stepSize: 1 },
+  draw('c3a', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Shots per decision', { yType: 'logarithmic', xTitle: 'Total qubits in the circuit (mean per sentence)', yFmt: v => num(v), xTicks: { stepSize: 1 },
     tt: { label: c => { const a = c.dataset._rows[c.dataIndex]; return `${c.dataset.label}: ${num(c.parsed.y)} shots (${cfgLabel(a)}${tg === 'abs' ? `, ${a[key + '_reached']}/${a.seeds} seeds reach 75%` : ''})`; } } }) });
   // energy
   const Q = S.qpu.filter(q => q.set === 'std' && q.readout === ro && q.target === tg), eds = [], rows = [];
   const fld = (dev) => state.cost === 'all' ? `${dev}_J` : `${dev}_J_shots_only`;
   for (const [dev, dash, devL] of [['ibm', [], 'IBM'], ['ionq', [6, 4], 'IonQ']]) for (const m of Object.keys(METH)) {
-    const pts = Q.filter(q => q.method === m && onAxis(q, state.ax === 'both' ? 'both' : state.ax)).sort((a, b) => a.nq - b.nq).map(q => {
+    const pts = Q.filter(q => q.method === m && onAxis(q)).sort((a, b) => a.nq - b.nq || a.n - b.n).map(q => {
       const f = Math.exp(q.logse || 0), shotJ = q[`${dev}_J_shots_only`], ov = q[fld(dev)] - shotJ;
       return { x: q.nq, y: q[fld(dev)], eb: [shotJ / f + ov, shotJ * f + ov], row: q }; });
     if (pts.length) eds.push(series(`${devL}, ${METH[m]}`, tok(MSLOT[m]), pts, { borderDash: dash }));
@@ -189,19 +188,19 @@ function fig3() {
   }
   const G = S.gpu.filter(g => onAxis(g, state.ax)).sort((a, b) => a.nq_mean - b.nq_mean);
   if (G.length) eds.push(series('GPU, exact simulation (our models)', tok('--s7'), G.map(g => ({ x: g.nq_mean, y: g.J_gross_per_decision, row: g })), { borderDash: [2, 3] }));
-  const sc = (D.ref.v3_gpu_scaling || []).map(r => ({ x: r.n, y: r.J_gross / r.circuits, row: r }));
+  const xs = eds.flatMap(d => d.data.map(p => p.x)), xmin = Math.min(...xs), xmax = Math.max(...xs);   // range of the trained sweep
+  const scAll = (D.ref.v3_gpu_scaling || []).map(r => ({ x: r.n, y: r.J_gross / r.circuits, row: r })), sc = scAll.filter(p => p.x <= xmax + 0.01);
   if (sc.length) eds.push(series('GPU, scaling probe (one circuit)', tok('--muted'), sc, { borderDash: [2, 3], pointRadius: 2 }));
-  const xs = eds.flatMap(d => d.data.map(p => p.x)), xmin = Math.min(...xs), xmax = Math.max(...xs);
   eds.push({ label: 'CLIP ViT-B/32 (GPU)', data: [{ x: xmin, y: D.ref.clip }, { x: xmax, y: D.ref.clip }], borderColor: tok('--fg2'), borderDash: [1, 4], borderWidth: 1.5, pointRadius: 0, showLine: true });
   legend('lg3', [['IBM (solid)', tok('--fg2')], ['IonQ (dashed)', tok('--fg2'), true]].concat(Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]), [['GPU exact, our models', tok('--s7'), true], ['GPU scaling probe', tok('--muted'), true], ['CLIP (GPU)', tok('--fg2'), true]]));
-  draw('c3', { type: 'scatter', data: { datasets: eds }, options: baseOpts('Energy per decision (J)', { yType: 'logarithmic', xTitle: 'Qubits per sentence circuit', yFmt: v => J(v),
+  draw('c3', { type: 'scatter', data: { datasets: eds }, options: baseOpts('Energy per decision (J)', { x: { min: Math.floor(xmin) - 0.5, max: Math.ceil(xmax) + 0.5 }, yType: 'logarithmic', xTitle: 'Total qubits in the circuit (mean per sentence)', yFmt: v => J(v),
     tt: { label: c => `${c.dataset.label}: ${J(c.parsed.y)} at ${c.parsed.x.toFixed(1)} qubits` } }) });
   table('t3', ['Config', 'Model', 'Qubits', 'Shots/decision', 'IBM', 'IonQ'], rows);
   document.getElementById('pend3').textContent = Q.length ? '' : 'QPU device statistics (transpile) for the new sizes are still being computed; shots are final.';
   document.getElementById('pend3').hidden = !!Q.length;
   const p8 = A.find(a => a.e === 8 && a.n === 1 && a.method === 'PS'), w8 = A.find(a => a.e === 8 && a.n === 1 && a.method === 'warm');
   const p3 = A.find(a => a.e === 3 && a.n === 3 && a.method === 'PS'), w3 = A.find(a => a.e === 3 && a.n === 3 && a.method === 'warm');
-  document.getElementById('cap3').innerHTML = (p8 && w8 && p3 && w3) ? `Shots to the target (${ro.toUpperCase()} readout): with 8 output qubits PS needs <b>${num(p8[key])}</b>, warm-start discard <b>${num(w8[key])}</b>; with 3 qubits per wire PS needs <b>${num(p3[key])}</b> against <b>${num(w3[key])}</b>, because PS keeps only ${(100 * p3.acceptance).toFixed(1)}% of its shots. QPU energy follows the shot count once shots dominate the fixed overhead; GPU simulation energy grows about 4× per two qubits.` : '';
+  document.getElementById('cap3').innerHTML = (p8 && w8 && p3 && w3) ? `Shots to the target (${ro.toUpperCase()} readout): at ${Math.round(p8.nq)} qubits (8 output) PS needs <b>${num(p8[key])}</b>, warm-start discard <b>${num(w8[key])}</b>; at ${Math.round(p3.nq)} qubits (3 per wire) PS needs <b>${num(p3[key])}</b> against <b>${num(w3[key])}</b>, because PS keeps only ${(100 * p3.acceptance).toFixed(1)}% of its shots. QPU energy follows the shot count once shots dominate the fixed overhead; GPU simulation energy grows about 4× per two qubits.` : '';
 }
 
 function fig4() {
