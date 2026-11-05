@@ -43,6 +43,7 @@
   <p>Shots per decision to reach the target, then QPU energy = (shots × time per shot + fixed per-circuit overhead) × machine power. Time per shot comes from the transpiled circuits (IBM Kingston schedule; IonQ native gates run one after another). GPU = exact classical simulation of one decision, measured with NVML.</p></div>
   <div class="controls">
     <div class="group" data-ctl="tg"><span>Target</span><button class="chip" data-v="rel" aria-pressed="true">95% of own edge</button><button class="chip" data-v="abs">Absolute 75%</button></div>
+    <div class="group" data-ctl="esh"><span>Shots / decision</span><button class="chip" data-v="256">256</button><button class="chip" data-v="1024" aria-pressed="true">1024</button><button class="chip" data-v="4096">4096</button><button class="chip" data-v="target">To target (trained)</button></div>
     <div class="group" data-ctl="cost"><span>QPU cost</span><button class="chip" data-v="all" aria-pressed="true">Shots + overhead</button><button class="chip" data-v="shots">Shots only</button></div>
   </div>
   <h3>Shots per decision to the target</h3>
@@ -52,6 +53,7 @@
   <div class="legend" id="lg3"></div>
   <div class="chart"><canvas id="c3" aria-label="Energy per decision, log scale"></canvas></div>
   <p class="pending" id="pend3"></p>
+  <p class="cap" id="capE"></p>
   <p class="cap" id="cap3"></p>
   <details><summary>Table view</summary><div class="tbl" id="t3"></div></details>
 </section>
@@ -83,7 +85,7 @@ const METH = { PS: 'Post-selection', plain: 'Discard, plain', warm: 'Discard, wa
 const MSLOT = { PS: '--s1', plain: '--s2', warm: '--s3' };
 const ARMS = [['honest_miami', 'Honest'], ['honest_miami+dd', '+ DD'], ['honest_miami+det10+zz20', '+ coherent idle'], ['honest_miami+dd+det10+zz20', '+ coherent idle + DD']];
 const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const state = { acc: '70', ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS' };
+const state = { esh: '1024', acc: '70', ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS' };
 const charts = {};
 let D = null, S = null;
 const pct = v => v == null ? '–' : (100 * v).toFixed(1) + '%';
@@ -188,28 +190,56 @@ function fig3() {
   legend('lg3a', Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]));
   draw('c3a', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Shots per decision', { yType: 'logarithmic', xTitle: 'Total qubits in the circuit (mean per sentence)', yFmt: v => num(v), xTicks: { stepSize: 1 },
     tt: { label: c => { const a = c.dataset._rows[c.dataIndex]; return `${c.dataset.label}: ${num(c.parsed.y)} shots (${cfgLabel(a)}${tg === 'abs' ? `, ${a[key + '_reached']}/${a.seeds} seeds reach 75%` : ''})`; } } }) });
-  // energy
-  const Q = S.qpu.filter(q => q.set === 'std' && q.readout === ro && q.target === tg), eds = [], rows = [];
+  // energy per decision: fixed shot budget (inference cost only, no accuracy involved) or shots measured to the target (trained models, <= 16 qubits)
+  const eds = [], rows = [], fixed = state.esh !== 'target', sh = +state.esh, CM = S.notes.cost_model, kind = ro === 'cu' ? 'cu' : 'O', circ = kind === 'cu' ? 2 : 1;
   const fld = (dev) => state.cost === 'all' ? `${dev}_J` : `${dev}_J_shots_only`;
-  for (const [dev, dash, devL] of [['ibm', [], 'IBM'], ['ionq', [6, 4], 'IonQ']]) for (const m of Object.keys(METH)) {
-    const pts = Q.filter(q => q.method === m && onAxis(q)).sort((a, b) => a.nq - b.nq || a.n - b.n).map(q => {
-      const f = Math.exp(q.logse || 0), shotJ = q[`${dev}_J_shots_only`], ov = q[fld(dev)] - shotJ;
-      return { x: q.nq, y: q[fld(dev)], eb: [shotJ / f + ov, shotJ * f + ov], row: q }; });
-    if (pts.length) eds.push(series(`${devL}, ${METH[m]}`, tok(MSLOT[m]), pts, { borderDash: dash }));
-    for (const q of Q.filter(q => q.method === m && onAxis(q, state.ax)).filter(() => dev === 'ibm')) rows.push([cfgLabel(q), METH[m], q.nq.toFixed(1), num(q.shots_per_decision), J(q[fld('ibm')]), J(q[fld('ionq')])]);
+  const Efix = (r, dev) => dev === 'ibm' ? (sh * (r.ibm_duration_s + CM.ibm.rep) + (state.cost === 'all' ? circ * CM.ibm.job / CM.ibm.per_job : 0)) * CM.ibm.W
+    : (sh * (r.ionq_n1q * CM.ionq.t1 + r.ionq_n2q * CM.ionq.t2 + CM.ionq.shot) + (state.cost === 'all' ? circ * CM.ionq.circ : 0)) * CM.ionq.W;
+  const curves = {};
+  if (fixed) {
+    const R = (S.inf_qpu || []).filter(r => r.kind === kind).sort((a, b) => a.nq - b.nq || a.n - b.n);
+    for (const [dev, dash, devL, col] of [['ibm', [], 'IBM Kingston', '--s1'], ['ionq', [6, 4], 'IonQ Forte', '--s2']]) {
+      const pts = R.map(r => ({ x: r.nq, y: Efix(r, dev), row: r })); curves[dev] = pts;
+      if (pts.length) eds.push(series(`${devL}, ${sh} shots`, tok(col), pts, { borderDash: dash }));
+      if (dev === 'ibm') for (const r of R) rows.push([cfgLabel(r), '–', r.nq.toFixed(1), String(sh), J(Efix(r, 'ibm')), J(Efix(r, 'ionq'))]);
+    }
+  } else {
+    const Q = S.qpu.filter(q => q.set === 'std' && q.readout === ro && q.target === tg);
+    for (const [dev, dash, devL] of [['ibm', [], 'IBM'], ['ionq', [6, 4], 'IonQ']]) for (const m of Object.keys(METH)) {
+      const pts = Q.filter(q => q.method === m).sort((a, b) => a.nq - b.nq || a.n - b.n).map(q => {
+        const f = Math.exp(q.logse || 0), shotJ = q[`${dev}_J_shots_only`], ov = q[fld(dev)] - shotJ;
+        return { x: q.nq, y: q[fld(dev)], eb: [shotJ / f + ov, shotJ * f + ov], row: q }; });
+      if (pts.length) eds.push(series(`${devL}, ${METH[m]}`, tok(MSLOT[m]), pts, { borderDash: dash }));
+      for (const q of Q.filter(q => q.method === m && dev === 'ibm')) rows.push([cfgLabel(q), METH[m], q.nq.toFixed(1), num(q.shots_per_decision), J(q[fld('ibm')]), J(q[fld('ionq')])]);
+    }
   }
-  const G = S.gpu.filter(g => onAxis(g, state.ax)).sort((a, b) => a.nq_mean - b.nq_mean);
-  if (G.length) eds.push(series('GPU, exact simulation (our models)', tok('--s7'), G.map(g => ({ x: g.nq_mean, y: g.J_gross_per_decision, row: g })), { borderDash: [2, 3] }));
-  const xs = eds.flatMap(d => d.data.map(p => p.x)), xmin = Math.min(...xs), xmax = Math.max(...xs);   // range of the trained sweep
+  const G = S.gpu.filter(g => g.nq_mean != null).sort((a, b) => a.nq_mean - b.nq_mean);
+  const gpts = G.map(g => ({ x: g.nq_mean, y: g.J_gross_per_decision, row: g }));
+  if (gpts.length) eds.push(series('GPU, exact simulation of the same circuits', tok('--s7'), gpts, { borderDash: [2, 3] }));
+  // crossover: first qubit count where the GPU curve passes the IBM curve (log-linear interpolation between sizes)
+  let cross = null;
+  if (fixed && gpts.length > 1 && curves.ibm && curves.ibm.length > 1) {
+    const interp = (pts, x) => { for (let k = 1; k < pts.length; k++) if (pts[k].x >= x && pts[k].x > pts[k - 1].x && pts[k - 1].x <= x) { const t = (x - pts[k - 1].x) / (pts[k].x - pts[k - 1].x); return Math.exp(Math.log(pts[k - 1].y) * (1 - t) + Math.log(pts[k].y) * t); } return null; };
+    const lo = Math.max(gpts[0].x, curves.ibm[0].x), hi = Math.min(gpts[gpts.length - 1].x, curves.ibm[curves.ibm.length - 1].x);
+    let prev = null;
+    for (let x = lo; x <= hi + 1e-9 && !cross; x += 0.05) { const g = interp(gpts, x), q = interp(curves.ibm, x); if (g == null || q == null) continue;
+      const d = Math.log(g) - Math.log(q); if (prev != null && prev < 0 && d >= 0) cross = { x, y: Math.sqrt(g * q) }; prev = d; }
+    if (cross) eds.push({ label: 'crossover', data: [{ x: cross.x, y: cross.y }], borderColor: tok('--fg'), backgroundColor: 'transparent', borderWidth: 2, pointStyle: 'rectRot', pointRadius: 9, showLine: false });
+  }
+  const xs = eds.flatMap(d => d.data.map(p => p.x)), xmin = Math.min(...xs), xmax = Math.max(...xs);
   const scAll = (D.ref.v3_gpu_scaling || []).map(r => ({ x: r.n, y: r.J_gross / r.circuits, row: r })), sc = scAll.filter(p => p.x <= xmax + 0.01);
-  if (sc.length) eds.push(series('GPU, scaling probe (one circuit)', tok('--muted'), sc, { borderDash: [2, 3], pointRadius: 2 }));
+  if (sc.length) eds.push(series('GPU, scaling probe (one random circuit)', tok('--muted'), sc, { borderDash: [2, 3], pointRadius: 2 }));
   eds.push({ label: 'CLIP ViT-B/32 (GPU)', data: [{ x: xmin, y: D.ref.clip }, { x: xmax, y: D.ref.clip }], borderColor: tok('--fg2'), borderDash: [1, 4], borderWidth: 1.5, pointRadius: 0, showLine: true });
-  legend('lg3', [['IBM (solid)', tok('--fg2')], ['IonQ (dashed)', tok('--fg2'), true]].concat(Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])]), [['GPU exact, our models', tok('--s7'), true], ['GPU scaling probe', tok('--muted'), true], ['CLIP (GPU)', tok('--fg2'), true]]));
+  legend('lg3', (fixed ? [['IBM Kingston', tok('--s1')], ['IonQ Forte (dashed)', tok('--s2'), true]] : [['IBM (solid)', tok('--fg2')], ['IonQ (dashed)', tok('--fg2'), true]].concat(Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])])))
+    .concat([['GPU exact simulation', tok('--s7'), true], ['GPU scaling probe', tok('--muted'), true], ['CLIP (GPU)', tok('--fg2'), true]]).concat(cross ? [['crossover', tok('--fg')]] : []));
   draw('c3', { type: 'scatter', data: { datasets: eds }, options: baseOpts('Energy per decision (J)', { x: { min: Math.floor(xmin) - 0.5, max: Math.ceil(xmax) + 0.5 }, yType: 'logarithmic', xTitle: 'Total qubits in the circuit (mean per sentence)', yFmt: v => J(v),
     tt: { label: c => `${c.dataset.label}: ${J(c.parsed.y)} at ${c.parsed.x.toFixed(1)} qubits` } }) });
   table('t3', ['Config', 'Model', 'Qubits', 'Shots/decision', 'IBM', 'IonQ'], rows);
-  document.getElementById('pend3').textContent = Q.length ? '' : 'QPU device statistics (transpile) for the new sizes are still being computed; shots are final.';
-  document.getElementById('pend3').hidden = !!Q.length;
+  const havePts = fixed ? (S.inf_qpu || []).length : S.qpu.length;
+  document.getElementById('pend3').textContent = havePts ? '' : 'QPU device statistics for the larger sizes are still being computed.';
+  document.getElementById('pend3').hidden = !!havePts;
+  document.getElementById('capE').innerHTML = fixed ? (cross ? `With ${sh} shots per decision, exact GPU simulation of these circuits overtakes IBM Kingston at about <b>${cross.x.toFixed(0)} qubits</b> (${J(cross.y)} per decision). Below that the GPU is cheaper; above it the cost of simulating 2<sup>n</sup> amplitudes dominates while the QPU cost grows only with circuit duration.` : `No crossover in the measured range with ${sh} shots per decision.`)
+    : 'Energy to reach the target accuracy with the shots measured for the trained models (only sizes up to 16 qubits were trained).';
   const p8 = A.find(a => a.e === 8 && a.n === 1 && a.method === 'PS'), w8 = A.find(a => a.e === 8 && a.n === 1 && a.method === 'warm');
   const p3 = A.find(a => a.e === 3 && a.n === 3 && a.method === 'PS'), w3 = A.find(a => a.e === 3 && a.n === 3 && a.method === 'warm');
   document.getElementById('cap3').innerHTML = (p8 && w8 && p3 && w3) ? `Shots to the target (${ro.toUpperCase()} readout): at ${Math.round(p8.nq)} qubits (8 output) PS needs <b>${num(p8[key])}</b>, warm-start discard <b>${num(w8[key])}</b>; at ${Math.round(p3.nq)} qubits (3 per wire) PS needs <b>${num(p3[key])}</b> against <b>${num(w3[key])}</b>, because PS keeps only ${(100 * p3.acceptance).toFixed(1)}% of its shots. QPU energy follows the shot count once shots dominate the fixed overhead; GPU simulation energy grows about 4× per two qubits.` : '';
