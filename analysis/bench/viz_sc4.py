@@ -139,7 +139,8 @@ if qs is not None and out['agg']:
                     'ibm_J': (S * t_ibm + circ * o_ibm) * COST['ibm']['W'], 'ionq_J': (S * t_ion + circ * o_ion) * COST['ionq']['W'],
                     'ibm_J_shots_only': S * t_ibm * COST['ibm']['W'], 'ionq_J_shots_only': S * t_ion * COST['ionq']['W'],
                     'ibm_shot_s': float(t_ibm), 'ionq_shot_s': float(t_ion), 'ibm_n2q': float(s.ibm_n2q), 'ionq_n2q': float(s.ionq_n2q)})
-g = read_csvs('gpu_models.csv')
+gfs = [f for f in sorted(glob.glob(f'{R}/viz_sc4*/gpu_models.csv')) if not any(t in f for t in ('_infg_', '_infp_', '_infq_'))]       # infg = first inference run (state copied to host; n=9 failed) and infp (GPU not idle, job died): superseded by infq
+g = pd.concat([d for d in (pd.read_csv(f) for f in gfs) if len(d)], ignore_index=True) if gfs else None
 if g is not None:
     out['gpu'] = [dict(r, **(parse(r['ckpt']) or {})) for r in g.to_dict('records')]
 

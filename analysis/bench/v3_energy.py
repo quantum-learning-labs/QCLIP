@@ -69,6 +69,8 @@ def main():
     ap.add_argument('--qpu_only', action='store_true', help='only the CPU part (c); runs without a GPU')
     ap.add_argument('--scaling_only', action='store_true', help='only the scaling probe (b)')
     ap.add_argument('--no_scaling', action='store_true', help='skip the scaling probe (b)')
+    ap.add_argument('--nq_mode', action='store_true', help='keep only decisions whose circuit has the most common qubit count (typical sentences): comparable across sizes')
+    ap.add_argument('--readout', default='state', choices=['state', 'probs'], help='probs: save only the output-register probabilities (no 2^n host copy of the state)')
     ap.add_argument('--precision', default='double', choices=['double', 'single'])
     ap.add_argument('--nq_cap', type=int, default=0, help='skip decisions whose circuit has more qubits than this (statevector memory)')
     ap.add_argument('--o_max', type=int, default=6, help='O-readout circuits only up to this many output qubits')
@@ -80,27 +82,34 @@ def main():
         return
     m = Meter(); idle = m.idle_W()
     print(f'GPU {m.name}, idle {idle:.1f} W', flush=True)
+    if idle > 100: raise SystemExit(f'GPU is not idle ({idle:.0f} W): another process is on it, energy would be polluted; rerun on another node')
     sim = AerSimulator(method='statevector', device='GPU', precision=a.precision)
     if a.scaling_only:
         a.checkpoints = []
     with open(out / 'gpu_models.csv' if not a.scaling_only else out / 'gpu_models_unused.csv', 'w', newline='') as f1:
         w1 = csv.writer(f1)
-        w1.writerow(['gpu', 'ckpt', 'text_n', 'pairs', 'nq_mean', 'nq_max', 'J_gross', 'J_net', 'seconds', 'J_net_per_decision', 'J_gross_per_decision', 'idle_W', 'precision'])
+        w1.writerow(['gpu', 'ckpt', 'text_n', 'pairs', 'nq_mean', 'nq_max', 'J_gross', 'J_net', 'seconds', 'J_net_per_decision', 'J_gross_per_decision', 'idle_W', 'precision', 'readout'])
         for c in a.checkpoints:
             ckpt = Path(c)
             config, qlimit, fr = frames(ckpt, 0)
-            fr = [x for x in fr if not a.nq_cap or max(x[1][0][0].num_qubits, x[1][1][0].num_qubits) <= a.nq_cap][:a.pairs]
+            fr = [x for x in fr if not a.nq_cap or max(x[1][0][0].num_qubits, x[1][1][0].num_qubits) <= a.nq_cap]
+            if a.nq_mode:
+                from collections import Counter
+                mode = Counter(x[1][0][0].num_qubits for x in fr).most_common(1)[0][0]
+                fr = [x for x in fr if x[1][0][0].num_qubits == mode and x[1][1][0].num_qubits == mode]
+                print(f'{ckpt.parent.name}: typical circuits with {mode} qubits: {len(fr)} decisions', flush=True)
+            fr = fr[:a.pairs]
             circs = []
             for _, ((qt, qip, oq), (_, qin, _)) in fr:
                 cs = build(qt, qip, qin, oq, a.o_max)
                 o = (cs[2] if cs[2] is not None else cs[0]).remove_final_measurements(inplace=False)   # CU-pos above o_max
-                o.save_statevector(); circs.append(o)
+                (o.save_probabilities(list(oq)) if a.readout == 'probs' else o.save_statevector()); circs.append(o)
             tc = transpile(circs, sim, optimization_level=1, seed_transpiler=0)
             sim.run(tc[:4]).result()                       # warm-up (JIT / context)
             J, s = m.run(lambda: sim.run(tc).result())
             nq = [x.num_qubits for x in circs]
             w1.writerow([m.name, ckpt.parent.name, config['text'].get('n'), len(circs), np.mean(nq), max(nq), J, J - idle * s, s,
-                         (J - idle * s) / len(circs), J / len(circs), idle, a.precision]); f1.flush()
+                         (J - idle * s) / len(circs), J / len(circs), idle, a.precision, a.readout]); f1.flush()
             print(ckpt.parent.name, f'GPU {J:.1f} J gross over {s:.1f} s for {len(circs)} decisions', flush=True)
     if a.no_scaling:
         return
