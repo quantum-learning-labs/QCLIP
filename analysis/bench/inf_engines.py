@@ -150,7 +150,7 @@ class TN:
         t0 = time.time()
         self.path, info = oe.contract_path(eq, *arrs, optimize=opt)
         self.path_s = time.time() - t0
-        self.flops, self.width = float(info.opt_cost), float(np.log2(max(info.largest_intermediate, 1)))
+        self.flops, self.width = float(info.opt_cost), float(np.log2(max(float(info.largest_intermediate), 1.0)))
         self.eq = eq; self.arrs = [torch.tensor(a, dtype=dtype, device=dev) for a in arrs]
         self.d = 2 ** len(oq); self.rho = rho
 
