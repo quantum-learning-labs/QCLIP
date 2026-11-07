@@ -1,15 +1,15 @@
 # Untrained checkpoint (random-init parameters) for a bigger text.n: gives the circuit STRUCTURE for inference-only cost measurements
 # (QPU transpile statistics, GPU exact-simulation energy). Weights are irrelevant to those costs. Never overwrites.
-# usage: PYTHONPATH=. python analysis/bench/make_init_ckpt.py -cfg <config.yaml of an sc4 PS run> --n 7 -o <run dir>
+# usage: PYTHONPATH=. python analysis/bench/make_init_ckpt.py -cfg <config.yaml of an sc4 PS run> --n 7 [--layers 2] -o <run dir>
 import argparse, yaml, torch, pandas as pd
 from pathlib import Path
 from modules.utils.factory import build_experiment
 from modules.utils.general import setup_exp
 from modules.data_pipeline.engine import DataEngine
-ap = argparse.ArgumentParser(); ap.add_argument('-cfg', required=True); ap.add_argument('--n', type=int, required=True); ap.add_argument('-o', required=True)
+ap = argparse.ArgumentParser(); ap.add_argument('-cfg', required=True); ap.add_argument('--n', type=int, required=True); ap.add_argument('--layers', type=int, default=2); ap.add_argument('-o', required=True)
 a = ap.parse_args(); out = Path(a.o)
 assert not (out / 'best.pt').exists(), f'{out}/best.pt exists; refusing to overwrite'
-config, DEV, _ = setup_exp(a.cfg, seed=0, overrides=[f'text.n={a.n}', 'text.layers=2'])
+config, DEV, _ = setup_exp(a.cfg, seed=0, overrides=[f'text.n={a.n}', f'text.layers={a.layers}'])
 ansatz, image_model, text_model, _ = build_experiment(config, 'cpu')
 de = DataEngine(config, ansatz, 'cpu')
 de.text_init(text_model, pd.concat([de.compile_text('train'), de.compile_text('val')], ignore_index=True)); de.image_init(image_model)
