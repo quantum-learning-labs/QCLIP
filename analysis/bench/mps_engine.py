@@ -123,12 +123,13 @@ def main():
     ap.add_argument('--nets', default='ps,rho')
     ap.add_argument('--min_s', type=float, default=5.0)
     ap.add_argument('--no_energy', action='store_true')
-    ap.add_argument('--tn_width_max', type=float, default=30)
+    ap.add_argument('--tn_width_max', type=float, default=29)
+    ap.add_argument('--max_s_per_dec', type=float, default=120, help='stop raising chi once one decision takes longer than this')
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True); dev = torch.device('cuda')
     w = csv.writer(open(out / 'mps.csv', 'a', newline=''))
     w.writerow(['gpu', 'ckpt', 'text_n', 'layers', 'nq', 'net', 'chi', 'decisions', 'J_gross_per_decision', 's_per_decision', 'idle_W',
-                'dw_mean', 'maxD', 'amp_rel_err_mean', 'amp_rel_err_max', 'margin_rel_err_median', 'agree', 'exact_ok'])
+                'dw_mean', 'maxD', 'amp_rel_err_mean', 'amp_rel_err_max', 'margin_rel_err_median', 'agree', 'reference'])
     m = None
     if not a.no_energy:
         from v3_energy import Meter
@@ -146,11 +147,16 @@ def main():
             for qt, _, _, oq in D:
                 T = TN(qt, oq, dev, torch.complex64, rho=rho)
                 ref.append(T().cpu().numpy() if T.width <= a.tn_width_max else None)
-            ok = all(r is not None for r in ref)
-            print(f'  {net}: exact reference {"ok" if ok else "MISSING (too wide)"}', flush=True)
-            for chi in [int(x) for x in a.chis.split(',')]:
-                runs = [MPSRun(qt, oq, chi, dev, rho) for qt, _, _, oq in D]
+            ok = all(r is not None for r in ref); refkind = 'exact'
+            chis = [int(x) for x in a.chis.split(',')]
+            if not ok:                                       # exact too wide: the largest-chi MPS is the reference (convergence check)
+                t0 = time.time(); ref = [MPSRun(qt, oq, max(chis), dev, rho)().cpu().numpy() for qt, _, _, oq in D]; ok = True; refkind = f'chi{max(chis)}'
+                if (time.time() - t0) / len(D) > a.max_s_per_dec: chis = [c for c in chis if c < max(chis)]
+            print(f'  {net}: reference {refkind}', flush=True)
+            for chi in chis:
+                t0 = time.time(); runs = [MPSRun(qt, oq, chi, dev, rho) for qt, _, _, oq in D]
                 outs = [r().cpu().numpy() for r in runs]
+                slow = (time.time() - t0) / len(D) > a.max_s_per_dec
                 dw = float(np.mean([r.dw for r in runs])); maxD = max(r.maxD for r in runs)
                 if ok:
                     rel = [np.linalg.norm(o - x) / max(np.linalg.norm(x), 1e-30) for o, x in zip(outs, ref)]
@@ -164,9 +170,10 @@ def main():
                         for r in runs: r()
                         torch.cuda.synchronize()
                     J, s = m.run(fn, a.min_s); J /= len(runs); s /= len(runs)
-                w.writerow([m.name if m else '', ckpt.parent.name, config['text'].get('n'), L, nq, net, chi, len(runs), J, s, idle, dw, maxD, re_mean, re_max, mrel, agree, ok])
+                w.writerow([m.name if m else '', ckpt.parent.name, config['text'].get('n'), L, nq, net, chi, len(runs), J, s, idle, dw, maxD, re_mean, re_max, mrel, agree, refkind])
                 print(f'    chi {chi}: {J:.3g} J/dec, {s:.3g} s/dec, dw {dw:.2e}, maxD {maxD}, amp err {re_mean:.2e}/{re_max:.2e}, margin rel err {mrel:.2e}, agree {agree:.3f}', flush=True)
                 torch.cuda.empty_cache()
+                if slow: print(f'    chi {chi} over {a.max_s_per_dec} s/decision: larger chi skipped', flush=True); break
     print('done', flush=True)
 
 
