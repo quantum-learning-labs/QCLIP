@@ -1,9 +1,10 @@
 # E4: approximate classical inference with a bond-dimension-limited MPS on the GPU, against the exact tensor-network result.
 # MPS details: qubits laid on the chain in reverse Cuthill-McKee order of the 2q-gate interaction graph (short-range gates); 1q gates folded
 # into the next 2q gate (inf_engines.gate_list); a 2q gate on distant sites first SWAPs the qubits together (the mapping is updated, no swap back);
-# every gate is applied with cuTensorNet contract_decompose (QR-assisted, truncated SVD to max_extent = chi, singular values absorbed to the right),
-# with the orthogonality centre moved to the gate first (cuTensorNet QR), so truncations are locally optimal. torch.linalg on CUDA is broken in
-# our envs (cuSOLVER mismatch); cuTensorNet's own QR/SVD work.
+# every gate is a contraction + truncated SVD (torch.linalg.svd, driver gesvd: the default cuSOLVER driver is only ~5e-4 accurate) to bond
+# dimension chi, singular values absorbed to the right, with the orthogonality centre moved to the gate first (QR), so truncations are locally
+# optimal. torch.linalg on CUDA needs the CUDA-12 cuSOLVER preloaded in our envs (LD_PRELOAD, see tools/sc5 job scripts): the cu11 copy pulled
+# in by cuquantum overwrote it. (A cuTensorNet contract_decompose version spent ~30 ms of planning per gate: overhead, not the method.)
 # Readout: phi0 (aux wires projected on |0>) for post-selection; rho (aux traced) for discard.
 # Per (checkpoint, chi): NVML energy and time per decision, discarded weight, and against the exact result: relative amplitude error,
 # relative margin error and decision agreement (margin = image-pair contrast, as in shotcost_branches_fast).
@@ -12,56 +13,50 @@ import argparse, csv, time
 from pathlib import Path
 import numpy as np, torch, networkx as nx
 from qiskit.quantum_info import Statevector
-from cuquantum.cutensornet.experimental import contract_decompose
-from cuquantum.cutensornet.tensor import decompose, SVDMethod
 from inf_engines import gate_list, TN, load
 
 SWAP = torch.tensor(np.eye(4)[[0, 2, 1, 3]].reshape(2, 2, 2, 2), dtype=torch.complex64)
 
 
 class MPS:
-    def __init__(self, n, chi, dev, dtype=torch.complex64, order=None):
-        self.chi, self.dev, self.dtype = chi, dev, dtype
+    def __init__(self, n, chi, dev, dtype=torch.complex64, order=None, cutoff=1e-7):
+        self.chi, self.dev, self.dtype, self.cutoff = chi, dev, dtype, cutoff
         order = list(range(n)) if order is None else list(order)
         self.pos = {q: i for i, q in enumerate(order)}; self.qat = list(order)
         t = torch.zeros((1, 2, 1), dtype=dtype, device=dev); t[0, 0, 0] = 1
         self.T = [t.clone() for _ in range(n)]; self.c = 0; self.dw = 0.0
         self.swap = SWAP.to(dev, dtype)
-        self.svd = SVDMethod(max_extent=chi, partition='V')
 
     def _move_centre(self, p):
-        while self.c < p:                                   # left-QR: T[c] = Q, R into T[c+1]
-            Q, R = decompose('ipj->ipk,kj', self.T[self.c])
-            self.T[self.c] = Q; self.T[self.c + 1] = torch.einsum('kj,jql->kql', R, self.T[self.c + 1]); self.c += 1
-        while self.c > p:                                   # right-QR on the transpose: T[c] = R^T Q^T
-            Q, R = self._rq(self.T[self.c])
-            self.T[self.c] = Q; self.T[self.c - 1] = torch.einsum('iqj,jk->iqk', self.T[self.c - 1], R); self.c -= 1
-
-    def _rq(self, t):
-        # t (Dl, 2, Dr) = R (Dl, k) Q (k, 2, Dr) with Q right-orthonormal: QR of the transposed matrix
-        tt = t.permute(2, 1, 0).contiguous()                # (Dr, 2, Dl)
-        Q, R = decompose('ipj->ipk,kj', tt)                 # tt = Q (Dr,2,k) R (k,Dl)
-        return Q.permute(2, 1, 0).contiguous(), R.transpose(0, 1).contiguous()
+        while self.c < p:                                   # left QR: T[c] = Q, R into T[c+1]
+            A = self.T[self.c]; Dl, _, Dr = A.shape
+            Q, R = torch.linalg.qr(A.reshape(Dl * 2, Dr))
+            self.T[self.c] = Q.reshape(Dl, 2, -1); self.T[self.c + 1] = torch.einsum('kj,jql->kql', R, self.T[self.c + 1]); self.c += 1
+        while self.c > p:                                   # right QR: T[c] = R^H Q^H
+            A = self.T[self.c]; Dl, _, Dr = A.shape
+            Q, R = torch.linalg.qr(A.reshape(Dl, 2 * Dr).mH)
+            self.T[self.c] = Q.mH.reshape(-1, 2, Dr); self.T[self.c - 1] = torch.einsum('iqj,jk->iqk', self.T[self.c - 1], R.mH); self.c -= 1
 
     def _apply2(self, p, G):
-        """G (out_p, out_p+1, in_p, in_p+1) on sites p, p+1."""
+        """G (out_p, out_p+1, in_p, in_p+1) on sites p, p+1; truncated SVD (torch, accurate gesvd driver), S absorbed to the right."""
         self._move_centre(p)
-        out = contract_decompose('ipj,jqk,rspq->irl,lsk', self.T[p], self.T[p + 1], G,
-                                 algorithm={'qr_method': {}, 'svd_method': self.svd}, return_info=True)
-        a, _, b, info = out
-        self.T[p], self.T[p + 1] = a, b; self.c = p + 1
-        try: self.dw += float(info.svd_info.discarded_weight)
-        except Exception: pass
+        A, B = self.T[p], self.T[p + 1]; Dl, Dr = A.shape[0], B.shape[2]
+        th = torch.einsum('ipj,jqk,rspq->irsk', A, B, G).reshape(Dl * 2, 2 * Dr)
+        U, S, Vh = torch.linalg.svd(th, full_matrices=False, driver='gesvd')
+        s2 = S * S; tot = s2.sum()
+        keep = int(min(self.chi, int((s2 > self.cutoff * tot).sum().item()) or 1))
+        self.dw += float((s2[keep:].sum() / tot).item())
+        self.T[p] = U[:, :keep].reshape(Dl, 2, keep)
+        self.T[p + 1] = (S[:keep, None].to(Vh.dtype) * Vh[:keep]).reshape(keep, 2, Dr); self.c = p + 1
 
     def gate(self, qs, M4):
         q0, q1 = qs                                         # M4 axes: out [q1, q0], in [q1, q0]
-        while abs(self.pos[q0] - self.pos[q1]) > 1:         # bring q1 next to q0
+        while abs(self.pos[q0] - self.pos[q1]) > 1:         # bring q1 next to q0 with SWAPs (mapping updated, no swap back)
             p = self.pos[q1]; step = -1 if self.pos[q0] < p else 1
             a, b = (p + step, p) if step == -1 else (p, p + 1)
             self._apply2(a, self.swap)
             qa, qb = self.qat[a], self.qat[b]; self.qat[a], self.qat[b] = qb, qa; self.pos[qa], self.pos[qb] = b, a
-        if self.pos[q0] < self.pos[q1]: G = M4.permute(1, 0, 3, 2)
-        else: G = M4
+        G = M4.permute(1, 0, 3, 2) if self.pos[q0] < self.pos[q1] else M4
         self._apply2(min(self.pos[q0], self.pos[q1]), G)
 
     def one(self, q, U):
@@ -73,7 +68,7 @@ class MPS:
         for p, q in enumerate(self.qat):
             if q in aux: env = torch.einsum('...a,apb,p->...b', env, self.T[p], e0)
             else: env = torch.einsum('...a,apb->...pb', env, self.T[p]); opened.append(q)
-        env = env[..., 0]                                   # (2,)*e in chain order of the output qubits
+        env = env[..., 0]
         perm = [opened.index(q) for q in reversed(oq)]       # index sum_i bit(oq[i]) 2^i
         return env.permute(perm).reshape(-1)
 

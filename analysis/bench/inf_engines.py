@@ -229,7 +229,8 @@ def main():
         # CPU reference on the first --check decisions
         refs = []
         for qt, _, _, oq in D[:a.check]:
-            if nq <= a.check_rho_max: phi0, rho, _ = eng_tn(qt, oq); refs.append((phi0, rho))
+            if S[:, 3].max() > 26: refs.append((None, None))              # CPU reference too slow: error not checked (NaN)
+            elif nq <= a.check_rho_max and S[:, 5].max() <= 26: phi0, rho, _ = eng_tn(qt, oq); refs.append((phi0, rho))
             else:
                 T = TN(qt, oq, 'cpu', torch.complex128, rho=False, opt=a.opt); refs.append((T().numpy(), None))
         for eng in engines:
@@ -255,7 +256,7 @@ def main():
                             (o.save_amplitudes(amp_index(oq)) if eng == 'cusv' else o.save_density_matrix(qubits=list(oq))); circs.append(o)
                     tc = transpile(circs, sim, optimization_level=1, seed_transpiler=0)
                     res = sim.run(tc[:a.check]).result()
-                    if eng == 'cusv':
+                    if eng == 'cusv' and refs[0][0] is not None:
                         err = max(np.abs(np.asarray(res.data(i)['amplitudes']) - refs[i][0]).max() for i in range(a.check))
                     elif eng == 'cusv_rho' and refs[0][1] is not None:
                         err = max(np.abs(np.asarray(res.data(i)['density_matrix']) - refs[i][1]).max() for i in range(a.check))
@@ -268,7 +269,7 @@ def main():
                     if eng == 'tn_rho':
                         if refs[0][1] is not None: err = max(np.abs(outs[i] - refs[i][1]).max() for i in range(a.check))
                         elif cross is not None: err = max(np.abs(outs[i] - cross[i]).max() for i in range(a.check)); note = 'err vs cusv_rho'
-                    else: err = max(np.abs(outs[i] - refs[i][0]).max() for i in range(a.check))
+                    elif refs[0][0] is not None: err = max(np.abs(outs[i] - refs[i][0]).max() for i in range(a.check))
                     def fn():
                         for o in objs: o()
                         torch.cuda.synchronize()
