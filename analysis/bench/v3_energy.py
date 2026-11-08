@@ -4,7 +4,7 @@
 #  (b) scaling probe: brickwork circuits (cx + random 1q) at 10..--nmax qubits, --layers 2q layers, energy/time per circuit.
 #  (c) QPU stats on the same pairs (CPU transpile): Kingston duration (s) and native 2q count; IonQ native n1q/n2q (all-to-all).
 # Writes CSV rows to <out>/{gpu_models,gpu_scaling,qpu_stats}.csv.  Run alone on the GPU (shared runs pollute NVML energy).
-import argparse, csv, time
+import argparse, csv, os, time
 from pathlib import Path
 import numpy as np, pynvml
 from qiskit import QuantumCircuit, transpile
@@ -19,8 +19,26 @@ TWO_Q = {'cx', 'cz', 'ecr', 'rzz', 'rxx'}
 
 class Meter:
     def __init__(self):
-        pynvml.nvmlInit(); self.h = pynvml.nvmlDeviceGetHandleByIndex(0)
+        # NVML ignores CUDA_VISIBLE_DEVICES: on a multi-GPU node index 0 is physical card 0, not the card the job was given.
+        # Pick the NVML device whose UUID matches CUDA device 0 (fallback: the CUDA_VISIBLE_DEVICES entry, then index 0).
+        pynvml.nvmlInit(); self.h, how = None, ''
+        uuids = []
+        for i in range(pynvml.nvmlDeviceGetCount()):
+            h = pynvml.nvmlDeviceGetHandleByIndex(i); u = pynvml.nvmlDeviceGetUUID(h); uuids.append((h, u if isinstance(u, str) else u.decode()))
+        try:
+            import torch
+            cu = str(torch.cuda.get_device_properties(0).uuid)
+            for h, u in uuids:
+                if cu.replace('GPU-', '') in u: self.h, how = h, 'uuid'
+        except Exception:
+            pass
+        if self.h is None:
+            cvd = os.environ.get('CUDA_VISIBLE_DEVICES', '').split(',')[0].strip()
+            if cvd.startswith('GPU-'): self.h, how = [h for h, u in uuids if u.startswith(cvd)][0], 'cvd-uuid'
+            elif cvd.isdigit() and len(uuids) > int(cvd): self.h, how = uuids[int(cvd)][0], 'cvd-index'
+            else: self.h, how = uuids[0][0], 'index0'
         self.name = pynvml.nvmlDeviceGetName(self.h)
+        print(f'NVML: {len(uuids)} devices, using {pynvml.nvmlDeviceGetUUID(self.h)} ({how}); CUDA_VISIBLE_DEVICES={os.environ.get("CUDA_VISIBLE_DEVICES")}', flush=True)
     def mj(self): return pynvml.nvmlDeviceGetTotalEnergyConsumption(self.h)
     def idle_W(self, s=15):
         e0, t0 = self.mj(), time.time(); time.sleep(s); return (self.mj() - e0) / 1e3 / (time.time() - t0)
