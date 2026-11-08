@@ -71,6 +71,49 @@
   <details><summary>Table view</summary><div class="tbl" id="tA"></div></details>
 </section>
 
+<style>
+  .range { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--fg2); }
+  .range input[type=range] { width: min(320px, 70vw); accent-color: var(--accent); }
+  .range output { font-family: var(--mono); color: var(--fg); }
+  select.pick { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+  .heat { overflow-x: auto; }
+  .heat table { border-collapse: separate; border-spacing: 3px; font-size: 12px; min-width: 520px; }
+  .heat th { color: var(--muted); font-weight: 500; padding: 4px 6px; text-align: center; }
+  .heat td { padding: 8px 6px; text-align: center; border-radius: 6px; font-family: var(--mono); line-height: 1.35; min-width: 64px; }
+  .heat td small { display: block; font-family: var(--body); opacity: .85; }
+  .callout { border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--surface); color: var(--fg2); font-size: 14px; margin: 10px 0; }
+</style>
+
+<section class="fig" id="f5">
+  <div class="fig-head"><div class="tag">Figure 5</div><h2>QPU against the best classical method</h2>
+  <p>Energy per discard decision (the readout a QPU needs fewest shots for), against total qubits, at a fixed circuit depth. QPU: shots = N<sub>0</sub> / F<sup>2</sup>, where F is the factor by which device noise shrinks the decision margin, fitted to our Kingston noise runs (ln F = −0.187 − ε<sub>eff</sub> × native two-qubit gates, ε<sub>eff</sub> = 3.3×10<sup>−3</sup>); energy from the transpiled circuit duration. Classical: every method we measured on an NVIDIA L4 (the most energy-efficient GPU available to us, which favours the classical side); the frontier is the cheapest at each size. Filled points are measured; hollow points are tensor-network contraction costs from the best path found, divided by the measured L4 efficiency.</p></div>
+  <div class="controls">
+    <div class="group" data-ctl="dep"><span>Ansatz layers</span><button class="chip" data-v="2">2</button><button class="chip" data-v="4">4</button><button class="chip" data-v="8" aria-pressed="true">8</button></div>
+    <div class="group" data-ctl="n0"><span>Noiseless shots N<sub>0</sub></span><button class="chip" data-v="100">100</button><button class="chip" data-v="179" aria-pressed="true">179</button><button class="chip" data-v="1024">1024</button></div>
+    <div class="group" data-ctl="mtg"><span>Approximation target</span><button class="chip" data-v="0.1" aria-pressed="true">10% margin error</button><button class="chip" data-v="0.01">1%</button></div>
+  </div>
+  <div class="range"><label for="em">Two-qubit error relative to today's devices</label><input type="range" id="em" min="-2" max="0" step="0.05" value="0"><output id="emv"></output></div>
+  <div class="legend" id="lg5"></div>
+  <div class="chart"><canvas id="c5" aria-label="Energy per decision for QPUs and classical methods, log scale"></canvas></div>
+  <p class="cap" id="cap5"></p>
+  <details><summary>Table view</summary><div class="tbl" id="t5"></div></details>
+</section>
+
+<section class="fig" id="f6">
+  <div class="fig-head"><div class="tag">Figure 6</div><h2>Error against energy at one circuit size</h2>
+  <p>Relative error of the decision margin against energy per decision, for one circuit. The QPU and the classical sampler estimate the same quantity from samples: the sampler draws noiseless samples at the cost of one tensor-network amplitude each (a lower bound on its true cost, so it favours the classical side), the QPU needs 1/F<sup>2</sup> times more shots. MPS points are bond dimensions 2–256, shown only where the exact result was computable to check them (deep circuits whose exact contraction is too wide have no MPS points: at 8 layers and 31 qubits, where the post-selection network could be checked, MPS was still 61% off at bond dimension 256). Calibration: N<sub>0</sub> noiseless samples give a 10% margin error.</p></div>
+  <div class="controls"><div class="group"><span>Circuit</span><select class="pick" id="pick6" aria-label="Circuit size and depth"></select></div></div>
+  <div class="legend" id="lg6"></div>
+  <div class="chart"><canvas id="c6" aria-label="Margin error against energy, log-log"></canvas></div>
+  <p class="cap" id="cap6"></p>
+</section>
+
+<section class="fig" id="f7">
+  <div class="fig-head"><div class="tag">Figure 7</div><h2>Where a QPU would win</h2>
+  <p>Each cell: QPU (IBM Kingston model) energy divided by the best classical energy, as a power of ten, at that depth and size; below it the two-qubit error ε* at which the QPU would break even. Green cells: the QPU already wins at the chosen error. The slider is shared with Figure 5.</p></div>
+  <div class="heat" id="heat7"></div>
+  <p class="cap" id="cap7"></p>
+</section>
 
 <footer>
   <div>Sweep sc4: 10 model sizes × {PS, plain discard, warm-start discard} × 3 seeds, 2 text layers. Data: <code>results/shotcost/viz/viz_sc4.json</code> (branch <code>shotcost</code>, quantum-learning-labs/QCLIP), built by <code>analysis/bench/viz_sc4.py</code> from exact branch evaluations, noise runs, gate counts and device statistics.</div>
@@ -85,12 +128,12 @@ const METH = { PS: 'Post-selection', plain: 'Discard, plain', warm: 'Discard, wa
 const MSLOT = { PS: '--s1', plain: '--s2', warm: '--s3' };
 const ARMS = [['honest_miami', 'Honest'], ['honest_miami+dd', '+ DD'], ['honest_miami+det10+zz20', '+ coherent idle'], ['honest_miami+dd+det10+zz20', '+ coherent idle + DD']];
 const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const state = { esh: '1024', acc: '70', ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS' };
+const state = { esh: '1024', acc: '70', ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS', dep: '8', n0: '179', mtg: '0.1' };
 const charts = {};
 let D = null, S = null;
 const pct = v => v == null ? '–' : (100 * v).toFixed(1) + '%';
 const num = v => v == null ? '–' : v >= 1e4 ? v.toExponential(2) : v >= 100 ? Math.round(v).toString() : v.toFixed(v >= 10 ? 1 : 2);
-const J = v => v == null ? '–' : v >= 1e6 ? (v / 1e6).toFixed(2) + ' MJ' : v >= 1e3 ? (v / 1e3).toFixed(2) + ' kJ' : v >= 1 ? v.toFixed(2) + ' J' : (v * 1e3).toFixed(1) + ' mJ';
+const J = v => v == null ? '–' : v >= 1e15 ? v.toExponential(1) + ' J' : v >= 1e12 ? (v / 1e12).toPrecision(3) + ' TJ' : v >= 1e9 ? (v / 1e9).toPrecision(3) + ' GJ' : v >= 1e6 ? (v / 1e6).toFixed(2) + ' MJ' : v >= 1e3 ? (v / 1e3).toFixed(2) + ' kJ' : v >= 1 ? v.toFixed(2) + ' J' : (v * 1e3).toFixed(1) + ' mJ';
 
 // error bars: dataset._eb[j] = [lo, hi] in data units
 const errBars = { id: 'errBars', afterDatasetsDraw(chart) {
@@ -213,9 +256,14 @@ function fig3() {
       for (const q of Q.filter(q => q.method === m && dev === 'ibm')) rows.push([cfgLabel(q), METH[m], q.nq.toFixed(1), num(q.shots_per_decision), J(q[fld('ibm')]), J(q[fld('ionq')])]);
     }
   }
-  const G = S.gpu.filter(g => g.nq_mean != null).sort((a, b) => a.nq_mean - b.nq_mean);
+  // GPU: drop the cluster rows measured on the wrong card (NVML index 0 on a multi-GPU node; "idle" 171 W = another job's card)
+  const G = S.gpu.filter(g => g.nq_mean != null && g.idle_W < 100).sort((a, b) => a.nq_mean - b.nq_mean);
   const gpts = G.map(g => ({ x: g.nq_mean, y: g.J_gross_per_decision, row: g }));
-  if (gpts.length) eds.push(series('GPU, exact simulation of the same circuits', tok('--s7'), gpts, { borderDash: [2, 3] }));
+  if (gpts.length) eds.push(series('GPU, Aer statevector (RTX 3090 Ti, v14 method)', tok('--s7'), gpts, { borderDash: [2, 3] }));
+  const L2 = (D.adv ? D.adv.rows : []).filter(r => r.layers === 2 && r.nq <= 31.5 && r.gpu);
+  const l4 = (eng, lab, col, dash) => { const p = L2.filter(r => r.gpu[eng]).map(r => ({ x: r.nq, y: r.gpu[eng].J, row: r })); if (p.length) eds.push(series(lab, tok(col), p, { borderDash: dash, pointRadius: 3 })); };
+  l4('cusv', 'GPU, cuStateVec statevector (L4)', '--s4', [6, 3]);
+  l4('tn', 'GPU, tensor network (L4)', '--s3', [6, 3]);
   // crossover: first qubit count where the GPU curve passes the IBM curve (log-linear interpolation between sizes)
   let cross = null;
   if (fixed && gpts.length > 1 && curves.ibm && curves.ibm.length > 1) {
@@ -231,14 +279,14 @@ function fig3() {
   if (sc.length) eds.push(series('GPU, scaling probe (one random circuit)', tok('--muted'), sc, { borderDash: [2, 3], pointRadius: 2 }));
   eds.push({ label: 'CLIP ViT-B/32 (GPU)', data: [{ x: xmin, y: D.ref.clip }, { x: xmax, y: D.ref.clip }], borderColor: tok('--fg2'), borderDash: [1, 4], borderWidth: 1.5, pointRadius: 0, showLine: true });
   legend('lg3', (fixed ? [['IBM Kingston', tok('--s1')], ['IonQ Forte (dashed)', tok('--s2'), true]] : [['IBM (solid)', tok('--fg2')], ['IonQ (dashed)', tok('--fg2'), true]].concat(Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])])))
-    .concat([['GPU exact simulation', tok('--s7'), true], ['GPU scaling probe', tok('--muted'), true], ['CLIP (GPU)', tok('--fg2'), true]]).concat(cross ? [['crossover', tok('--fg')]] : []));
+    .concat([['GPU Aer statevector (v14)', tok('--s7'), true], ['GPU cuStateVec (L4)', tok('--s4'), true], ['GPU tensor network (L4)', tok('--s3'), true], ['GPU scaling probe', tok('--muted'), true], ['CLIP (GPU)', tok('--fg2'), true]]).concat(cross ? [['crossover', tok('--fg')]] : []));
   draw('c3', { type: 'scatter', data: { datasets: eds }, options: baseOpts('Energy per decision (J)', { x: { min: Math.floor(xmin) - 0.5, max: Math.ceil(xmax) + 0.5 }, yType: 'logarithmic', xTitle: 'Total qubits in the circuit (mean per sentence)', yFmt: v => J(v),
     tt: { label: c => `${c.dataset.label}: ${J(c.parsed.y)} at ${c.parsed.x.toFixed(1)} qubits` } }) });
   table('t3', ['Config', 'Model', 'Qubits', 'Shots/decision', 'IBM', 'IonQ'], rows);
   const havePts = fixed ? (S.inf_qpu || []).length : S.qpu.length;
   document.getElementById('pend3').textContent = havePts ? '' : 'QPU device statistics for the larger sizes are still being computed.';
   document.getElementById('pend3').hidden = !!havePts;
-  document.getElementById('capE').innerHTML = fixed ? (cross ? `With ${sh} shots per decision, exact GPU simulation of these circuits overtakes IBM Kingston at about <b>${cross.x.toFixed(0)} qubits</b> (${J(cross.y)} per decision). Below that the GPU is cheaper; above it the cost of simulating 2<sup>n</sup> amplitudes dominates while the QPU cost grows only with circuit duration. GPU values are NVML board energy of exact simulation on an RTX 3090 Ti for typical sentences (the most common circuit width at each size), reading out only the output register; the 31-qubit point is single precision because double does not fit in 24 GB, so with double precision the crossover would come earlier. QPU values use the transpiled Kingston circuit duration and the machine power assumed below.` : `No crossover in the measured range with ${sh} shots per decision.`)
+  document.getElementById('capE').innerHTML = fixed ? `${cross ? `With ${sh} shots per decision, Aer statevector simulation (the v14 method) overtakes IBM Kingston at about <b>${cross.x.toFixed(0)} qubits</b> (${J(cross.y)} per decision). ` : ''}<b>That crossover belongs to the statevector method only.</b> cuStateVec on an L4 is about 5× cheaper at 31 qubits, and a tensor-network contraction of the same circuits costs about 1 J per decision at 31 qubits and 4 J at 64 qubits, thousands of times below the QPU: these shallow 2-layer circuits never cross over against the best classical method (Figure 5). GPU values are NVML board energy for typical sentences (the most common circuit width at each size), reading out only what the decision needs. Earlier 6–16-qubit GPU points measured on the cluster read the wrong card and are removed. QPU values use the transpiled Kingston circuit duration and the machine power assumed below.`
     : 'Energy to reach the target accuracy with the shots measured for the trained models (only sizes up to 16 qubits were trained).';
   const p8 = A.find(a => a.e === 8 && a.n === 1 && a.method === 'PS'), w8 = A.find(a => a.e === 8 && a.n === 1 && a.method === 'warm');
   const p3 = A.find(a => a.e === 3 && a.n === 3 && a.method === 'PS'), w3 = A.find(a => a.e === 3 && a.n === 3 && a.method === 'warm');
@@ -281,12 +329,121 @@ function figAcc() {
     + (lost ? `Post-selection cannot reach ${t}% at all from ${Math.round(lost.nq)} qubits (exact ${pct(lost.exact)}); ` : '') + `the discard models keep a roughly flat shot count as qubits are added while post-selection's grows, because its acceptance collapses.`;
 }
 
+// ---------------------------------------------------------------- advantage study (Figures 5-7)
+const CAL = { a: -0.187, eIBM: 0.00331, eIonQ: 0.004, e1IonQ: 2e-4 };   // Kingston fit; IonQ Forte 99.6% / 99.98% assumed
+const em = () => Math.pow(10, +document.getElementById('em').value);
+const ADVR = () => (D.adv && D.adv.rows) || [];
+let ETA = null;
+function etaFit() {   // FLOP per joule of exact TN on the L4, from compute-bound runs (greedy-path flops / measured energy)
+  const v = [];
+  for (const r of ADVR()) for (const [eng, lf] of [['tn', r.greedy_ps_lf], ['tn_rho', r.greedy_rho_lf]]) { const g = r.gpu && r.gpu[eng]; if (g && lf != null && lf >= 10.5) v.push(Math.pow(10, lf) / g.J); }
+  v.sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 3e10;
+}
+function classical(r) {
+  const g = r.gpu || {}, n0 = +state.n0, tgt = +state.mtg, eta = ETA;
+  const lfP = r.best_ps_lf != null ? r.best_ps_lf : r.greedy_ps_lf, lfR = r.best_rho_lf != null ? r.best_rho_lf : r.greedy_rho_lf;
+  const model = lf => lf == null ? null : Math.max(1, Math.pow(10, lf) / eta);
+  const o = { sv: g.cusv_rho ? g.cusv_rho.J : null };
+  // measured energy used the greedy path; where a better path is known, its modelled cost can be lower: take the cheaper
+  const pick = (meas, lfBest, lfAny) => { const mb = lfBest != null ? model(lfBest) : null;
+    if (meas != null) return mb != null && mb < meas ? [mb, false] : [meas, true]; return [model(lfAny), false]; };
+  [o.tn, o.tnMeas] = pick(g.tn_rho ? g.tn_rho.J : null, r.best_rho_lf, lfR);
+  [o.amp, o.ampMeas] = pick(g.tn ? g.tn.J : null, r.best_ps_lf, lfP); o.samp = o.amp == null ? null : n0 * o.amp;
+  const M = ((r.mps || {}).rho || []).filter(m => m.J && m.mrel != null && m.mrel <= tgt && m.ref === 'exact');   // only errors checked against exact contraction
+  o.mps = M.length ? Math.min(...M.map(m => m.J)) : null;
+  const c = [['statevector', o.sv], ['exact TN', o.tn], ['TN sampler', o.samp], ['MPS', o.mps]].filter(x => x[1] != null);
+  const b = c.length ? c.reduce((p, q) => q[1] < p[1] ? q : p) : null; o.best = b ? b[1] : null; o.by = b ? b[0] : null; return o;
+}
+function qpu(r, m) {
+  if (r.ibm_n2q == null) return null;
+  const n0 = +state.n0, F = Math.exp(CAL.a - CAL.eIBM * m * r.ibm_n2q), N = n0 / (F * F), tS = r.ibm_duration_s + 250e-6;
+  const ibm = (N * tS + 2 * 2 / 190) * 25e3;
+  const Fi = Math.exp(CAL.a - (CAL.eIonQ * r.ionq_n2q + CAL.e1IonQ * r.ionq_n1q) * m), Ni = n0 / (Fi * Fi);
+  const ionq = (Ni * (r.ionq_n1q * 1.1e-4 + r.ionq_n2q * 9e-4 + 1.5e-3) + 2 * 10) * 5e3;
+  return { F, N, ibm, tS, Fi, Ni, ionq };
+}
+function breakEven(r, Ec) {   // multiplier m* on today's two-qubit error at which IBM energy = Ec (null: never, even error-free)
+  if (r.ibm_n2q == null || Ec == null) return null;
+  const tS = r.ibm_duration_s + 250e-6, Nst = (Ec / 25e3 - 2 * 2 / 190) / tS, n0 = +state.n0;
+  if (!(Nst > n0 * Math.exp(-2 * CAL.a))) return null;
+  const F = Math.sqrt(n0 / Nst); return (CAL.a - Math.log(F)) / (CAL.eIBM * r.ibm_n2q);
+}
+const sci = v => { if (v == null) return '–'; const [m, e] = v.toExponential(1).split('e'); return `${m}×10<sup>${+e}</sup>`; };
+const decade = f => v => { const l = Math.log10(v); return Math.abs(l - Math.round(l)) < 1e-6 ? f(v) : ''; };
+function fig5() {
+  ETA = ETA || etaFit();
+  const m = em(); document.getElementById('emv').textContent = `×${m.toFixed(m < 0.1 ? 3 : 2)} (ε_eff = ${(CAL.eIBM * m).toExponential(1)})`;
+  const R = ADVR().filter(r => r.layers === +state.dep).sort((a, b) => a.nq - b.nq), ds = [], rows = [];
+  const P = R.map(r => ({ r, q: qpu(r, m), c: classical(r) }));
+  const mk = (label, col, pts, extra = {}) => pts.length ? ds.push(series(label, col, pts, extra)) : 0;
+  const hollow = (ok, col) => ok.map(b => b ? col : tok('--surface'));
+  mk('IBM Kingston (noise model)', tok('--s1'), P.filter(p => p.q).map(p => ({ x: p.r.nq, y: p.q.ibm, row: p })));
+  mk('IonQ Forte (noise model)', tok('--s2'), P.filter(p => p.q && p.r.nq <= 36).map(p => ({ x: p.r.nq, y: p.q.ionq, row: p })), { borderDash: [6, 4] });
+  mk('IonQ, beyond its 36 qubits', tok('--s2'), P.filter(p => p.q && p.r.nq >= 31).map(p => ({ x: p.r.nq, y: p.q.ionq, row: p })), { borderDash: [2, 4], pointRadius: 2, borderWidth: 1 });
+  mk('Best classical (frontier)', tok('--fg'), P.filter(p => p.c.best != null).map(p => ({ x: p.r.nq, y: p.c.best, row: p })), { borderWidth: 3 });
+  const tnP = P.filter(p => p.c.tn != null), smP = P.filter(p => p.c.samp != null);
+  mk('Exact TN (discard network)', tok('--s7'), tnP.map(p => ({ x: p.r.nq, y: p.c.tn, row: p })), { borderDash: [3, 3], borderWidth: 1.5, pointBackgroundColor: hollow(tnP.map(p => p.c.tnMeas), tok('--s7')) });
+  mk('TN sampler (N₀ amplitudes)', tok('--s3'), smP.map(p => ({ x: p.r.nq, y: p.c.samp, row: p })), { borderDash: [3, 3], borderWidth: 1.5, pointBackgroundColor: hollow(smP.map(p => p.c.ampMeas), tok('--s3')) });
+  mk('MPS at the target error', tok('--s4'), P.filter(p => p.c.mps != null).map(p => ({ x: p.r.nq, y: p.c.mps, row: p })), { borderDash: [3, 3], borderWidth: 1.5 });
+  mk('Statevector (cuStateVec)', tok('--muted'), P.filter(p => p.c.sv != null).map(p => ({ x: p.r.nq, y: p.c.sv, row: p })), { borderDash: [3, 3], borderWidth: 1.5 });
+  legend('lg5', [['IBM Kingston', tok('--s1')], ['IonQ Forte', tok('--s2'), true], ['Best classical', tok('--fg')], ['Exact TN', tok('--s7'), true], ['TN sampler', tok('--s3'), true], ['MPS', tok('--s4'), true], ['Statevector', tok('--muted'), true]]);
+  const ys = P.flatMap(p => [p.q && p.q.ibm, p.q && p.r.nq <= 36 && p.q.ionq, p.c.best]).filter(v => v), ymax = Math.pow(10, Math.ceil(Math.log10(Math.max(...ys)) + 0.5)), ymin = Math.pow(10, Math.floor(Math.log10(Math.min(...ys, ...P.map(p => p.c.sv || Infinity))) - 0.3));
+  draw('c5', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Energy per decision (J)', { yType: 'logarithmic', xTitle: 'Total qubits in the circuit', yFmt: decade(J), y: { min: ymin, max: ymax },
+    tt: { label: c => `${c.dataset.label}: ${J(c.parsed.y)} at ${c.parsed.x} qubits` } }) });
+  for (const p of P) rows.push([p.r.nq, p.r.ibm_n2q != null ? Math.round(p.r.ibm_n2q) : '–', p.q ? p.q.F.toExponential(1) : '–', p.q ? num(p.q.N) : '–', p.q ? J(p.q.ibm) : '–', p.q ? J(p.q.ionq) : '–',
+    J(p.c.sv), J(p.c.tn) + (p.c.tn != null && !p.c.tnMeas ? ' (model)' : ''), J(p.c.samp) + (p.c.samp != null && !p.c.ampMeas ? ' (model)' : ''), J(p.c.mps), p.c.by || '–']);
+  table('t5', ['Qubits', 'Kingston 2q', 'F', 'Shots', 'IBM', 'IonQ', 'Statevector', 'Exact TN', 'TN sampler', 'MPS', 'Frontier'], rows);
+  const wins = P.filter(p => p.q && p.c.best != null && p.q.ibm < p.c.best);
+  document.getElementById('cap5').innerHTML = (wins.length ? `At this error rate IBM beats the best classical method at <b>${wins.map(p => p.r.nq).join(', ')} qubits</b>. ` : `At this error rate no QPU point beats the classical frontier at ${state.dep} layers. `)
+    + `Even an error-free QPU spends about ${J(P.find(p => p.q) ? (+state.n0 * P.find(p => p.q).q.tS + 2 * 2 / 190) * 25e3 : null)} per decision (shots plus job overhead at 25 kW), so it can only win where the best classical method costs more than that. L4 tensor-network efficiency: ${sci(ETA)} FLOP/J (median of the compute-bound runs).`;
+  pick6Fill();
+}
+function pick6Fill() {
+  const sel = document.getElementById('pick6'); if (sel.options.length) return;
+  for (const r of ADVR().filter(r => (r.mps || {}).rho).sort((a, b) => a.layers - b.layers || a.nq - b.nq)) { const o = document.createElement('option'); o.value = `${r.layers}|${r.nq}`; o.textContent = `${r.layers} layers, ${r.nq} qubits`; sel.appendChild(o); }
+  const pref = [...sel.options].find(o => o.value === '8|31'); if (pref) sel.value = pref.value;
+  sel.addEventListener('change', () => { try { fig6(); } catch (e) { showErr('Figure 6', e); } });
+}
+function fig6() {
+  ETA = ETA || etaFit();
+  const [L, nq] = document.getElementById('pick6').value.split('|').map(Number), r = ADVR().find(x => x.layers === L && x.nq === nq); if (!r) return;
+  const m = em(), q = qpu(r, m), c = classical(r), n0 = +state.n0, ds = [];
+  const Ns = []; for (let k = 0; k <= 60; k++) Ns.push(Math.pow(10, 1 + 9 * k / 60));
+  if (q) ds.push(series('IBM Kingston (noise model)', tok('--s1'), Ns.map(N => ({ x: (N * q.tS + 2 * 2 / 190) * 25e3, y: 0.1 * Math.sqrt(n0 / N) / q.F })), { pointRadius: 0 }));
+  if (c.amp != null) ds.push(series('TN sampler', tok('--s3'), Ns.map(N => ({ x: N * c.amp, y: 0.1 * Math.sqrt(n0 / N) })), { pointRadius: 0, borderDash: [6, 4] }));
+  const M = ((r.mps || {}).rho || []).filter(x => x.J && x.mrel != null && x.ref === 'exact').sort((a, b) => a.chi - b.chi);
+  if (M.length) ds.push(series('MPS (bond dimension 2–256)', tok('--s4'), M.map(x => ({ x: x.J, y: Math.max(x.mrel, 1e-5), row: x }))));
+  if (c.tn != null) ds.push(series('Exact TN (error 0, drawn at 10⁻⁵)', tok('--s7'), [{ x: c.tn, y: 1e-5 }], { pointRadius: 8, pointStyle: 'rectRot', showLine: false }));
+  legend('lg6', [['IBM Kingston', tok('--s1')], ['TN sampler', tok('--s3'), true], ['MPS', tok('--s4')], ['Exact TN', tok('--s7')]]);
+  draw('c6', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Relative error of the margin', { xType: 'logarithmic', yType: 'logarithmic', xTitle: 'Energy per decision (J)', yFmt: decade(v => v >= 0.01 ? (100 * v) + '%' : v.toExponential(0)), xTicks: { callback: decade(J), maxRotation: 0, autoSkip: false },
+    y: { min: 5e-6, max: 3 }, tt: { label: c2 => `${c2.dataset.label}: ${(100 * c2.parsed.y).toPrecision(2)}% at ${J(c2.parsed.x)}${c2.dataset._rows && c2.dataset._rows[c2.dataIndex] ? ` (χ = ${c2.dataset._rows[c2.dataIndex].chi})` : ''}` } }) });
+  const ratio = q && c.amp ? (q.tS * 25e3) / (q.F * q.F) / c.amp : null;
+  document.getElementById('cap6').innerHTML = q && c.amp ? `Per sample, the QPU spends ${J(q.tS * 25e3)} and the classical sampler ${J(c.amp)}${c.ampMeas ? '' : ' (from the contraction cost)'}; with F = ${q.F.toExponential(1)} the QPU needs ${num(1 / (q.F * q.F))}× more samples, so at equal error it costs <b>${ratio >= 1 ? num(ratio) + '× more' : num(1 / ratio) + '× less'}</b> than the sampler. The condition for a QPU win is F² × (classical joules per amplitude) > QPU joules per shot.` : '';
+}
+function fig7() {
+  ETA = ETA || etaFit();
+  const m = em(), R = ADVR(), Ls = [8, 4, 2], nqs = [...new Set(R.map(r => r.nq))].sort((a, b) => a - b);
+  const cell = (L, nq) => { const r = R.find(x => x.layers === L && x.nq === nq); if (!r) return '<td></td>';
+    const q = qpu(r, m), c = classical(r); if (!q || c.best == null) return '<td style="color:var(--muted)">–</td>';
+    const lr = Math.log10(q.ibm / c.best), ms = breakEven(r, c.best);
+    const t = Math.max(-1, Math.min(1, lr / 6)), col = lr < 0 ? `color-mix(in srgb, var(--s3) ${Math.round(35 + 50 * -t)}%, var(--surface))` : `color-mix(in srgb, var(--s1) ${Math.round(10 + 45 * t)}%, var(--surface))`;
+    const be = ms == null ? 'never' : `ε* ${(ms * CAL.eIBM).toExponential(1)}`;
+    return `<td style="background:${col};color:var(--fg)">${lr >= 0 ? '+' : ''}${lr.toFixed(1)}<small>${be}</small><small>${c.by}</small></td>`; };
+  document.getElementById('heat7').innerHTML = `<table><thead><tr><th>Layers \\ qubits</th>${nqs.map(n => `<th>${n}</th>`).join('')}</tr></thead><tbody>${Ls.map(L => `<tr><th>${L}</th>${nqs.map(n => cell(L, n)).join('')}</tr>`).join('')}</tbody></table>`;
+  const best = []; for (const r of R) { const c = classical(r), ms = breakEven(r, c.best); if (ms != null) best.push({ r, ms }); }
+  best.sort((a, b) => b.ms - a.ms); const b0 = best[0];
+  document.getElementById('cap7').innerHTML = `Value = log₁₀(IBM energy / best classical energy) at ε_eff = ${(CAL.eIBM * m).toExponential(1)}; negative means the QPU wins. `
+    + (b0 ? `The most forgiving point is <b>${b0.r.layers} layers, ${b0.r.nq} qubits</b>: the QPU breaks even at a two-qubit error of ${(b0.ms * CAL.eIBM).toExponential(1)}, ${b0.ms >= 1 ? 'already reached' : (1 / b0.ms).toFixed(1) + '× lower than Kingston today'}. ` : 'No point breaks even at any error rate. ')
+    + `"never": the classical cost is below the QPU's error-free floor. Deep, wide circuits are where classical costs explode, and also where QPU noise grows fastest.`;
+}
+
 function showErr(what, err) { const box = document.getElementById('errbox'); box.hidden = false; box.insertAdjacentHTML('beforeend', `<div>${what} failed to render: ${err}</div>`); }
 function renderAll() {
   if (!S) return;
   if (typeof Chart === 'undefined') { showErr('Charts', 'chart library did not load'); return; }
-  [fig1, fig2, fig3, figAcc].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + (i + 1), err); } });
+  [fig1, fig2, fig3, figAcc, fig5, fig6, fig7].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + [1, 2, 3, 4, 5, 6, 7][i], err); } });
 }
+document.getElementById('em').addEventListener('input', () => { [fig5, fig6, fig7].forEach(f => { try { f(); } catch (err) { showErr(f.name, err); } }); });
 document.querySelectorAll('.group').forEach(g => g.addEventListener('click', e => {
   const b = e.target.closest('button.chip'); if (!b) return;
   const k = g.dataset.ctl; state[k] = b.dataset.v;

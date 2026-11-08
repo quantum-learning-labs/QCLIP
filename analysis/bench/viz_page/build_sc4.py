@@ -4,7 +4,7 @@ import json, math, pathlib
 here = pathlib.Path(__file__).parent
 head = (here / 'template.html').read_text().split('</style>')[0] + '</style>\n'
 ref = json.load(open(here / 'viz_data.json'))
-data = {'sc4': json.load(open(here / 'viz_sc4.json')), 'ref': {'v3_gpu_scaling': ref.get('v3_gpu_scaling', []), 'clip': ref['notes']['clip_J_per_decision']}}
+data = {'sc4': json.load(open(here / 'viz_sc4.json')), 'adv': json.load(open(here / 'adv.json')), 'ref': {'v3_gpu_scaling': ref.get('v3_gpu_scaling', []), 'clip': ref['notes']['clip_J_per_decision']}}
 def clean(o):                                   # NaN/inf (e.g. skipped O-readout counts) are not valid JSON: write null
     if isinstance(o, float): return o if math.isfinite(o) else None
     if isinstance(o, dict): return {k: clean(v) for k, v in o.items()}
