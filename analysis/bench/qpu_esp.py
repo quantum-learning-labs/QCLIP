@@ -41,7 +41,7 @@ def main():
     a = ap.parse_args()
     kingston = fake_provider.FakeKingston(); tg = kingston.target
     out = Path(a.out); new = not out.exists(); out.parent.mkdir(parents=True, exist_ok=True)
-    w = csv.writer(open(out, 'a', newline=''))
+    w = csv.writer(open(out, 'a', newline='', buffering=1))
     if new: w.writerow(['ckpt', 'text_n', 'layers', 'nq', 'idx', 'ibm_duration_s', 'ibm_n2q', 'ibm_n1q', 'ibm_esp_gates', 'ibm_esp_readout', 'ibm_missing_err', 'ionq_n1q', 'ionq_n2q'])
     for c in a.checkpoints:
         ckpt = Path(c); config, nq, D = load(ckpt, a); L = config['text'].get('layers'); t0 = time.time()

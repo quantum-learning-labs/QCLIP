@@ -44,7 +44,7 @@ def main():
     ap.add_argument('--pairs', type=int, default=40)
     a = ap.parse_args()
     out = Path(a.out); new = not out.exists(); out.parent.mkdir(parents=True, exist_ok=True)
-    w = csv.writer(open(out, 'a', newline=''))
+    w = csv.writer(open(out, 'a', newline='', buffering=1))
     if new: w.writerow(['ckpt', 'text_n', 'layers', 'nq', 'idx', 'net', 'n_tensors', 'n_indices', 'tw_lb', 'opt', 'width', 'log10_flops', 'path_s'])
     for c in a.checkpoints:
         ckpt = Path(c); config, nq, D = load(ckpt, a); L = config['text'].get('layers')

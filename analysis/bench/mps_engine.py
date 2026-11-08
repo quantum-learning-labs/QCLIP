@@ -127,7 +127,7 @@ def main():
     ap.add_argument('--max_s_per_dec', type=float, default=120, help='stop raising chi once one decision takes longer than this')
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True); dev = torch.device('cuda')
-    w = csv.writer(open(out / 'mps.csv', 'a', newline=''))
+    w = csv.writer(open(out / 'mps.csv', 'a', newline='', buffering=1))
     w.writerow(['gpu', 'ckpt', 'text_n', 'layers', 'nq', 'net', 'chi', 'decisions', 'J_gross_per_decision', 's_per_decision', 'idle_W',
                 'dw_mean', 'maxD', 'amp_rel_err_mean', 'amp_rel_err_max', 'margin_rel_err_median', 'agree', 'reference'])
     m = None

@@ -199,7 +199,7 @@ def main():
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     engines = a.engines.split(',')
     from shotcost_branches_fast import eng_tn
-    dw = csv.writer(open(out / 'structure.csv', 'a', newline=''))
+    dw = csv.writer(open(out / 'structure.csv', 'a', newline='', buffering=1))
     dw.writerow(['ckpt', 'text_n', 'nq', 'e', 'decisions', 'n2q_mean', 'live_peak_nat', 'live_peak_sched', 'tn_width', 'tn_log10_flops', 'tn_rho_width', 'tn_rho_log10_flops', 'path_s'])
     if not a.diag:
         from v3_energy import Meter
@@ -207,7 +207,7 @@ def main():
         print(f'GPU {m.name}, idle {idle:.1f} W', flush=True)
         if idle > 100: raise SystemExit(f'GPU is not idle ({idle:.0f} W): another process is on it; rerun on another node')
         dev = torch.device('cuda')
-        ew = csv.writer(open(out / 'gpu_engines.csv', 'a', newline=''))
+        ew = csv.writer(open(out / 'gpu_engines.csv', 'a', newline='', buffering=1))
         ew.writerow(['gpu', 'ckpt', 'text_n', 'nq', 'engine', 'decisions', 'J_gross', 'seconds', 'J_gross_per_decision', 'J_net_per_decision', 's_per_decision', 'idle_W', 'max_abs_err', 'note'])
     for c in a.checkpoints:
         ckpt = Path(c); t0 = time.time(); cross = None
