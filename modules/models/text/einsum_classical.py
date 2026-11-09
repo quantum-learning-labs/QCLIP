@@ -15,7 +15,7 @@ class TNModel(nn.Module):
 
     def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False,
                  head: str = 'affine', hybrid: bool = False, word_base: float = None, centre: bool = False,
-                 mix_fixed: float = None):
+                 mix_fixed: float = None, eval_chunk: int = None):
         super().__init__()
         # scale_free (text.scale_free, levelwise only): divide every intermediate of the contraction by its (detached) max |entry|,
         # per sentence. The network is multilinear, so this only rescales each sentence vector by a positive number, which
@@ -43,6 +43,9 @@ class TNModel(nn.Module):
         if mix_fixed is not None and not hybrid:
             raise ValueError("text.mix_fixed needs text.compose: hybrid")
         self.mix_fixed = mix_fixed
+        # eval_chunk (text.eval_chunk, default off): no-grad forwards (validation/benchmarks encode ~2.5k captions at once) run
+        # in chunks of at most this many captions; rows are independent, so only peak memory changes (wide bonds OOM'd 24 GB)
+        self.eval_chunk = eval_chunk
         self.extra = None   # nn.ParameterDict of the step-4c parameters ('word_base', 'mix'), built with the banks
         self.capture = None   # a list: every forward appends its pre-LayerNorm outputs (analysis tools)
         # init 'glorot': step-1 scheme (shape only). 'norm': std 1/sqrt(dim of the leg towards the sentence output) (the
@@ -357,6 +360,8 @@ class TNModel(nn.Module):
         return sid, rows
 
     def forward(self, batch: List[tuple[str, List[str]]]) -> torch.Tensor:
+        if self.eval_chunk and not torch.is_grad_enabled() and len(batch) > self.eval_chunk:
+            return torch.cat([self.forward(batch[j:j + self.eval_chunk]) for j in range(0, len(batch), self.eval_chunk)])
         if self.bow:
             return self._bow_forward(batch)
         if not hasattr(self, '_plans'):
