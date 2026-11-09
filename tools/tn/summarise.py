@@ -27,6 +27,8 @@ ROWS = [('coco5k', f'{d}R{k}', f'MSCOCO 5k {d} R@{k}', None) for d in ('i2t', 't
     ('winoground', 'txt_score', 'Winoground text', 0.25), ('winoground', 'img_score', 'Winoground image', 0.25),
     ('winoground', 'grp_score', 'Winoground group', 1 / 6)]
 
+RSUM = 'MSCOCO 5k rsum (R@1+5+10, i2t+t2i, %)'
+
 def load(glob_pat):
     glob_pat, _, which = glob_pat.partition('@')
     runs = []
@@ -55,6 +57,16 @@ def summarise(runs):
         out[label] = {'mean': mean, 'std': std, 'seeds': len(vals), 'n': n, 'chance': chance, 'binom_se': se,
                       'above_chance': mean - chance, 'z_vs_chance': (mean - chance) / se if se else float('nan'),
                       'oov_sentence_frac': runs[0]['res'].get(f'{blk}_oov_sentence_frac'), 'values': vals}
+    # rsum: R@1 + R@5 + R@10 summed over both directions, in % (max 600); only runs that have all six
+    keys = [f'coco5k_{d}R{k}' for d in ('i2t', 't2i') for k in (1, 5, 10)]
+    vals = [100 * sum(r['res'][k] for k in keys) for r in runs if all(k in r['res'] for k in keys)]
+    if vals:
+        n = runs[0]['res'].get('coco5k_n')
+        chance = 100 * sum(coco_chance(k, 25014, 5) for k in (1, 5, 10)) + 100 * sum(k / n for k in (1, 5, 10)) if n else float('nan')
+        mean = float(_mean(vals))
+        out[RSUM] = {'mean': mean, 'std': stdev(vals) if len(vals) > 1 else 0.0, 'seeds': len(vals), 'n': n, 'chance': chance,
+                     'binom_se': float('nan'), 'above_chance': mean - chance, 'z_vs_chance': float('nan'),
+                     'oov_sentence_frac': runs[0]['res'].get('coco5k_oov_sentence_frac'), 'values': vals}
     eff = {}
     m = [r['meta'] for r in runs]
     eff['params_text'] = m[0]['params_text']; eff['params_text_by_order'] = m[0]['params_text_by_order']
@@ -77,7 +89,7 @@ if __name__ == '__main__':
     lines = ['| benchmark | chance | n | ' + ' | '.join(f'{l} mean ± std (seeds)' for l in labs) + ' | ' +
              ' | '.join(f'{l} above chance (z)' for l in labs) + ' | OOV sent. (' + ' / '.join(labs) + ') |',
              '|---|---|---|' + '---|' * (2 * len(labs)) + '---|']
-    for _, _, label, _ in ROWS:
+    for label in [x[2] for x in ROWS[:6]] + [RSUM] + [x[2] for x in ROWS[6:]]:
         if label not in data[labs[0]][0]: continue
         r0 = data[labs[0]][0][label]
         cells = [f"{data[l][0][label]['mean']:.4f} ± {data[l][0][label]['std']:.4f} ({data[l][0][label]['seeds']})" if label in data[l][0] else '-' for l in labs]
