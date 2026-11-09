@@ -23,7 +23,7 @@ for r in rd('gpu_engines.csv'):
     if r['ckpt'] in BAD or r['ckpt'] == 'ckpt' or not fl(r['J_gross_per_decision']): continue
     x = R(r['ckpt'], r['nq']); x.setdefault('gpu', {})[r['engine']] = dict(J=fl(r['J_gross_per_decision']), s=fl(r['s_per_decision']), err=fl(r['max_abs_err']), gpu=r['gpu'], note=r['note'])
 best = collections.defaultdict(lambda: collections.defaultdict(list))
-for f in ('tw_bounds_l2.csv', 'tw_bounds_l48.csv', 'tw_bounds_l8fast.csv'):
+for f in ('tw_bounds_l2.csv', 'tw_bounds_l48_fromlog.csv', 'tw_bounds_l8fast.csv'):
     for r in rd(f):
         if r['ckpt'] in BAD or r['width'] in ('nan', ''): continue
         best[(layers_of(r['ckpt']), int(r['nq']), r['net'], int(r['idx']))][r['opt']].append((fl(r['width']), fl(r['log10_flops']), fl(r['tw_lb'])))
