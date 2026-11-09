@@ -33,9 +33,14 @@ class BaseAnsatz(ABC):
         self.char_idx = count(0)
 
     def get_char(self):
-        i = next(self.char_idx)
+        # skip whitespace code points (first one: U+1680 at symbol ~5,620): einsum2interleaved strips each tensor's index string,
+        # which silently dropped indices of very large circuits (8 layers x 64 qubits). Symbols below U+1680 are unchanged.
         chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        return chars[i] if i < len(chars) else chr(192 + i - len(chars))
+        while True:
+            i = next(self.char_idx)
+            c = chars[i] if i < len(chars) else chr(192 + i - len(chars))
+            if not c.isspace() and c not in ',->$' and not 0xD800 <= ord(c) <= 0xDFFF:
+                return c
 
     def ccg_map(self, tn):
         ccg_map = {}
