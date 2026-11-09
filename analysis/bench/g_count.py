@@ -3,6 +3,7 @@
 # for the first --native pairs. One CSV row per pair: ckpt, n, idx, nq, cx_{cu_pos,cu_neg,O}, nat2q_{...}, natdepth_O.
 # usage: PYTHONPATH=.:analysis/bench python analysis/bench/g_count.py -o results/shotcost/viz/gates.csv -cp ckpt...
 import argparse, copy, csv, time
+from collections import Counter
 from pathlib import Path
 import numpy as np, pandas as pd
 from qiskit import QuantumCircuit, transpile
@@ -18,7 +19,9 @@ TWO_Q = {'cx', 'cz', 'ecr', 'rzz', 'swap', 'iswap', 'rxx', 'ryy', 'cp', 'crz', '
 n2q = lambda qc: sum(v for k, v in qc.count_ops().items() if k in TWO_Q)
 
 
-def frames(ckpt, seed):
+def frames(ckpt, seed, typical=None):
+    # typical=k: compile only the first k sentences of the most common circuit width, read from the parse
+    # (qubits = number of '0' wire starts, as in tn2qiskit), instead of all ~1.8k (same decisions as filtering after compiling)
     config, DEV, _ = setup_exp(resolve_eval_config(None, ckpt), seed=seed)
     ansatz, image_model, text_model, _ = build_experiment(config, DEV)
     de = DataEngine(config, ansatz, DEV)
@@ -30,9 +33,15 @@ def frames(ckpt, seed):
     qlimit = de.describe_einsum(text_model, c_eval, return_metrics=True)['max'][0]
     bm = BackendManager(config, qlimit); bm.transpile = lambda c, **kw: c
     cap, cur, ds = [], [None], de.get_dataset(c_eval, 'std')
+    keep = list(range(len(ds)))
+    if typical:
+        w = [sum(g['op_type'] == '0' for g in s) if isinstance(s, list) else -1 for s in c_eval['corrected_sentence_symbols']]
+        mode = Counter(x for x in w if x > 0).most_common(1)[0][0]
+        keep = [i for i, x in enumerate(w) if x == mode][:typical]
+        print(f'frames: width {mode} for {w.count(mode)}/{len(w)} sentences; compiling {len(keep)}', flush=True)
     class Track:
-        def __len__(self): return len(ds)
-        def __getitem__(self, i): cur[0] = i; return ds[i]
+        def __len__(self): return len(keep)
+        def __getitem__(self, j): cur[0] = keep[j]; return ds[keep[j]]
     def cu(qt, qi, oq):
         if len(oq) == 0: raise ValueError('empty output register')
         cap.append((cur[0], bm._strip_clbits(qt), bm._strip_clbits(qi), list(oq))); return QuantumCircuit(1)

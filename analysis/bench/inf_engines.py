@@ -174,7 +174,7 @@ def amp_index(oq):
 
 # ---------------------------------------------------------------- driver
 def load(ckpt, a):
-    config, qlimit, fr = frames(ckpt, 0)
+    config, qlimit, fr = frames(ckpt, 0, typical=a.pairs + 20)   # +20 spare in case a pair fails to compile
     mode = Counter(x[1][0][0].num_qubits for x in fr).most_common(1)[0][0]
     fr = [x for x in fr if x[1][0][0].num_qubits == mode and x[1][1][0].num_qubits == mode][:a.pairs]
     return config, mode, [(qt, qip, qin, oq) for _, ((qt, qip, oq), (_, qin, _)) in fr]
