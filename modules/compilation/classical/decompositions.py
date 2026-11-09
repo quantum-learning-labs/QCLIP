@@ -1,5 +1,5 @@
 class MPS: 
-    def __init__(self, bond_dim: int, max_order: int, root_bond: int = None, out_bond: int = None, share_out: bool = False):
+    def __init__(self, bond_dim: int, max_order: int, root_bond: int = None, out_bond: int = None, share_out: bool = False, share_args: str = None):
         self.bond_dim = bond_dim 
         self.max_order = max_order
         self.root_bond = root_bond   # text.root_bond_dim: bond of the tensors that carry the sentence output leg (type 'out')
@@ -9,6 +9,12 @@ class MPS:
         # when the output leg is first / last), so every caption is written into one common output space
         self.out_bond = out_bond
         self.share_out = share_out
+        # step 5 (default off). share_args (text.share_args): the argument cores (every core but the word leg's and the output
+        # leg's) are shared across complex types, keyed by their atomic leg type, side of the word leg and core shape, plus the
+        # distance from the word leg for 'leg_dist' (S1); 'leg' (S2) drops the distance. Name 'a:<leg>.<L|R><dist>.<shape>';
+        # the word-leg core stays per complex type (it carries the type's identity)
+        assert share_args in (None, 'leg_dist', 'leg'), share_args
+        self.share_args = share_args
 
     def decompose(self, symbol: str, idx_arr: list[int], dims: list[int], idx_counter):
         order = len(idx_arr)
@@ -41,6 +47,14 @@ class MPS:
                 core_idx = [vbonds[k-1], idx_arr[k], vbonds[k]]
                 core_dims = [bonds[k-1], dims[k], bonds[k]]
             name = f"{symbol}_core{k}"
+            if self.share_args:
+                legs = symbol.split(':')[-1].split('@')
+                mid = (order - 1) // 2
+                if k != mid:
+                    leg = legs[k if k < mid else k - 1]
+                    if leg != 'out':
+                        dist = abs(k - mid) if self.share_args == 'leg_dist' else ''
+                        name = f"a:{leg}.{'L' if k < mid else 'R'}{dist}.{'x'.join(map(str, core_dims))}"
             if self.share_out and k == out_pos:
                 name = 'o:out_end0' if k == 0 else 'o:out_end1' if k == order - 1 else 'o:out_mid'
             cores.append((name, core_idx, core_dims))
