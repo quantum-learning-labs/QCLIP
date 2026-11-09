@@ -441,9 +441,9 @@ class TNModel(nn.Module):
         # type-tensor rows) of the batch. Under scale_free both passes track their per-sentence log scale, so the
         # difference is exact up to one positive factor per sentence; then unit norm (the difference can be small next
         # to the LayerNorm eps)
-        real, ls = self._levelwise(groups, track=True)
+        n = sum(len(items) for items in groups.values())
         wb, keyed = self._word_bank, {}
-        base_groups, to_base = defaultdict(list), np.empty(len(ls), dtype=np.int64)
+        base_groups, to_base = defaultdict(list), np.empty(n, dtype=np.int64)
         for sid, items in groups.items():
             types = [j for j, b in enumerate(self._structs[sid][3]) if b != wb]
             for i, rows in items:
@@ -453,7 +453,9 @@ class TNModel(nn.Module):
                     k = keyed[key] = len(keyed)
                     base_groups[sid].append((k, rows))
                 to_base[i] = k
-        base, bls = self._levelwise(base_groups, track=True, base_only=True)
+        # one levelwise run for both passes (base rows after the real ones): same steps, half the kernel launches
+        out, scale = self._levelwise(groups, track=True, base_groups=base_groups)
+        real, ls, base, bls = out[:n], scale[:n], out[n:], scale[n:]
         idx = torch.from_numpy(to_base).to(real.device)
         bls = bls.index_select(0, idx); top = torch.maximum(ls, bls)   # both factors <= 1: no overflow
         diff = real * (ls - top).exp().unsqueeze(1) - base.index_select(0, idx) * (bls - top).exp().unsqueeze(1)
@@ -517,7 +519,7 @@ class TNModel(nn.Module):
         struct.append(plan)
         return struct[4]
 
-    def _schedule(self, groups):
+    def _schedule(self, groups, base_groups=None):
         # The levelwise schedule of a batch, planned on the CPU (it depends only on counts): one int64 index array (all
         # gathers, moved to the GPU in one copy) and specs of spans into it. Every tensor of the batch is a row of a pool
         # piece: per bank, one piece with a row per use of a word tensor (expanded once from the bank's unique rows),
@@ -525,8 +527,13 @@ class TNModel(nn.Module):
         # dependency depth t+1 of every sentence (they only need earlier rounds); steps with the same key run as one
         # batched einsum, and all its operands of one shape come from one gather (_Take). A group's rows in a piece are
         # always contiguous, so a ref is (piece, first row, count) and each gather index is built in one numpy step.
+        # base_groups (text.centre): extra groups whose word slots are all word_base (pseudo bank 'base'); their outputs
+        # follow the real ones (row len(batch) + k for base key k)
+        entries = [(sid, items, False) for sid, items in groups.items()]
+        if base_groups:
+            entries += [(sid, items, True) for sid, items in base_groups.items()]
         plans = [(sid, np.array([r for _, r in items], dtype=np.int64).reshape(len(items), -1), self._steps(sid, len(items)))
-                 for sid, items in groups.items()]
+                 for sid, items, _ in entries]
         chunks, pos = [], [0]
         def put(a):   # index array -> its span in the single transfer
             chunks.append(a); pos[0] += len(a); return (pos[0] - len(a), pos[0])
@@ -535,13 +542,15 @@ class TNModel(nn.Module):
         piece_sizes = defaultdict(list)
         leaf_ref, leaves = {}, []
         by_bank = defaultdict(list)
+        wb = self._word_bank if self.word_scale is not None else None
         for g, (sid, mat, _) in enumerate(plans):
+            base = entries[g][2]
             for j, b in enumerate(self._structs[sid][3]):
-                by_bank[b].append((g, j, mat[:, j]))
+                by_bank['base' if base and b == wb else b].append((g, j, mat[:, j]))
         for b, items in by_bank.items():
             uses = np.concatenate([r for _, _, r in items])
             uniq, inv = np.unique(uses, return_inverse=True)
-            shape = self.bank_shapes[b]
+            shape = self.bank_shapes[wb if b == 'base' else b]
             pid = len(piece_sizes[shape]); piece_sizes[shape].append(len(uses))
             leaves.append((b, shape, put(uniq), put(inv.reshape(-1))))
             o = 0
@@ -593,7 +602,8 @@ class TNModel(nn.Module):
                 ops.append((eq, len(shapes), out_shape))
             rounds.append((gathers, ops, list(out_pieces)))
         # final outputs straight into batch order: the groups' output rows in plan order, then permuted to batch order
-        order = np.concatenate([[i for i, _ in items] for items in groups.values()])
+        nreal = sum(len(items) for items in groups.values())
+        order = np.concatenate([[i + (nreal if base else 0) for i, _ in items] for _, items, base in entries])
         finals = [ref_of(g, st[1]) for g, (_, _, st) in enumerate(plans)]   # st = (steps, final ref, levels)
         inverse = np.empty(len(order), dtype=np.int64); inverse[order] = np.arange(len(order))
         shape = (self.out_dim,)
@@ -605,12 +615,12 @@ class TNModel(nn.Module):
         final = (shape, used, put(rows[inverse]))
         return np.concatenate(chunks), leaves, rounds, final
 
-    def _levelwise(self, groups, schedule=None, track=False, base_only=False):
+    def _levelwise(self, groups, schedule=None, track=False, base_only=False, base_groups=None):
         # runs the batch's schedule (_schedule; `schedule` = one planned ahead of time). word_base: word rows are base +
         # bank row; base_only: every word is base (text.centre's structure term). track: also return each sentence's log
         # scale (sum of the scale_free divisors along its contraction; 0 without scale_free): true output = out * exp(.)
         device = self._bank(0).device
-        idx, leaves, rounds, final = schedule if schedule is not None else self._schedule(groups)
+        idx, leaves, rounds, final = schedule if schedule is not None else self._schedule(groups, base_groups)
         idx = torch.from_numpy(idx)
         if device.type == 'cuda':
             idx = idx.pin_memory().to(device, non_blocking=True)
@@ -626,7 +636,7 @@ class TNModel(nn.Module):
             return (torch.cat(src) if len(src) > 1 else src[0]).index_select(0, sl(span))
         wb = self._word_bank if self.word_scale is not None else None
         for b, shape, uspan, ispan in leaves:
-            if base_only and b == wb:
+            if b == 'base' or (base_only and b == wb):
                 piece = self.extra['word_base'].expand(ispan[1] - ispan[0], -1)
             else:
                 if torch.is_grad_enabled():   # training: RowAdam updates exactly these rows from the leaf's gradient
