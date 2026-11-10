@@ -319,11 +319,16 @@ function fig3() {
   if (sc.length && d3 === 2) eds.push(series('GPU, scaling probe (one random circuit)', tok('--muted'), sc, { borderDash: [2, 3], pointRadius: 2 }));
   eds.push({ label: 'CLIP ViT-B/32 (GPU)', data: [{ x: xmin, y: D.ref.clip }, { x: xmax, y: D.ref.clip }], borderColor: tok('--fg2'), borderDash: [1, 4], borderWidth: 1.5, pointRadius: 0, showLine: true });
   legend('lg3', (fixed ? [['IBM Kingston', tok('--s1')], ['IonQ Forte (dashed)', tok('--s2'), true]] : [['IBM (solid)', tok('--fg2')], ['IonQ (dashed)', tok('--fg2'), true]].concat(Object.keys(METH).map(m => [METH[m], tok(MSLOT[m])])))
-    .concat((d3 === 2 ? [['GPU Aer statevector (v14)', tok('--s7'), true]] : []).concat([['GPU cuStateVec (L4)', tok('--s4'), true], ['GPU TN, post-selection (L4; hollow = from best path)', tok('--s3'), true], ['GPU TN, discard (L4)', tok('--fg'), true]], cus.length > 1 ? [['cuStateVec extrapolated (dotted)', tok('--s4'), true]] : [], ADVR().some(r => r.layers === d3 && isGrown(r) && showRow(r)) ? [['triangles: output register e = 6 or 8', tok('--fg2')]] : [],
+    .concat((d3 === 2 ? [['GPU Aer statevector (v14)', tok('--s7'), true]] : []).concat([['GPU cuStateVec (L4)', tok('--s4'), true], ['GPU TN, post-selection (L4; hollow = from best path)', tok('--s3'), true], ['GPU TN, discard (L4)', tok('--fg'), true]], cus.length > 1 ? [['dotted: statevector and probe extrapolated at their measured growth', tok('--fg2'), true]] : [], ADVR().some(r => r.layers === d3 && isGrown(r) && showRow(r)) ? [['triangles: output register e = 6 or 8', tok('--fg2')]] : [],
       d3 === 2 ? [['GPU scaling probe', tok('--muted'), true]] : [], [['CLIP (GPU)', tok('--fg2'), true]])).concat(cross ? [['crossover', tok('--fg')]] : []));
   const ys3 = eds.flatMap(d => d.data.map(p => p.y)).filter(v => v > 0), yTop3 = Math.pow(10, Math.ceil(Math.log10(Math.max(...ys3) * 2)));
   const sx3 = extrap(cus, yTop3, xmax);   // cuStateVec beyond what fits in 24 GB, at the measured growth rate
   if (sx3) eds.push({ label: `GPU, cuStateVec extrapolated (×${sx3.perQubit.toFixed(2)} per qubit)`, data: sx3.pts, borderColor: tok('--s4'), borderDash: [1, 3], borderWidth: 1.5, pointRadius: 0, showLine: true });
+  // the same extrapolation for the RTX 3090 Ti Aer statevector runs (v14 method) and the scaling probe (one random 20-layer circuit)
+  for (const [pts, lab, col] of [[gpts, 'GPU, Aer statevector (RTX 3090 Ti) extrapolated', tok('--s7')], [d3 === 2 ? sc : [], 'GPU, scaling probe extrapolated', tok('--muted')]]) {
+    const x = extrap(pts, yTop3, xmax);
+    if (x) eds.push({ label: `${lab} (×${x.perQubit.toFixed(2)} per qubit)`, data: x.pts, borderColor: col, borderDash: [1, 3], borderWidth: 1.5, pointRadius: 0, showLine: true });
+  }
   draw('c3', { type: 'scatter', data: { datasets: eds }, options: baseOpts('Energy per decision', { x: { min: Math.floor(xmin) - 0.5, max: Math.ceil(xmax) + 0.5 }, y: logY(Math.min(...ys3) / 2, Math.max(...ys3) * 2, 'J'), xTitle: 'Total qubits in the circuit (mean per sentence)',
     tt: { label: c => `${c.dataset.label}: ${J(c.parsed.y)} at ${c.parsed.x.toFixed(1)} qubits` } }) });
   table('t3', ['Config', 'Model', 'Qubits', 'Shots/decision', 'IBM', 'IonQ'], rows);
