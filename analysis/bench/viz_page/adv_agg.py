@@ -18,15 +18,15 @@ rows = collections.defaultdict(dict)
 def R(ck, nq):
     x = rows[(layers_of(ck), int(float(nq)))]; x.setdefault('e', int(re.search(r'_e(\d+)_', ck).group(1))); x.setdefault('n', int(re.search(r'_n(\d+)_', ck).group(1))); return x
 
-for r in rd('structure.csv') + rd('structure_big.csv') + rd('structure_grid_l*.csv'):                            # e1 structure (greedy) incl. tn widths
+for r in rd('structure.csv') + rd('structure_big.csv') + rd('structure_grid_l*.csv') + rd('structure_fill.csv'):                            # e1 structure (greedy) incl. tn widths
     if isbad(r) or r['ckpt'] == 'ckpt': continue
     x = R(r['ckpt'], r['nq']); x.update(ckpt=r['ckpt'], n2q_logical=fl(r['n2q_mean']), greedy_ps_width=fl(r['tn_width']), greedy_ps_lf=fl(r['tn_log10_flops']),
                                          greedy_rho_width=fl(r['tn_rho_width']), greedy_rho_lf=fl(r['tn_rho_log10_flops']))
-for r in rd('gpu_engines.csv') + rd('gpu_engines_big.csv') + rd('gpu_engines_grid.csv'):
+for r in rd('gpu_engines.csv') + rd('gpu_engines_big.csv') + rd('gpu_engines_grid.csv') + rd('gpu_engines_fill.csv'):
     if isbad(r) or r['ckpt'] == 'ckpt' or not fl(r['J_gross_per_decision']): continue
     x = R(r['ckpt'], r['nq']); x.setdefault('gpu', {})[r['engine']] = dict(J=fl(r['J_gross_per_decision']), s=fl(r['s_per_decision']), err=fl(r['max_abs_err']), gpu=r['gpu'], note=r['note'])
 best = collections.defaultdict(lambda: collections.defaultdict(list))   # keyed by network shape (ckpt, tensors, indices): typical decisions share one network, so a path searched on one serves all
-for f in ('tw_bounds_l2.csv', 'tw_bounds_l48_fromlog.csv', 'tw_bounds_l8fast.csv', 'tw_bounds_big.csv', 'tw_bounds_grid_l*.csv', 'tw_bounds_ctg_l*.csv'):
+for f in ('tw_bounds_l2.csv', 'tw_bounds_l48_fromlog.csv', 'tw_bounds_l8fast.csv', 'tw_bounds_big.csv', 'tw_bounds_grid_l*.csv', 'tw_bounds_ctg_l*.csv', 'tw_bounds_fill.csv', 'tw_bounds_ctg3_*.csv'):
     for r in rd(f):
         if isbad(r) or r['width'] in ('nan', ''): continue
         best[(layers_of(r['ckpt']), int(r['nq']), r['net'], (r['ckpt'], r['n_tensors'], r['n_indices']))][r['opt']].append((fl(r['width']), fl(r['log10_flops']), fl(r['tw_lb'])))
@@ -49,7 +49,7 @@ for f in ('qpu_esp_l2b.csv', 'qpu_esp_l48.csv', 'qpu_esp_big.csv', 'qpu_esp_grid
         for k in ('ibm_duration_s', 'ibm_n2q', 'ibm_n1q', 'ionq_n1q', 'ionq_n2q'): x[k] = mean([fl(t[k]) for t in v])
 # qpu_esp2_*.csv (--circ all): per decision the CU circuits (cu_pos, cu_neg: same counts) and the O-readout (e <= 6 only).
 # The noise fit was measured on CU circuits, so the CU counts replace the older O-readout counts above; O is kept as *_O.
-for f in ('qpu_esp2_*.csv',):
+for f in ('qpu_esp2_*.csv', 'qpu_esp3_*.csv'):   # esp3 (best of 5 transpile seeds) read last: overrides the single-seed counts
     acc = collections.defaultdict(list)
     for r in rd(f):
         if isbad(r) or r['ckpt'] == 'ckpt': continue
