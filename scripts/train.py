@@ -36,6 +36,10 @@ if __name__ == "__main__":
         parser.error('-cfg/--config is required (unless --resume)')
 
     config, DEV, SEED = setup_exp(args.config, seed=args.seed, overrides=args.set)
+    if str(DEV).startswith('cuda'):
+        # claim the GPU before the minutes of CPU-side compilation: the cluster's GPU prolog picks a card with no process on it,
+        # and handed one card to several jobs that were still compiling (exclusive-process GPUs: all but one then died at .to(cuda))
+        torch.empty(1, device=DEV)
     if args.init_from: config['init_from'] = args.init_from
     if args.run_name: config['run_name'] = args.run_name
     if args.resume_as:
