@@ -397,7 +397,7 @@ function fig5() {
   const wins = P.filter(p => p.q && p.c.best != null && p.q.ibm < p.c.best);
   document.getElementById('cap5').innerHTML = (wins.length ? `At this error rate IBM beats the best classical method at <b>${wins.map(p => p.r.nq).join(', ')} qubits</b>. ` : `At this error rate no QPU point beats the classical frontier at ${state.dep} layers. `)
     + `Even an error-free QPU spends about ${J(P.find(p => p.q) ? (+state.n0 * P.find(p => p.q).q.tS + 2 * 2 / 190) * 25e3 : null)} per decision (shots plus job overhead at 25 kW), so it can only win where the best classical method costs more than that. L4 tensor-network efficiency: ${sci(ETA)} FLOP/J (median of the compute-bound runs).`
-    + (state.dep !== '2' && P.some(p => p.c.by && !(p.c.ampMeas || p.c.tnMeas) && p.r.best_ps_by !== 'ctg' && p.r.nq > 79) ? ` <b>Provisional:</b> above 79 qubits the classical points come from the random-greedy search only (see the table); a cotengra search is running and may lower them.` : '');
+    + (state.dep !== '2' && P.some(p => p.c.by && !(p.c.ampMeas || p.c.tnMeas) && p.r.best_ps_by !== 'ctg' && p.r.nq > 79) ? ` <b>Provisional:</b> above 79 qubits the classical points come from the random-greedy search only (see the table); cotengra runs are in progress, and the first, at 4 layers and 79 qubits, found paths 200–600× cheaper than random-greedy, so these points may fall a long way.` : '');
   pick6Fill();
 }
 function pick6Fill() {

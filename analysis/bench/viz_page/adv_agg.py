@@ -25,11 +25,11 @@ for r in rd('structure.csv') + rd('structure_big.csv') + rd('structure_grid_l*.c
 for r in rd('gpu_engines.csv') + rd('gpu_engines_big.csv') + rd('gpu_engines_grid.csv'):
     if isbad(r) or r['ckpt'] == 'ckpt' or not fl(r['J_gross_per_decision']): continue
     x = R(r['ckpt'], r['nq']); x.setdefault('gpu', {})[r['engine']] = dict(J=fl(r['J_gross_per_decision']), s=fl(r['s_per_decision']), err=fl(r['max_abs_err']), gpu=r['gpu'], note=r['note'])
-best = collections.defaultdict(lambda: collections.defaultdict(list))
+best = collections.defaultdict(lambda: collections.defaultdict(list))   # keyed by network shape (ckpt, tensors, indices): typical decisions share one network, so a path searched on one serves all
 for f in ('tw_bounds_l2.csv', 'tw_bounds_l48_fromlog.csv', 'tw_bounds_l8fast.csv', 'tw_bounds_big.csv', 'tw_bounds_grid_l*.csv', 'tw_bounds_ctg_l*.csv'):
     for r in rd(f):
         if isbad(r) or r['width'] in ('nan', ''): continue
-        best[(layers_of(r['ckpt']), int(r['nq']), r['net'], int(r['idx']))][r['opt']].append((fl(r['width']), fl(r['log10_flops']), fl(r['tw_lb'])))
+        best[(layers_of(r['ckpt']), int(r['nq']), r['net'], (r['ckpt'], r['n_tensors'], r['n_indices']))][r['opt']].append((fl(r['width']), fl(r['log10_flops']), fl(r['tw_lb'])))
 per = collections.defaultdict(list)
 for (L, nq, net, i), d in best.items():
     cand = [(v[0], o) for o, v in d.items()]
