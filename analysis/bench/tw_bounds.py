@@ -46,7 +46,8 @@ def main():
     ap.add_argument('--opts', default='greedy,random-greedy-128,ctg')
     ap.add_argument('--pairs', type=int, default=40)
     ap.add_argument('--ctg_s', type=float, default=30, help='cotengra time budget per network (s)')
-    ap.add_argument('--ctg_methods', default='greedy,labels', help='cotengra path methods (no kahypar in the envs)')
+    ap.add_argument('--ctg_methods', default='greedy', help='cotengra path methods (no kahypar in the envs); labels trials on 8-layer networks gave'
+                    ' 10^94-flop trees whose reconfiguration ran for hours past the hard stop')
     ap.add_argument('--ctg_reconf', action='store_true', help='cotengra subtree reconfiguration of each trial')
     ap.add_argument('--nets', default='ps,rho')
     a = ap.parse_args()
