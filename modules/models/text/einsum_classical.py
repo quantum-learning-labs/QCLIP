@@ -526,14 +526,15 @@ class TNModel(nn.Module):
 
     def _schedule(self, groups, base_groups=None):
         # The levelwise schedule of a batch, planned on the CPU (it depends only on counts): one int64 index array (all
-        # gathers, moved to the GPU in one copy) and specs of spans into it. Every tensor of the batch is a row of a pool
-        # piece: per bank, one piece with a row per use of a word tensor (expanded once from the bank's unique rows),
-        # then one piece per (round, output shape) of results. Each row is read exactly once. Round t runs the steps at
-        # dependency depth t+1 of every sentence (they only need earlier rounds); steps with the same key run as one
-        # batched einsum, and all its operands of one shape come from one gather (_Take). A group's rows in a piece are
-        # always contiguous, so a ref is (piece, first row, count) and each gather index is built in one numpy step.
-        # base_groups (text.centre): extra groups whose word slots are all word_base (pseudo bank 'base'); their outputs
-        # follow the real ones (row len(batch) + k for base key k)
+        # gathers, moved to the GPU in one copy) and specs of spans into it. Pool pieces per shape: one per bank holding only
+        # the bank's UNIQUE rows of the batch (step 5: no per-use copy; a use is a virtual row mapped to its unique row), then
+        # one piece per (round, output shape) of results. Round t runs the steps at dependency depth t+1 of every sentence;
+        # steps with the same key run as one batched einsum, and all its operands of one shape come from one gather (_Take;
+        # with repeats when it reads leaf rows). An operand slot whose members all read the same single leaf row (e.g. the
+        # shared output core, a dense type with one row, the centring base vector) is passed unbatched instead (broadcast).
+        # A ref is (piece, first virtual row, count). Each piece is dropped after its last read (forward memory).
+        # base_groups (text.centre): extra groups whose word slots are all word_base (pseudo bank 'base', one row); their
+        # outputs follow the real ones (row len(batch) + k for base key k)
         entries = [(sid, items, False) for sid, items in groups.items()]
         if base_groups:
             entries += [(sid, items, True) for sid, items in base_groups.items()]
@@ -543,8 +544,8 @@ class TNModel(nn.Module):
         def put(a):   # index array -> its span in the single transfer
             chunks.append(a); pos[0] += len(a); return (pos[0] - len(a), pos[0])
 
-        # pieces[shape] = sizes of the pool pieces of that shape
-        piece_sizes = defaultdict(list)
+        piece_sizes = defaultdict(list)   # real rows per piece
+        vmap = defaultdict(list)          # leaf pieces: virtual (per-use) row -> unique row; None for result pieces
         leaf_ref, leaves = {}, []
         by_bank = defaultdict(list)
         wb = self._word_bank if self.word_scale is not None else None
@@ -554,26 +555,51 @@ class TNModel(nn.Module):
                 by_bank['base' if base and b == wb else b].append((g, j, mat[:, j]))
         for b, items in by_bank.items():
             uses = np.concatenate([r for _, _, r in items])
-            uniq, inv = np.unique(uses, return_inverse=True)
+            if b == 'base':
+                uniq, inv = np.zeros(1, dtype=np.int64), np.zeros(len(uses), dtype=np.int64)
+            else:
+                uniq, inv = np.unique(uses, return_inverse=True)
             shape = self.bank_shapes[wb if b == 'base' else b]
-            pid = len(piece_sizes[shape]); piece_sizes[shape].append(len(uses))
-            leaves.append((b, shape, put(uniq), put(inv.reshape(-1))))
+            pid = len(piece_sizes[shape]); piece_sizes[shape].append(len(uniq)); vmap[shape].append(inv.reshape(-1))
+            leaves.append((b, shape, put(uniq)))
             o = 0
             for g, j, r in items:
                 leaf_ref[(g, j)] = (pid, o, len(r)); o += len(r)
 
         tmp = [[None] * len(st[0]) for _, _, st in plans]
+        last_use = {}   # (shape, pid) -> index of the last round that reads it (len(rounds) = the final gather)
         def ref_of(g, ref):
             return leaf_ref[(g, ref[1])] if ref[0] == 'leaf' else tmp[g][ref[1]]
 
-        def take(shape, refs):
-            # one gather of the row ranges refs = [(piece, first row, count)] from the pieces of `shape` they touch
+        def gather_index(shape, refs, t):
+            # index into the concatenation of the used pieces for virtual row ranges refs; repeats: reads leaf rows
             used = sorted({pid for pid, _, _ in refs})
-            off, o = {}, 0
+            vstart = np.array([s for _, s, _ in refs], dtype=np.int64); cnt = np.array([n for _, _, n in refs], dtype=np.int64)
             for pid in used:
-                off[pid] = o; o += piece_sizes[shape][pid]
-            return (shape, used, put(_ranges(np.array([off[pid] + s for pid, s, _ in refs], dtype=np.int64),
-                                             np.array([n for _, _, n in refs], dtype=np.int64))))
+                last_use[(shape, pid)] = t
+            if all(vmap[shape][pid] is None for pid in used):   # result pieces only: virtual = real rows (as before)
+                off, o = {}, 0
+                for pid in used:
+                    off[pid] = o; o += piece_sizes[shape][pid]
+                return used, _ranges(np.array([off[pid] for pid, _, _ in refs], dtype=np.int64) + vstart, cnt), False
+            table, voff, roff, vo = [], {}, 0, 0
+            for pid in used:
+                m = vmap[shape][pid]
+                table.append(roff + (m if m is not None else np.arange(piece_sizes[shape][pid], dtype=np.int64)))
+                voff[pid] = vo; vo += len(m) if m is not None else piece_sizes[shape][pid]; roff += piece_sizes[shape][pid]
+            table = np.concatenate(table)
+            return used, table[_ranges(np.array([voff[pid] for pid, _, _ in refs], dtype=np.int64) + vstart, cnt)], True
+
+        def single_leaf_row(shape, refs):
+            # the one unique leaf row every ref reads, or None
+            pids = {pid for pid, _, _ in refs}
+            if len(pids) != 1:
+                return None
+            pid = next(iter(pids)); m = vmap[shape][pid]
+            if m is None:
+                return None
+            rows = np.concatenate([m[s:s + n] for _, s, n in refs])
+            return (pid, int(rows[0])) if (rows == rows[0]).all() else None
 
         rounds = []
         for t in range(max(len(st[2]) for _, _, st in plans)):
@@ -582,42 +608,51 @@ class TNModel(nn.Module):
                 if t < len(levels):
                     for k in levels[t]:
                         buckets[st[k][0]].append((g, k, st[k][1], st[k][2]))
-            # operands grouped by shape: requests[shape] = [(bucket, position, ranges per member)]
-            requests = defaultdict(list)
+            requests = defaultdict(list)   # shape -> [(bucket, position, refs per member)]
+            ops = []
             for k, ((eq, shapes), members) in enumerate(buckets.items()):
-                for p, shape in enumerate(shapes):
-                    requests[shape].append((k, p, [ref_of(g, refs[p]) for g, _, refs, _ in members]))
+                slot_refs = [[ref_of(g, refs[p]) for g, _, refs, _ in members] for p in range(len(shapes))]
+                single = [single_leaf_row(shape, rs) for shape, rs in zip(shapes, slot_refs)]
+                if all(s is not None for s in single):   # keep one batched operand so the result has the batch index
+                    single[max(range(len(shapes)), key=lambda p: len(shapes[p]))] = None
+                ins, out = eq.split('->'); ins = ins.split(',')
+                bcast = []
+                for p, (shape, rs) in enumerate(zip(shapes, slot_refs)):
+                    if single[p] is not None:
+                        pid, row = single[p]; bcast.append((p, shape, pid, row)); ins[p] = ins[p][1:]
+                        last_use[(shape, pid)] = t
+                    else:
+                        requests[shape].append((k, p, rs))
+                ops.append((','.join(ins) + '->' + out, len(shapes), members[0][3], bcast))
             gathers = []
             for shape, reqs in requests.items():
                 flat = [r for _, _, rs in reqs for r in rs]
                 sizes = [sum(n for _, _, n in rs) for _, _, rs in reqs]
-                gathers.append((take(shape, flat), [(k, p) for k, p, _ in reqs], sizes))
+                used, ix, rep = gather_index(shape, flat, t)
+                gathers.append(((shape, used, put(ix), rep), [(k, p) for k, p, _ in reqs], sizes))
             # results: one piece per output shape, buckets in order
-            out_pieces, ops = {}, []
+            out_pieces = {}
             for (eq, shapes), members in buckets.items():
                 out_shape = members[0][3]
                 if out_shape not in out_pieces:
                     out_pieces[out_shape] = [len(piece_sizes[out_shape]), 0]
-                    piece_sizes[out_shape].append(0)
+                    piece_sizes[out_shape].append(0); vmap[out_shape].append(None)
                 pid, o = out_pieces[out_shape]
                 for g, k, _, _ in members:
                     n = len(plans[g][1]); tmp[g][k] = (pid, o, n); o += n
                 out_pieces[out_shape][1] = o
                 piece_sizes[out_shape][pid] = o
-                ops.append((eq, len(shapes), out_shape))
-            rounds.append((gathers, ops, list(out_pieces)))
+            rounds.append([gathers, ops, list(out_pieces), None])
         # final outputs straight into batch order: the groups' output rows in plan order, then permuted to batch order
         nreal = sum(len(items) for items in groups.values())
         order = np.concatenate([[i + (nreal if base else 0) for i, _ in items] for _, items, base in entries])
         finals = [ref_of(g, st[1]) for g, (_, _, st) in enumerate(plans)]   # st = (steps, final ref, levels)
         inverse = np.empty(len(order), dtype=np.int64); inverse[order] = np.arange(len(order))
         shape = (self.out_dim,)
-        used = sorted({pid for pid, _, _ in finals})
-        off, o = {}, 0
-        for pid in used:
-            off[pid] = o; o += piece_sizes[shape][pid]
-        rows = _ranges(np.array([off[pid] + s for pid, s, _ in finals], dtype=np.int64), np.array([n for _, _, n in finals], dtype=np.int64))
-        final = (shape, used, put(rows[inverse]))
+        used, rows, rep = gather_index(shape, finals, len(rounds))
+        final = (shape, used, put(rows[inverse]), rep)
+        for t, r in enumerate(rounds):   # pieces whose last read is in round t: dropped after its gathers
+            r[3] = [key for key, lt in last_use.items() if lt == t]
         return np.concatenate(chunks), leaves, rounds, final
 
     def _levelwise(self, groups, schedule=None, track=False, base_only=False, base_groups=None):
@@ -633,46 +668,53 @@ class TNModel(nn.Module):
 
         pieces, scales = defaultdict(list), defaultdict(list)
         def run_take(spec):
-            shape, used, span = spec
-            return _Take.apply(sl(span), *[pieces[shape][pid] for pid in used])
+            shape, used, span, rep = spec
+            return _Take.apply(sl(span), rep, *[pieces[shape][pid] for pid in used])
         def take_scale(spec):
-            shape, used, span = spec
+            shape, used, span, _ = spec
             src = [scales[shape][pid] for pid in used]
             return (torch.cat(src) if len(src) > 1 else src[0]).index_select(0, sl(span))
         wb = self._word_bank if self.word_scale is not None else None
-        for b, shape, uspan, ispan in leaves:
-            if b == 'base' or (base_only and b == wb):
-                piece = self.extra['word_base'].expand(ispan[1] - ispan[0], -1)
+        for b, shape, uspan in leaves:
+            if b == 'base':
+                piece = self.extra['word_base'].unsqueeze(0)
+            elif base_only and b == wb:
+                piece = self.extra['word_base'].expand(uspan[1] - uspan[0], -1)
             else:
                 if torch.is_grad_enabled():   # training: RowAdam updates exactly these rows from the leaf's gradient
                     leaf = self._bank(b).detach().index_select(0, sl(uspan)).requires_grad_()
                     self._active.append((b, sl(uspan), leaf))
                 else:
                     leaf = self._bank(b).index_select(0, sl(uspan))
-                piece = leaf.index_select(0, sl(ispan))   # one row per use
-                if b == wb:
-                    piece = piece + self.extra['word_base']
+                piece = leaf + self.extra['word_base'] if b == wb else leaf   # unique rows only
             pieces[shape].append(piece)
             if track:
                 scales[shape].append(piece.new_zeros(piece.shape[0]))
-        for gathers, ops, out_shapes in rounds:
-            operands = [[None] * n for _, n, _ in ops]
-            op_scales = [[None] * n for _, n, _ in ops] if track else None
+        for gathers, ops, out_shapes, drop in rounds:
+            operands = [[None] * n for _, n, _, _ in ops]
+            op_scales = [[None] * n for _, n, _, _ in ops] if track else None
+            for k, (_, _, _, bcast) in enumerate(ops):
+                for p, shape, pid, row in bcast:   # unbatched operand, no scale (leaf rows have log scale 0)
+                    operands[k][p] = pieces[shape][pid][row]
             for spec, slots, sizes in gathers:
                 for (k, p), part in zip(slots, run_take(spec).split(sizes)):
                     operands[k][p] = part
                 if track:
                     for (k, p), part in zip(slots, take_scale(spec).split(sizes)):
                         op_scales[k][p] = part
+            for shape, pid in drop:   # last read done: free the piece (autograd keeps what it needs)
+                pieces[shape][pid] = None
+                if track:
+                    scales[shape][pid] = None
             results, res_scales = defaultdict(list), defaultdict(list)
-            for j, ((eq, _, out_shape), ins) in enumerate(zip(ops, operands)):
+            for j, ((eq, _, out_shape, _), ins) in enumerate(zip(ops, operands)):
                 r = torch.einsum(eq, ins)
                 if self.scale_free:
                     m = r.detach().abs().flatten(1).amax(dim=1).clamp_min(1e-30)
                     r = r / m.view(-1, *([1] * (r.dim() - 1)))
                 results[out_shape].append(r)
                 if track:
-                    s = sum(op_scales[j])
+                    s = sum(x for x in op_scales[j] if x is not None)
                     res_scales[out_shape].append(s + m.log() if self.scale_free else s)
             for shape in out_shapes:   # planned order: one new piece per output shape
                 rs = results[shape]
@@ -683,7 +725,6 @@ class TNModel(nn.Module):
         if track:
             return run_take(final), take_scale(final)
         return run_take(final)
-
 
 def _ranges(starts, counts):
     # concatenation of arange(s, s + n) for each (s, n), in one vectorised step
@@ -733,17 +774,19 @@ def _search_path(key):
     return path, _level_plan(batched_str, shapes, info.contraction_list)
 
 class _Take(torch.autograd.Function):
-    # rows idx of the concatenated pieces. Every pool row is read once, so idx has no repeats and the backward is one
-    # index_copy into zeros (no accumulation; deterministic) instead of index_select's index_add
+    # rows idx of the concatenated pieces. Without repeats (result pieces: every row is read once) the backward is one
+    # index_copy into zeros (no accumulation; deterministic); with repeats (leaf pieces hold unique rows, read once per use)
+    # it is an index_add
     @staticmethod
-    def forward(ctx, idx, *pieces):
+    def forward(ctx, idx, repeats, *pieces):
         ctx.save_for_backward(idx)
-        ctx.sizes = [p.shape[0] for p in pieces]
+        ctx.sizes, ctx.repeats = [p.shape[0] for p in pieces], repeats
         src = torch.cat(pieces) if len(pieces) > 1 else pieces[0]
         return src.index_select(0, idx)
 
     @staticmethod
     def backward(ctx, grad):
         idx, = ctx.saved_tensors
-        full = grad.new_zeros((sum(ctx.sizes), *grad.shape[1:])).index_copy_(0, idx, grad)
-        return (None, *full.split(ctx.sizes))
+        full = grad.new_zeros((sum(ctx.sizes), *grad.shape[1:]))
+        full = full.index_add_(0, idx, grad) if ctx.repeats else full.index_copy_(0, idx, grad)
+        return (None, None, *full.split(ctx.sizes))
