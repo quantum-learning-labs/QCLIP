@@ -44,6 +44,7 @@
   <div class="controls">
     <div class="group" data-ctl="tg"><span>Target</span><button class="chip" data-v="rel" aria-pressed="true">95% of own edge</button><button class="chip" data-v="abs">Absolute 75%</button></div>
     <div class="group" data-ctl="esh"><span>Shots / decision</span><button class="chip" data-v="256">256</button><button class="chip" data-v="1024" aria-pressed="true">1024</button><button class="chip" data-v="4096">4096</button><button class="chip" data-v="target">To target (trained)</button></div>
+    <div class="group" data-ctl="route"><span>Kingston routing</span><button class="chip" data-v="fit" aria-pressed="true">Median overhead</button><button class="chip" data-v="raw">As transpiled</button></div>
     <div class="group" data-ctl="reg"><span>Output register</span><button class="chip" data-v="e3" aria-pressed="true">e = 3 (size sweep)</button><button class="chip" data-v="all">Also e = 6, 8</button></div>
     <div class="group" data-ctl="d3"><span>Energy: ansatz layers</span><button class="chip" data-v="2" aria-pressed="true">2</button><button class="chip" data-v="4">4</button><button class="chip" data-v="8">8</button></div>
     <div class="group" data-ctl="cost"><span>QPU cost</span><button class="chip" data-v="all" aria-pressed="true">Shots + overhead</button><button class="chip" data-v="shots">Shots only</button></div>
@@ -90,6 +91,7 @@
   <div class="fig-head"><div class="tag">Figure 5</div><h2>QPU against the best classical method</h2>
   <p>Energy per discard decision (the readout a QPU needs fewest shots for), against total qubits, at a fixed circuit depth. QPU: shots = N<sub>0</sub> / F<sup>2</sup>, where F is the factor by which device noise shrinks the decision margin, fitted to our Kingston noise runs (ln F = −0.187 − ε<sub>eff</sub> × native two-qubit gates, ε<sub>eff</sub> = 3.3×10<sup>−3</sup>); gate counts and energy from the transpiled compute-uncompute circuits, the circuits the noise fit was measured on. The output register e grows with the circuit (3, 6 or 8 qubits; see the table). Classical: every method we measured on an NVIDIA L4 (the most energy-efficient GPU available to us, which favours the classical side); the frontier is the cheapest at each size. Filled points are measured; hollow points are tensor-network contraction costs from the best path found, divided by the measured L4 efficiency. Path costs are upper bounds: a better contraction order can only lower them.</p></div>
   <div class="controls">
+    <div class="group" data-ctl="route"><span>Kingston routing</span><button class="chip" data-v="fit" aria-pressed="true">Median overhead</button><button class="chip" data-v="raw">As transpiled</button></div>
     <div class="group" data-ctl="reg"><span>Output register</span><button class="chip" data-v="e3" aria-pressed="true">e = 3 (size sweep)</button><button class="chip" data-v="all">Also e = 6, 8</button></div>
     <div class="group" data-ctl="dep"><span>Ansatz layers</span><button class="chip" data-v="2">2</button><button class="chip" data-v="4">4</button><button class="chip" data-v="8" aria-pressed="true">8</button></div>
     <div class="group" data-ctl="n0"><span>Noiseless shots N<sub>0</sub></span><button class="chip" data-v="100">100</button><button class="chip" data-v="179" aria-pressed="true">179</button><button class="chip" data-v="1024">1024</button></div>
@@ -131,7 +133,7 @@ const METH = { PS: 'Post-selection', plain: 'Discard, plain', warm: 'Discard, wa
 const MSLOT = { PS: '--s1', plain: '--s2', warm: '--s3' };
 const ARMS = [['honest_miami', 'Honest'], ['honest_miami+dd', '+ DD'], ['honest_miami+det10+zz20', '+ coherent idle'], ['honest_miami+dd+det10+zz20', '+ coherent idle + DD']];
 const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const state = { reg: 'e3', d3: '2', esh: '1024', acc: '70', ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS', dep: '8', n0: '179', mtg: '0.1' };
+const state = { route: 'fit', reg: 'e3', d3: '2', esh: '1024', acc: '70', ax: 'all', f1m: 'exact', ro: 'cu', prof: 'honest_miami', gx: 'cx_cu', tg: 'rel', cost: 'all', m4: 'PS', dep: '8', n0: '179', mtg: '0.1' };
 const charts = {};
 let D = null, S = null;
 const pct = v => v == null ? '–' : (100 * v).toFixed(1) + '%';
@@ -383,7 +385,16 @@ function figAcc() {
 // ---------------------------------------------------------------- advantage study (Figures 5-7)
 const CAL = { a: -0.187, eIBM: 0.00331, eIonQ: 0.004, e1IonQ: 2e-4 };   // Kingston fit; IonQ Forte 99.6% / 99.98% assumed
 const em = () => Math.pow(10, +document.getElementById('em').value);
-const ADVR = () => (D.adv && D.adv.rows) || [];
+// Kingston routing overhead (routed / logical two-qubit gates) varies 3-4x with placement luck on the heavy-hex map, which made the QPU curves
+// jagged. 'fit' (default): routed count = logical count x the median overhead at that depth (duration scaled the same); 'raw': best of 5 transpile seeds.
+let ROUTE = null;
+function routeFit() {
+  const by = {}; for (const r of (D.adv && D.adv.rows) || []) if (r.ibm_n2q && r.n2q_logical) (by[r.layers] = by[r.layers] || []).push(r.ibm_n2q / r.n2q_logical);
+  const o = {}; for (const L in by) { const v = by[L].sort((a, b) => a - b); o[L] = v[Math.floor(v.length / 2)]; } return o;
+}
+const ADVR = () => { const rows = (D.adv && D.adv.rows) || []; if (state.route !== 'fit') return rows; ROUTE = ROUTE || routeFit();
+  return rows.map(r => { if (!r.ibm_n2q || !r.n2q_logical || !ROUTE[r.layers]) return r; const f = ROUTE[r.layers] * r.n2q_logical / r.ibm_n2q;
+    return { ...r, ibm_n2q: r.ibm_n2q * f, ibm_duration_s: r.ibm_duration_s * f, ibm_n2q_raw: r.ibm_n2q }; }); };
 let ETA = null;
 function etaFit() {   // FLOP per joule of exact TN on the L4, from compute-bound runs (greedy-path flops / measured energy)
   const v = [];
@@ -453,7 +464,7 @@ function fig5() {
   table('t5', ['Qubits', 'e', 'Kingston 2q', 'F', 'Shots', 'IBM', 'IonQ', 'Statevector', 'Exact TN', 'TN sampler', 'MPS', 'Frontier', 'Path search'], rows);
   const wins = P.filter(p => p.q && p.c.best != null && p.q.ibm < p.c.best);
   document.getElementById('cap5').innerHTML = (wins.length ? `At this error rate IBM beats the best classical method at <b>${wins.map(p => p.r.nq).join(', ')} qubits</b>. ` : `At this error rate no QPU point beats the classical frontier at ${state.dep} layers. `)
-    + `Even an error-free QPU spends about ${J(P.find(p => p.q) ? (+state.n0 * P.find(p => p.q).q.tS + 2 * 2 / 190) * 25e3 : null)} per decision (shots plus job overhead at 25 kW), so it can only win where the best classical method costs more than that. The default shows the e = 3 size sweep; "Also e = 6, 8" adds circuits with a grown output register as triangles (more gates per qubit, so not joined to the line). Small bumps come from Kingston routing (one transpile seed per circuit) and randomised path searches; reruns with the best of 5 transpile seeds and the same cotengra budget at every size are in progress.${P.some(p => p.q && p.q.ibm > ymax) ? ' QPU points above the top of the axis are off-scale; their values are in the table.' : ''} L4 tensor-network efficiency: ${sci(ETA)} FLOP/J (median of the compute-bound runs).`
+    + `Even an error-free QPU spends about ${J(P.find(p => p.q) ? (+state.n0 * P.find(p => p.q).q.tS + 2 * 2 / 190) * 25e3 : null)} per decision (shots plus job overhead at 25 kW), so it can only win where the best classical method costs more than that. The default shows the e = 3 size sweep; "Also e = 6, 8" adds circuits with a grown output register as triangles (more gates per qubit, so not joined to the line). Kingston gate counts: "Median overhead" (default) takes the logical two-qubit count × the median routing overhead at that depth (${Object.entries(ROUTE || routeFit()).map(([L, f]) => `${L} layers ${f.toFixed(1)}×`).join(', ')}); "As transpiled" shows the best of 5 transpile seeds per circuit, whose overhead varies 3–4× with placement on the heavy-hex map. Classical paths: the same cotengra search runs at every size from 40 qubits (in progress).${P.some(p => p.q && p.q.ibm > ymax) ? ' QPU points above the top of the axis are off-scale; their values are in the table.' : ''} L4 tensor-network efficiency: ${sci(ETA)} FLOP/J (median of the compute-bound runs).`
     + (state.dep !== '2' && P.some(p => p.c.by && !(p.c.ampMeas || p.c.tnMeas) && p.r.best_ps_by !== 'ctg' && p.r.nq > 79) ? ` <b>Provisional:</b> above 79 qubits the classical points come from the random-greedy search only (see the table); cotengra runs are in progress, and the first, at 4 layers and 79 qubits, found paths 200–600× cheaper than random-greedy, so these points may fall a long way.` : '');
   pick6Fill();
 }
