@@ -42,6 +42,10 @@ def main():
     ap.add_argument('--k', type=int, default=5)
     ap.add_argument('--opts', default='greedy,random-greedy-128,ctg')
     ap.add_argument('--pairs', type=int, default=40)
+    ap.add_argument('--ctg_s', type=float, default=30, help='cotengra time budget per network (s)')
+    ap.add_argument('--ctg_methods', default='greedy,labels', help='cotengra path methods (no kahypar in the envs)')
+    ap.add_argument('--ctg_reconf', action='store_true', help='cotengra subtree reconfiguration of each trial')
+    ap.add_argument('--nets', default='ps,rho')
     a = ap.parse_args()
     out = Path(a.out); new = not out.exists(); out.parent.mkdir(parents=True, exist_ok=True)
     w = csv.writer(open(out, 'a', newline='', buffering=1))
@@ -49,7 +53,7 @@ def main():
     for c in a.checkpoints:
         ckpt = Path(c); config, nq, D = load(ckpt, a); L = config['text'].get('layers')
         for i, (qt, _, _, oq) in enumerate(D[:a.k]):
-            for net, rho in (('ps', False), ('rho', True)):
+            for net, rho in [t for t in (('ps', False), ('rho', True)) if t[0] in a.nets.split(',')]:
                 T = TN(qt, oq, 'cpu', torch.complex64, rho=rho, opt='greedy')
                 arrs = [x.numpy() for x in T.arrs]
                 G = line_graph(T.eq); t0 = time.time(); lb = mmd_plus(G)
@@ -58,9 +62,10 @@ def main():
                     t0 = time.time()
                     try:
                         o = opt
-                        if opt == 'ctg':                       # cotengra hyper-optimiser, 30 s budget: only as a check of path quality
+                        if opt == 'ctg':                       # cotengra hyper-optimiser (--ctg_s budget, optional subtree reconfiguration)
                             import cotengra as ctg
-                            o = ctg.HyperOptimizer(max_time=30, max_repeats=10 ** 6, minimize='flops', progbar=False)
+                            o = ctg.HyperOptimizer(methods=a.ctg_methods.split(','), max_time=a.ctg_s, max_repeats=10 ** 6, minimize='flops',
+                                                   reconf_opts={} if a.ctg_reconf else None, parallel=False, progbar=False)
                         _, info = oe.contract_path(T.eq, *arrs, optimize=o)
                         wd, fl = float(np.log2(max(float(info.largest_intermediate), 1.0))), float(np.log10(max(float(info.opt_cost), 1.0)))
                     except Exception as e:
