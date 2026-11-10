@@ -45,7 +45,7 @@ def main():
     kingston = fake_provider.FakeKingston(); tg = kingston.target
     out = Path(a.out); new = not out.exists(); out.parent.mkdir(parents=True, exist_ok=True)
     w = csv.writer(open(out, 'a', newline='', buffering=1))
-    if new: w.writerow(['ckpt', 'text_n', 'layers', 'nq', 'idx'] + (['circ'] if a.circ == 'all' else []) + ['ibm_duration_s', 'ibm_n2q', 'ibm_n1q', 'ibm_esp_gates', 'ibm_esp_readout', 'ibm_missing_err', 'ionq_n1q', 'ionq_n2q'] + (['ibm_seed'] if a.seeds > 1 else []))
+    if new: w.writerow(['ckpt', 'text_n', 'layers', 'nq', 'idx'] + (['circ'] if a.circ == 'all' else []) + ['ibm_duration_s', 'ibm_n2q', 'ibm_n1q', 'ibm_esp_gates', 'ibm_esp_readout', 'ibm_missing_err', 'ionq_n1q', 'ionq_n2q'] + (['ibm_seed'] if a.seeds > 1 else []) + ['ibm_transpile_s', 'ionq_transpile_s'])   # seconds per circuit and seed (wall, one process)
     for c in a.checkpoints:
         ckpt = Path(c); config, nq, D = load(ckpt, a); L = config['text'].get('layers'); t0 = time.time()
         circs, lab = [], []
@@ -57,19 +57,23 @@ def main():
         # Kingston layout/routing is randomised: transpile with --seeds seeds and keep, per circuit, the one with fewest two-qubit gates
         # (what a user would run); one seed reproduces the earlier counts
         n2 = lambda qc: sum(v for k, v in qc.count_ops().items() if k in TWO_Q)
-        ibm, bseed = None, None
+        ibm, bseed = None, None; tib = [0.0] * len(circs); tio = []
         for sd in range(a.seeds):
-            t = transpile(circs, backend=kingston, optimization_level=1, seed_transpiler=sd)
+            t = []
+            for i, qc in enumerate(circs):          # one circuit at a time, timed: the one-off compile cost of a circuit shape (same result as the batch call)
+                t1 = time.perf_counter(); t.append(transpile(qc, backend=kingston, optimization_level=1, seed_transpiler=sd)); tib[i] += (time.perf_counter() - t1) / a.seeds
             if ibm is None: ibm, bseed = t, [sd] * len(t); continue
             for i, q in enumerate(t):
                 if n2(q) < n2(ibm[i]): ibm[i], bseed[i] = q, sd
-        ion = transpile(circs, basis_gates=IONQ_BASIS, optimization_level=1, seed_transpiler=0)
-        for (i, name), bi, io, sd in zip(lab, ibm, ion, bseed):
+        ion = []
+        for qc in circs:
+            t1 = time.perf_counter(); ion.append(transpile(qc, basis_gates=IONQ_BASIS, optimization_level=1, seed_transpiler=0)); tio.append(time.perf_counter() - t1)
+        for (i, name), bi, io, sd, ts_ib, ts_io in zip(lab, ibm, ion, bseed, tib, tio):
             ob, oi = bi.count_ops(), io.count_ops()
             n2b = sum(v for k, v in ob.items() if k in TWO_Q); n1b = sum(v for k, v in ob.items() if k not in TWO_Q | NOT_GATE)
             n2i = sum(v for k, v in oi.items() if k in TWO_Q); n1i = sum(v for k, v in oi.items() if k not in TWO_Q | NOT_GATE)
             eg, er, miss = esp_ibm(bi, tg)
-            w.writerow([ckpt.parent.name, config['text'].get('n'), L, nq, i] + ([name] if a.circ == 'all' else []) + [float(bi.estimate_duration(tg, unit='s')), n2b, n1b, eg, er, miss, n1i, n2i] + ([sd] if a.seeds > 1 else []))
+            w.writerow([ckpt.parent.name, config['text'].get('n'), L, nq, i] + ([name] if a.circ == 'all' else []) + [float(bi.estimate_duration(tg, unit='s')), n2b, n1b, eg, er, miss, n1i, n2i] + ([sd] if a.seeds > 1 else []) + [ts_ib, ts_io])
         print(f'{ckpt.parent.name}: nq {nq} layers {L}, {len(circs)} circuits, ESP gates {np.mean([esp_ibm(b, tg)[0] for b in ibm]):.3g} ({time.time() - t0:.0f}s)', flush=True)
     print('done', flush=True)
 
