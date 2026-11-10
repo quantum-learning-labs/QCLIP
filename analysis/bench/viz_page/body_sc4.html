@@ -86,7 +86,7 @@
 
 <section class="fig" id="f5">
   <div class="fig-head"><div class="tag">Figure 5</div><h2>QPU against the best classical method</h2>
-  <p>Energy per discard decision (the readout a QPU needs fewest shots for), against total qubits, at a fixed circuit depth. QPU: shots = N<sub>0</sub> / F<sup>2</sup>, where F is the factor by which device noise shrinks the decision margin, fitted to our Kingston noise runs (ln F = −0.187 − ε<sub>eff</sub> × native two-qubit gates, ε<sub>eff</sub> = 3.3×10<sup>−3</sup>); energy from the transpiled circuit duration. Classical: every method we measured on an NVIDIA L4 (the most energy-efficient GPU available to us, which favours the classical side); the frontier is the cheapest at each size. Filled points are measured; hollow points are tensor-network contraction costs from the best path found, divided by the measured L4 efficiency.</p></div>
+  <p>Energy per discard decision (the readout a QPU needs fewest shots for), against total qubits, at a fixed circuit depth. QPU: shots = N<sub>0</sub> / F<sup>2</sup>, where F is the factor by which device noise shrinks the decision margin, fitted to our Kingston noise runs (ln F = −0.187 − ε<sub>eff</sub> × native two-qubit gates, ε<sub>eff</sub> = 3.3×10<sup>−3</sup>); gate counts and energy from the transpiled compute-uncompute circuits, the circuits the noise fit was measured on. The output register e grows with the circuit (3, 6 or 8 qubits; see the table). Classical: every method we measured on an NVIDIA L4 (the most energy-efficient GPU available to us, which favours the classical side); the frontier is the cheapest at each size. Filled points are measured; hollow points are tensor-network contraction costs from the best path found, divided by the measured L4 efficiency. Path costs are upper bounds: a better contraction order can only lower them.</p></div>
   <div class="controls">
     <div class="group" data-ctl="dep"><span>Ansatz layers</span><button class="chip" data-v="2">2</button><button class="chip" data-v="4">4</button><button class="chip" data-v="8" aria-pressed="true">8</button></div>
     <div class="group" data-ctl="n0"><span>Noiseless shots N<sub>0</sub></span><button class="chip" data-v="100">100</button><button class="chip" data-v="179" aria-pressed="true">179</button><button class="chip" data-v="1024">1024</button></div>
@@ -390,12 +390,14 @@ function fig5() {
   const ys = P.flatMap(p => [p.q && p.q.ibm, p.q && p.r.nq <= 36 && p.q.ionq, p.c.best]).filter(v => v), ymax = Math.pow(10, Math.ceil(Math.log10(Math.max(...ys)) + 0.5)), ymin = Math.pow(10, Math.floor(Math.log10(Math.min(...ys, ...P.map(p => p.c.sv || Infinity))) - 0.3));
   draw('c5', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Energy per decision (J)', { yType: 'logarithmic', xTitle: 'Total qubits in the circuit', yFmt: decade(J), y: { min: ymin, max: ymax },
     tt: { label: c => `${c.dataset.label}: ${J(c.parsed.y)} at ${c.parsed.x} qubits` } }) });
-  for (const p of P) rows.push([p.r.nq, p.r.ibm_n2q != null ? Math.round(p.r.ibm_n2q) : '–', p.q ? p.q.F.toExponential(1) : '–', p.q ? num(p.q.N) : '–', p.q ? J(p.q.ibm) : '–', p.q ? J(p.q.ionq) : '–',
-    J(p.c.sv), J(p.c.tn) + (p.c.tn != null && !p.c.tnMeas ? ' (model)' : ''), J(p.c.samp) + (p.c.samp != null && !p.c.ampMeas ? ' (model)' : ''), J(p.c.mps), p.c.by || '–']);
-  table('t5', ['Qubits', 'Kingston 2q', 'F', 'Shots', 'IBM', 'IonQ', 'Statevector', 'Exact TN', 'TN sampler', 'MPS', 'Frontier'], rows);
+  const SRCH = { greedy: 'greedy', 'random-greedy-128': 'random-greedy', ctg: 'cotengra' };
+  for (const p of P) rows.push([p.r.nq, p.r.e ?? '–', p.r.ibm_n2q != null ? Math.round(p.r.ibm_n2q) : '–', p.q ? p.q.F.toExponential(1) : '–', p.q ? num(p.q.N) : '–', p.q ? J(p.q.ibm) : '–', p.q ? J(p.q.ionq) : '–',
+    J(p.c.sv), J(p.c.tn) + (p.c.tn != null && !p.c.tnMeas ? ' (model)' : ''), J(p.c.samp) + (p.c.samp != null && !p.c.ampMeas ? ' (model)' : ''), J(p.c.mps), p.c.by || '–', SRCH[p.r.best_ps_by] || '–']);
+  table('t5', ['Qubits', 'e', 'Kingston 2q', 'F', 'Shots', 'IBM', 'IonQ', 'Statevector', 'Exact TN', 'TN sampler', 'MPS', 'Frontier', 'Path search'], rows);
   const wins = P.filter(p => p.q && p.c.best != null && p.q.ibm < p.c.best);
   document.getElementById('cap5').innerHTML = (wins.length ? `At this error rate IBM beats the best classical method at <b>${wins.map(p => p.r.nq).join(', ')} qubits</b>. ` : `At this error rate no QPU point beats the classical frontier at ${state.dep} layers. `)
-    + `Even an error-free QPU spends about ${J(P.find(p => p.q) ? (+state.n0 * P.find(p => p.q).q.tS + 2 * 2 / 190) * 25e3 : null)} per decision (shots plus job overhead at 25 kW), so it can only win where the best classical method costs more than that. L4 tensor-network efficiency: ${sci(ETA)} FLOP/J (median of the compute-bound runs).`;
+    + `Even an error-free QPU spends about ${J(P.find(p => p.q) ? (+state.n0 * P.find(p => p.q).q.tS + 2 * 2 / 190) * 25e3 : null)} per decision (shots plus job overhead at 25 kW), so it can only win where the best classical method costs more than that. L4 tensor-network efficiency: ${sci(ETA)} FLOP/J (median of the compute-bound runs).`
+    + (state.dep !== '2' && P.some(p => p.c.by && !(p.c.ampMeas || p.c.tnMeas) && p.r.best_ps_by !== 'ctg' && p.r.nq > 79) ? ` <b>Provisional:</b> above 79 qubits the classical points come from the random-greedy search only (see the table); a cotengra search is running and may lower them.` : '');
   pick6Fill();
 }
 function pick6Fill() {
