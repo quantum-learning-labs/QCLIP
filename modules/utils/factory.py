@@ -1,7 +1,7 @@
 # factory.py
 from modules.compilation.quantum.ansatz import CustomV5Ansatz, CustomV6Ansatz
 from modules.compilation.classical.tensor_network import TNCompiler
-from modules.compilation.classical.decompositions import MPS
+from modules.compilation.classical.decompositions import MPS, TR, CP
 from modules.compilation.classical.neural import MLPCompiler
 
 from modules.models.text.einsum_quantum import VQCModel
@@ -39,9 +39,14 @@ def build_experiment(config, device):
         compiler = config['text']
         obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_dim'],
                  'sem': compiler.get('word_dim', 128)}
-        mps_proc = MPS(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'], root_bond=config['text'].get('root_bond_dim'),
-                       out_bond=config['text'].get('out_bond_dim'), share_out=config['text'].get('share_out', False),
-                       share_args=config['text'].get('share_args'))
+        decomp = config['text'].get('decomp', 'mps')   # step 5: mps (default) | tr | cp
+        if decomp == 'cp':
+            mps_proc = CP(rank=config['text']['cp_rank'], max_order=config['text']['max_order'],
+                          share_out=config['text'].get('share_out', False), share_args=config['text'].get('share_args'))
+        else:
+            mps_proc = (TR if decomp == 'tr' else MPS)(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'],
+                       root_bond=config['text'].get('root_bond_dim'), out_bond=config['text'].get('out_bond_dim'),
+                       share_out=config['text'].get('share_out', False), share_args=config['text'].get('share_args'))
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc, decouple=compiler.get('decouple', False),
                             orient=compiler.get('init', 'glorot') == 'norm')
         
