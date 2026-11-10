@@ -5,7 +5,7 @@
 #                 open output indices joined into one clique). Markov & Shi (2008): the best pairwise contraction width equals the line-graph
 #                 treewidth, so any exact pairwise contraction (statevector included) must hold an intermediate of ~2^lb entries.
 # usage: PYTHONPATH=.:analysis/bench python analysis/bench/tw_bounds.py -o out.csv -cp ckpt... [--k 5] [--opts greedy,random-greedy-128,ctg]
-import argparse, csv, time
+import argparse, csv, signal, time
 from pathlib import Path
 import numpy as np, opt_einsum as oe, torch, networkx as nx
 from inf_engines import TN, load
@@ -33,6 +33,9 @@ def mmd_plus(G):
             adj[w].discard(v)
             if w != u: adj[w].add(u); adj[u].add(w)
     return lb
+
+
+def _alarm(*_): raise TimeoutError
 
 
 def main():
@@ -66,6 +69,12 @@ def main():
                             import cotengra as ctg
                             o = ctg.HyperOptimizer(methods=a.ctg_methods.split(','), max_time=a.ctg_s, max_repeats=10 ** 6, minimize='flops',
                                                    reconf_opts={} if a.ctg_reconf else None, parallel=False, progbar=False)
+                        if opt == 'ctg':                       # hard stop: one trial (or its reconfiguration) can overrun max_time by hours on 8-layer networks;
+                            signal.signal(signal.SIGALRM, _alarm); signal.alarm(int(a.ctg_s * 1.5) + 1)   # then take the best tree found so far
+                            try: oe.contract_path(T.eq, *arrs, optimize=o)
+                            except TimeoutError: print('    ctg: hard stop, best tree so far', flush=True)
+                            finally: signal.alarm(0)
+                            o = o.tree.get_path()
                         _, info = oe.contract_path(T.eq, *arrs, optimize=o)
                         wd, fl = float(np.log2(max(float(info.largest_intermediate), 1.0))), float(np.log10(max(float(info.opt_cost), 1.0)))
                     except Exception as e:
