@@ -232,6 +232,7 @@ class RunManager:
                     current_lr = self.scheduler.get_last_lr()[0]
                     mlflow.log_metric("learning_rate", current_lr, step=epoch)
 
+                if self.trainer.ema is not None: self.trainer.ema_swap()   # validate and save the EMA weights
                 t_eval = time.time()
                 metrics = self.evaluator.eval_set(
                     dataloader=val_loader,
@@ -275,6 +276,7 @@ class RunManager:
                     if self.config.get('snapshot_state'):   # resumable snapshots (train.py --resume <snapshot> --resume_as <new run>)
                         snap["state"] = state if state is not None else self._train_state(best_metric_value, patience_counter)
                     torch.save(snap, self.checkpoint_dir / f"epoch_{epoch:03d}.pt")
+                if self.trainer.ema is not None: self.trainer.ema_swap()   # back to the live weights for training
 
                 if patience_counter >= patience:
                     stopped_epoch = epoch
@@ -297,6 +299,7 @@ class ContrastiveTrainer:
         self.step_log = []   # (loss, seconds) per optimiser step, flushed to steps.csv each epoch
         self.tn_stats = False   # tn_stats: per-step norms (_step_stats) in stat_log, flushed to trainstats.csv each epoch
         self.stat_log = []
+        self.ema = None   # ema (config ema: decay, default off): shadow copy of the text parameters, see ema_init
         self.grad_clip = None    # grad_clip: max global gradient norm (text rows + other text params + image), None = off
         self.constraints = None  # text.constraint: TNConstraints, applied after every optimiser step
         self._preclip = None
@@ -383,6 +386,25 @@ class ContrastiveTrainer:
             "total_text_grad_norm": (verb_grad_sq + noun_grad_sq) ** 0.5
         }
 
+    def ema_init(self, decay):
+        # exponential moving average of the text parameters, updated after every optimiser step with decay
+        # min(decay, (1 + t) / (10 + t)); validation, best.pt, last.pt and snapshots hold the EMA weights (ema_swap)
+        self.ema_decay, self.ema_t = float(decay), 0
+        self.ema = [p.detach().clone() for p in self.text_model.parameters()]
+
+    @torch.no_grad()
+    def ema_update(self):
+        self.ema_t += 1
+        d = min(self.ema_decay, (1 + self.ema_t) / (10 + self.ema_t))
+        for s, p in zip(self.ema, self.text_model.parameters()):
+            s.lerp_(p.detach(), 1 - d)
+
+    @torch.no_grad()
+    def ema_swap(self):
+        # exchange the live and the EMA weights (called twice per epoch: before validation, after the saves)
+        for s, p in zip(self.ema, self.text_model.parameters()):
+            t = p.detach().clone(); p.copy_(s); s.copy_(t)
+
     def train_epoch(self, dataloader, batch_mapper: Callable) -> float:
         self.image_model.train()
         self.text_model.train()
@@ -428,6 +450,8 @@ class ContrastiveTrainer:
             self.optimizer.step()
             if self.constraints is not None:
                 self.constraints.apply()
+            if self.ema is not None:
+                self.ema_update()
             tick('optimizer')
             if self.tn_stats:
                 self.stat_log.append(self._step_stats())

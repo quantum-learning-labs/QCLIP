@@ -15,7 +15,7 @@ class TNModel(nn.Module):
 
     def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False,
                  head: str = 'affine', hybrid: bool = False, word_base: float = None, centre: bool = False,
-                 mix_fixed: float = None, eval_chunk: int = None):
+                 mix_fixed: float = None, eval_chunk: int = None, word_dropout: float = 0.0):
         super().__init__()
         # scale_free (text.scale_free, levelwise only): divide every intermediate of the contraction by its (detached) max |entry|,
         # per sentence. The network is multilinear, so this only rescales each sentence vector by a positive number, which
@@ -46,6 +46,12 @@ class TNModel(nn.Module):
         # eval_chunk (text.eval_chunk, default off): no-grad forwards (validation/benchmarks encode ~2.5k captions at once) run
         # in chunks of at most this many captions; rows are independent, so only peak memory changes (wide bonds OOM'd 24 GB)
         self.eval_chunk = eval_chunk
+        # word_dropout (text.word_dropout: p, default 0 = off, needs word_base): in training, each word type of a batch is
+        # replaced by the base word (its d_w row zeroed) with probability p; one draw per unique row, so a dropped word is
+        # dropped in every caption of that batch. Off draws no random numbers (bit-identical to before).
+        if word_dropout and word_base is None:
+            raise ValueError('text.word_dropout needs text.word_base')
+        self.word_dropout = float(word_dropout or 0.0)
         self.extra = None   # nn.ParameterDict of the step-4c parameters ('word_base', 'mix'), built with the banks
         self.capture = None   # a list: every forward appends its pre-LayerNorm outputs (analysis tools)
         # init 'glorot': step-1 scheme (shape only). 'norm': std 1/sqrt(dim of the leg towards the sentence output) (the
@@ -162,6 +168,20 @@ class TNModel(nn.Module):
 
     def _bank(self, b):
         return getattr(self, f'bank{b}')
+
+    @torch.no_grad()
+    def init_words(self, vecs):
+        # text.word_init: set each word vector ('w:<word>') to the direction of vecs[word], keeping the row's initial norm
+        # (so the init scale, word_base alpha included, is unchanged); words without a vector keep their random init
+        done = 0
+        for name in self.symbols:
+            if not name.startswith('w:') or name[2:] not in vecs: continue
+            b, r = self.sym_loc[name]
+            row = self._bank(b)[r]
+            v = vecs[name[2:]].to(row.device, row.dtype)
+            row.copy_(v / v.norm().clamp(min=1e-12) * row.norm())
+            done += 1
+        return done
 
     def _build_banks(self, init):
         # rows in symbol order; init=True draws each row from the global RNG in symbol order, i.e. the same values as
@@ -686,7 +706,11 @@ class TNModel(nn.Module):
                     self._active.append((b, sl(uspan), leaf))
                 else:
                     leaf = self._bank(b).index_select(0, sl(uspan))
-                piece = leaf + self.extra['word_base'] if b == wb else leaf   # unique rows only
+                if b == wb and self.word_dropout and self.training:
+                    keep = (torch.rand(leaf.shape[0], 1, device=leaf.device) >= self.word_dropout).to(leaf.dtype)
+                    piece = leaf * keep + self.extra['word_base']
+                else:
+                    piece = leaf + self.extra['word_base'] if b == wb else leaf   # unique rows only
             pieces[shape].append(piece)
             if track:
                 scales[shape].append(piece.new_zeros(piece.shape[0]))

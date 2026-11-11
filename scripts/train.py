@@ -72,6 +72,12 @@ if __name__ == "__main__":
     log_phase("Initializing Model Parameters")
     data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
     data_engine.image_init(image_model)
+    if config['text'].get('word_init') == 'clip' and not args.resume:   # step 5: temporary stand-in, word vectors from CLIP
+        from modules.models.text.clip_words import clip_word_vectors
+        wb = text_model._word_bank if getattr(text_model, 'word_scale', None) is not None else next(
+            text_model.sym_loc[n][0] for n in text_model.symbols if n.startswith('w:'))
+        vecs = clip_word_vectors([n[2:] for n in text_model.symbols if n.startswith('w:')], text_model.bank_shapes[wb][0], DEV)
+        print(f"Word vectors from CLIP: {text_model.init_words(vecs)} words")
     if args.init_from and config.get('init_by_symbol'):
         # copy parameters by symbol name from a checkpoint of a DIFFERENT circuit family (e.g. post-selected -> discard with
         # mixer/sinks): the source model is rebuilt from its own config; symbols the source lacks keep their init
@@ -147,6 +153,9 @@ if __name__ == "__main__":
         from modules.models.text.tn_constraints import TNConstraints
         trainer.constraints = TNConstraints(text_model, config['text']['constraint'], fresh=not args.resume)
         print(f"Constraints: {config['text']['constraint']}")
+    if config.get('ema'):   # step 5: EMA of the text weights (validation and checkpoints use it)
+        if args.resume: raise NotImplementedError('ema with --resume: the EMA shadow is not saved in the training state')
+        trainer.ema_init(config['ema'])
     trainer.tn_stats = bool(config.get('tn_stats', False))   # step-4 diagnostics: trainstats.csv / paramstats.csv
     if trainer.tn_stats: text_model.stats = []
     trainer.hard_negatives = bool(config.get('hard_negatives', False))   # add each caption's negative image to the softmax
