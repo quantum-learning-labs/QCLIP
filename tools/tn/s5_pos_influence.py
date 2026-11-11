@@ -25,13 +25,14 @@ DET = {'a', 'an', 'the', 'this', 'that', 'these', 'those', 'some', 'each', 'ever
 NUM = {'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'one', 'dozen', 'couple'}
 
 def role(word, sig):
-    if sig is None: return 'noun (bare vector)'
-    legs = sig.split('@')
-    if 'out' in legs: return f'root ({len(legs)}-leg)'
+    if sig is None: return 'no type tensor'
+    legs = sig.split('@'); k = f"{len(legs)}-leg" if len(legs) < 5 else '5+-leg'
+    if legs == ['n']: return 'noun'
+    if 'out' in legs: return f'root ({k})'
     if legs == ['n', 'n']: return 'determiner' if word in DET else 'number' if word in NUM else 'adjective/modifier'
-    if 'p' in legs: return 'preposition-like (p leg)'
-    if 's' in legs: return f'verb/clause ({len(legs)}-leg, s leg)'
-    return f'other n-only ({len(legs)}-leg)'
+    if 'p' in legs: return 'preposition (p leg)'
+    if 's' in legs: return f'verb/clause ({k}, s leg)'
+    return f'n-only {k} (preposition/conjunction)'
 
 def embed(cs):
     with torch.no_grad():
@@ -54,8 +55,12 @@ for split in splits:
     for ci, (eq, syms) in enumerate(caps):
         for k, d in enumerate(syms):
             if not d['name'].startswith('w:'): continue
-            nxt = syms[k + 1]['name'] if k + 1 < len(syms) else ''
-            sig = nxt.split('_core')[0][2:] if nxt.startswith('t:') else None
+            # the word's own type core ('t:<sig>_core<k>'): the first 't:' symbol before the next word (with text.share_args
+            # the shared argument cores 'a:...' can come first)
+            sig = None
+            for x in syms[k + 1:]:
+                if x['name'].startswith('w:'): break
+                if x['name'].startswith('t:'): sig = x['name'].split('_core')[0][2:]; break
             w = d['name'][2:]
             new = [dict(x) for x in syms]; new[k]['name'] = rng.choice(words)
             variants.append((eq, new)); meta.append((ci, w, role(w, sig)))
