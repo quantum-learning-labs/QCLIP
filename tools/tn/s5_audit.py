@@ -19,7 +19,7 @@ de = DataEngine(config, ansatz, DEV); de.image_init(image_model)
 ck = CheckpointManager.load_model(ck_path, image_model, text_model, DEV)
 text_model.to(DEV).eval(); image_model.to(DEV).eval()
 ev = MMEvaluator(image_model, text_model, DEV)
-trained = text_model.trained_symbols
+trained = frozenset(text_model.symbols)   # the vocabulary before any extend_symbols (= trained)
 base = lambda n: re.sub(r'_core\d+$', '', n)
 
 # training frequency of every word and type tensor (counted once per caption occurrence)

@@ -18,7 +18,7 @@ config, DEV, SEED = setup_exp(str(ck_path.parent / 'config.yaml'))
 ansatz, image_model, text_model, _ = build_experiment(config, DEV)
 de = DataEngine(config, ansatz, DEV); de.image_init(image_model)
 ck = CheckpointManager.load_model(ck_path, image_model, text_model, DEV); text_model.to(DEV).eval()
-trained = text_model.trained_symbols
+trained = frozenset(text_model.symbols)   # the vocabulary before any extend_symbols (= trained)
 words = sorted(s for s in trained if s.startswith('w:'))
 DET = {'a', 'an', 'the', 'this', 'that', 'these', 'those', 'some', 'each', 'every', 'his', 'her', 'its', 'their', 'my', 'your', 'our',
        'another', 'any', 'no', 'several', 'many', 'few', 'all', 'both'}
