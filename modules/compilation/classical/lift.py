@@ -27,7 +27,7 @@ An occurrence whose wiring does not match its rule's pattern, or a root word wit
 """
 from __future__ import annotations
 import json
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 RULES = ('R1', 'R2', 'R3', 'R4', 'R5', 'R6')
 
@@ -68,7 +68,10 @@ def coarse_patterns(tn):
 
 def load_rootmap(path):
     with open(path) as f:
-        return json.load(f)
+        rm = json.load(f)
+    # fallback free-wire type: the most common X over the per-word entries
+    rm['fallback'] = Counter(rm['by_word'].values()).most_common(1)[0][0]
+    return rm
 
 
 def lift(tn, rules, rootmap, counter):
@@ -86,6 +89,10 @@ def lift(tn, rules, rootmap, counter):
             k = types.index('out')
             key = f"{word.lower()}|{'@'.join(types)}"
             X = (rootmap['by_word'].get(key) or rootmap['global'].get('@'.join(types))) if 'R1' in rules else None
+            if X is None and 'R1' in rules:
+                # no evidence for this root signature (0.01% of training roots): the most common free-wire type, so that EVERY
+                # caption leaves through one m:X->out map (no second output path through a root type's own 'out' leg)
+                X = rootmap['fallback']; stats['R1_fallback'] += 1
             if X is None:
                 items.append((word, idx, types, None)); stats['root_kept'] += 1; continue
             r = next(counter)

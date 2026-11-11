@@ -106,6 +106,9 @@ class TNCompiler:
             processed_tensors.append((symbol, list(idx_arr), tuple(self.obmap.get(t, 1) for t in type_arr)))
         if uf is not None:   # spiders: every leg of one spider gets the same index (a hyperedge of the einsum)
             processed_tensors = [(s, [uf.find(i) for i in idx], sh) for s, idx, sh in processed_tensors]
+            # one output path: with R1 no type tensor keeps an 'out' leg (the codomain maps m:X->out are the only route out)
+            assert not any(s.startswith('t') and 'out' in s.split(':')[-1].split('_core')[0].split('@') for s, _, _ in processed_tensors), \
+                [s for s, _, _ in processed_tensors]
 
         input_subs = []
         symbols = []
