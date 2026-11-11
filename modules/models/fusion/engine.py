@@ -104,7 +104,6 @@ class RunManager:
                 "spread_weight": getattr(self.trainer.loss_fn, 'lambda_reg', None),
                 "fs_convention": getattr(self.trainer.loss_fn, 'convention', None),
                 "init_from": self.config.get('init_from') or "none",
-                "purity_anneal_epochs": self.config.get('purity_anneal_epochs', 0),
                 "swap_negatives": bool(self.config.get('swap_negatives', False)),
                 "distill_from": self.config.get('distill_from') or "none",
                 "distill_kd_weight": self.config.get('distill_kd_weight', 1.0) if self.config.get('distill_from') else 0.0,
@@ -122,12 +121,8 @@ class RunManager:
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
             current_lr = self.config.get('qlr', 1e-3)
             
-            anneal = int(self.config.get('purity_anneal_epochs', 0) or 0)
-            w0 = getattr(self.trainer.loss_fn, 'purity_weight', None)
             for epoch in epoch_pbar:
                 start_time = time.time()
-                if anneal and w0:   # purity penalty annealed linearly from purity_weight to 0 over purity_anneal_epochs
-                    self.trainer.loss_fn.purity_weight = w0 * max(0.0, 1.0 - epoch / anneal)
                 loss = self.trainer.train_epoch(train_loader, eval_mapper)
                 elapsed_time = time.time() - start_time
 
