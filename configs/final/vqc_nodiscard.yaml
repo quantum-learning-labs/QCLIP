@@ -1,5 +1,6 @@
 # hpsearch winner (2026-10-17): non-discard, 3 text layers, qlr 3e-3. 10 seeds: val 0.882+-0.006, test std 0.874+-0.011, swap 0.817+-0.074
 model_type: "vqc"
+fs_convention: legacy   # the results above were trained with the mixed FS_InfoNCE form (arcsin similarity, arccos regulariser)
 mlflow_db: "mlf_dbs/svo-probes_final.db"
 batch_size: 256
 qlr: 0.003

@@ -1,5 +1,6 @@
 # discard vs non-discard baseline (nodiscard); the two files differ only in text.discard
 model_type: "vqc"
+fs_convention: legacy   # the results above were trained with the mixed FS_InfoNCE form (arcsin similarity, arccos regulariser)
 mlflow_db: "mlf_dbs/svo-probes_discard_baseline.db"
 batch_size: 256
 qlr: 0.01
