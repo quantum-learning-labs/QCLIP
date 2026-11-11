@@ -88,7 +88,10 @@ def build_experiment(config, device):
         elif loss_name == 'hs':
             loss_fn = HS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1))
         elif loss_name == 'fs':
-            loss_fn = FS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1))
+            # fs_convention: 'arccos' | 'arcsin' | 'legacy'; a config without the key (every config and checkpoint before 2026-11-11)
+            # trained with 'legacy', so that stays its default and old runs, checkpoints and distillation teachers reproduce
+            loss_fn = FS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1),
+                                 convention=config.get('fs_convention', 'legacy'))
         else:
             raise ValueError(f"Unknown loss '{loss_name}' (bures, pauli, uj, hs, fs)")
         if loss_name != 'bures' and config.get('learn_temperature'):

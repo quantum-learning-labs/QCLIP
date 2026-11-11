@@ -102,6 +102,7 @@ class RunManager:
                 "env_qubits": self.config['vision'].get('env_qubits', 0),
                 "mixer_layers": self.config['text'].get('mixer_layers', 0),
                 "spread_weight": getattr(self.trainer.loss_fn, 'spread_weight', getattr(self.trainer.loss_fn, 'lambda_reg', None)),
+                "fs_convention": getattr(self.trainer.loss_fn, 'convention', None),
                 "init_from": self.config.get('init_from') or "none",
                 "hard_negatives": bool(self.config.get('hard_negatives', False)),
                 "learn_temperature": getattr(self.trainer.loss_fn, 'logit_scale', None) is not None,

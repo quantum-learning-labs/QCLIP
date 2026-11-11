@@ -285,34 +285,48 @@ class HS_InfoNCE(BaseInfoNCELoss):
         return torch.tensor(0.0, device=text_emb.device)
 
 class FS_InfoNCE(BaseInfoNCELoss):
-    # similarity = arcsin(0.5 + 0.5 |<t|i>|) / (pi/2) in [1/3, 1]: a monotone transform of root fidelity,
-    # not the Fubini-Study distance arccos|<t|i>| (use Bures_InfoNCE for the FS/Bures angle)
-    def __init__(self, temperature: float = 0.07, lambda_reg: float = 0.1, label_smoothing: float = 0.1, eps: float = 1e-7):
+    """InfoNCE on pure states with one overlap map f(o), o = |<a|b>|, used for BOTH the text-image similarity and the
+    text-text spreading regulariser (lambda_reg * mean over caption pairs i != j of f(|<t_i|t_j>|)):
+      'arccos' (default): f(o) = 1 - arccos(o) / (pi/2)        in [0, 1]: one minus the normalised Fubini-Study angle
+      'arcsin'          : f(o) = arcsin(1/2 + o/2) / (pi/2)    in [1/3, 1]: a monotone transform of root fidelity
+      'legacy'          : similarity 'arcsin', regulariser 'arccos' (the mixed form every run before 2026-11-11 used;
+                          bit-identical to the old class, kept so existing configs, checkpoints and teachers reproduce)
+    Note 1 - arccos(o)/(pi/2) == arcsin(o)/(pi/2): the two conventions differ only by the 1/2 + o/2 shift."""
+    CONVENTIONS = ('arccos', 'arcsin', 'legacy')
+
+    def __init__(self, temperature: float = 0.07, lambda_reg: float = 0.1, label_smoothing: float = 0.1, eps: float = 1e-7,
+                 convention: str = 'arccos'):
         super().__init__(temperature=temperature, label_smoothing=label_smoothing)
+        if convention not in self.CONVENTIONS:
+            raise ValueError(f"FS_InfoNCE convention '{convention}' not in {self.CONVENTIONS}")
         self.lambda_reg = lambda_reg
         self.eps = eps
+        self.convention = convention
 
     def get_hyperparams(self) -> Dict[str, Any]:
         hp = super().get_hyperparams()
-        hp.update({"lambda_reg": self.lambda_reg, "eps": self.eps})
+        hp.update({"lambda_reg": self.lambda_reg, "eps": self.eps, "convention": self.convention})
         return hp
 
-    def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
-        text_flat = F.normalize(text_emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
-        image_flat = F.normalize(image_emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
+    def overlap_map(self, overlap: torch.Tensor, term: str) -> torch.Tensor:
+        """f(o) for term 'similarity' or 'regularisation' under this convention (overlap already clamped to [0, 1 - eps])."""
+        conv = self.convention if self.convention != 'legacy' else ('arcsin' if term == 'similarity' else 'arccos')
+        if conv == 'arccos':
+            return 1.0 - (torch.acos(overlap) / (math.pi / 2))
+        return torch.asin(0.5 + (0.5 * overlap)) / (math.pi / 2)
 
-        overlap = torch.clamp((text_flat @ image_flat.conj().T).abs(), 0.0, 1.0 - self.eps)
-        overlap_scaled = 0.5 + (0.5 * overlap)
-        return torch.asin(overlap_scaled) / (math.pi / 2)
+    def _overlap(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        a_flat = F.normalize(a.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
+        b_flat = F.normalize(b.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
+        return torch.clamp((a_flat @ b_flat.conj().T).abs(), 0.0, 1.0 - self.eps)
+
+    def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
+        return self.overlap_map(self._overlap(text_emb, image_emb), 'similarity')
 
     def compute_regularization(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
         B = text_emb.size(0)
         if self.lambda_reg > 0 and B > 1:
-            text_flat = F.normalize(text_emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
-            txt_overlap = torch.clamp((text_flat @ text_flat.conj().T).abs(), 0.0, 1.0 - self.eps)
-            txt_thetas = torch.acos(txt_overlap)
-            txt_logits = 1.0 - (txt_thetas / (math.pi / 2))
-            
+            txt_logits = self.overlap_map(self._overlap(text_emb, text_emb), 'regularisation')
             mask = ~torch.eye(B, dtype=torch.bool, device=text_emb.device)
             return self.lambda_reg * txt_logits[mask].mean()
         return torch.tensor(0.0, device=text_emb.device)
