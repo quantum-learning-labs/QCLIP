@@ -3,9 +3,11 @@ import pandas as pd
 import opt_einsum as oe
 from itertools import count
 from tqdm import tqdm
+from collections import Counter
     
 class TNCompiler: 
-    def __init__(self, obmap: dict[str, int], decomp_fn, decouple: bool = False, orient: bool = False):
+    def __init__(self, obmap: dict[str, int], decomp_fn, decouple: bool = False, orient: bool = False, lift=None,
+                 lift_rootmap: str = None):
         # decouple: one shared vector per word + one shared tensor per complex type (compile_decoupled_tn)
         # orient: each symbol also gets 'out' = position of its leg towards the sentence output (for text.init: norm)
         self.obmap = obmap
@@ -16,6 +18,18 @@ class TNCompiler:
         self.id = type(self).__name__ + '_' + str(obmap['n']) + '_' + str(obmap['s']) + '_' + str(obmap['p']) + '_' + str(obmap['out'])
         if decouple:
             self.id += f'_dec{self.word_dim}'
+        # lift (text.lift, decoupled only, default off; E2): Frobenius lifting of higher-order roles from one core per word
+        # (modules/compilation/classical/lift.py). 'frobenius' = all rules, or a list of rule names ['R1', ...]
+        self.lift = None
+        if lift:
+            from modules.compilation.classical.lift import RULES, load_rootmap
+            if not decouple:
+                raise ValueError('text.lift needs text.decouple: true')
+            self.lift = tuple(RULES) if lift == 'frobenius' else tuple(lift)
+            assert set(self.lift) <= set(RULES) and 'R1' in self.lift, self.lift   # the other rules assume R1 at the root
+            self.rootmap = load_rootmap(lift_rootmap or 'modules/compilation/classical/e2_rootmap.json')
+            self.lift_stats = Counter()
+            self.id += '_lift' + ''.join(r[1:] for r in self.lift)
 
     def compile_tn(self, tn):
         if self.decouple:
@@ -64,7 +78,14 @@ class TNCompiler:
 
         processed_tensors = []
 
-        for word, idx_arr, type_arr in tn:
+        uf = None
+        if self.lift:
+            from modules.compilation.classical.lift import lift
+            items, extras, uf, stats = lift(tn, self.lift, self.rootmap, index_counter)
+            self.lift_stats.update(stats); self.lift_stats['words'] += len(tn); self.lift_stats['captions'] += 1
+        else:
+            items, extras = [(w, i, t, None) for w, i, t in tn], []
+        for word, idx_arr, type_arr, type_symbol in items:
             if len(idx_arr) != len(type_arr):
                 raise ValueError(f"Mismatch between indices and types for word '{word}' in sentence '{' '.join([w for w, _, _ in tn])}': "
                                  f"indices={idx_arr}, types={type_arr}")
@@ -75,12 +96,16 @@ class TNCompiler:
             type_idx = list(idx_arr[:mid]) + [wire] + list(idx_arr[mid:])
             dims = [self.obmap.get(t, 1) for t in type_arr]
             type_dims = dims[:mid] + [self.word_dim] + dims[mid:]
-            symbol = 't:' + '@'.join(type_arr)
+            symbol = type_symbol or 't:' + '@'.join(type_arr)
             if self.decomposition is None:
                 processed_tensors.append((symbol, type_idx, tuple(type_dims)))
             else:
                 cores = self.decomposition.decompose(symbol, type_idx, type_dims, index_counter)
                 processed_tensors.extend(cores)
+        for symbol, idx_arr, type_arr in extras:   # lift: codomain and s<->n maps (no word leg, never decomposed)
+            processed_tensors.append((symbol, list(idx_arr), tuple(self.obmap.get(t, 1) for t in type_arr)))
+        if uf is not None:   # spiders: every leg of one spider gets the same index (a hyperedge of the einsum)
+            processed_tensors = [(s, [uf.find(i) for i in idx], sh) for s, idx, sh in processed_tensors]
 
         input_subs = []
         symbols = []

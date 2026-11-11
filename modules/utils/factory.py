@@ -48,7 +48,8 @@ def build_experiment(config, device):
                        root_bond=config['text'].get('root_bond_dim'), out_bond=config['text'].get('out_bond_dim'),
                        share_out=config['text'].get('share_out', False), share_args=config['text'].get('share_args'))
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc, decouple=compiler.get('decouple', False),
-                            orient=compiler.get('init', 'glorot') == 'norm')
+                            orient=compiler.get('init', 'glorot') == 'norm', lift=compiler.get('lift'),
+                            lift_rootmap=compiler.get('lift_rootmap'))
         
         method = config['vision']['method']
         if method == 'clip':   # precomputed, L2-normalised CLIP ViT-B/32 vectors (embeddings.embed_images)
