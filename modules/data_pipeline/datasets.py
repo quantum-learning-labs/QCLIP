@@ -1,5 +1,5 @@
 from __future__ import annotations
-import zipfile, io, torch, random
+import zipfile, io, torch, random, re
 from pathlib import Path
 import pandas as pd
 from PIL import Image
@@ -138,7 +138,7 @@ class SVODataset(BaseDataset):
                 "neg_image": neg_image,
                 "idx": idx,   # row index (distillation looks up the teacher's embeddings by it)
                 }
-        if 'swapped_sentence_einsum' in row_compiled.index:   # training with swapped-caption negatives (scripts/make_swap.py --keep_all)
+        if 'swapped_sentence_einsum' in row_compiled.index:   # training with swapped-caption negatives (retrieve.py --swap train --keep_all)
             item["swap_caption"] = (row_compiled['swapped_sentence_einsum'], row_compiled['swapped_sentence_symbols'])
             item["swap_valid"] = bool(row_compiled.get('swap_valid', True))
         return item
@@ -186,6 +186,55 @@ def swap_collate_fn(batch):
         "pos_caption": pos_captions,
         "neg_caption": neg_captions
     }
+
+# verbs whose subject/object swap usually still describes the image: their swapped captions are not negatives
+SYMMETRIC_VERBS = {'meet', 'hug', 'kiss', 'marry', 'touch', 'fight', 'play', 'talk', 'dance', 'race', 'wrestle', 'greet',
+                   'shake', 'face', 'resemble', 'join', 'accompany', 'chat', 'argue', 'embrace', 'cuddle', 'date'}
+
+def build_swap_set(df, keep_all=False):
+    # SwapDataset layout from a processed SVO split: for each caption whose diagram has exactly two noun boxes (type ['n']),
+    # swap the two nouns (same grammar and vocabulary, so no new symbols). Rows without a real swap (not two nouns, the
+    # same noun twice, a symmetric verb) are dropped, or with keep_all kept with swap_valid False (swapped-caption
+    # negatives for training: the training set itself is unchanged)
+    rows = []
+    stats = {'total': len(df), 'not_two_nouns': 0, 'same_noun': 0, 'symmetric': 0}
+    for _, row in df.iterrows():
+        diagram = row['corrected_sentence_diagram']
+        nouns = [i for i, box in enumerate(diagram) if list(box[2]) == ['n']]
+        if len(nouns) != 2:
+            reason = 'not_two_nouns'
+        elif diagram[nouns[0]][0].lower() == diagram[nouns[1]][0].lower():
+            reason = 'same_noun'
+        elif str(row['verb']).lower() in SYMMETRIC_VERBS:
+            reason = 'symmetric'
+        else:
+            reason = None
+
+        new_row = row.to_dict()
+        if reason is not None:
+            stats[reason] += 1
+            if not keep_all:
+                continue
+            new_row['swapped_sentence'] = row['corrected_sentence']
+            new_row['swapped_sentence_diagram'] = diagram
+            new_row['swap_valid'] = False
+        else:
+            a, b = nouns
+            word_a, word_b = diagram[a][0], diagram[b][0]
+            swapped = [list(box) for box in diagram]
+            swapped[a][0], swapped[b][0] = word_b, word_a
+            swapped = [type(box)(new) if isinstance(box, tuple) else new for box, new in zip(diagram, swapped)]   # keep the box type
+            sentence = re.sub(rf'\b{re.escape(word_a)}\b', '\0', row['corrected_sentence'], count=1)
+            sentence = re.sub(rf'\b{re.escape(word_b)}\b', word_a, sentence, count=1).replace('\0', word_b)
+            new_row['swapped_sentence'] = sentence
+            new_row['swapped_sentence_diagram'] = swapped
+            new_row['swap_valid'] = True
+        rows.append(new_row)
+
+    swap_df = pd.DataFrame(rows)
+    cols = [c for c in swap_df.columns if not c.endswith('_diagram')] + ['corrected_sentence_diagram', 'swapped_sentence_diagram']
+    print(f"Swap set: {stats} -> kept {len(swap_df)}")
+    return swap_df[cols]
 
 class SugarCrepePPDataset(BaseDataset):
     """Handles SugarCrepe / ARO layout: 1 Image -> (Positive Caption vs Negative Caption)."""

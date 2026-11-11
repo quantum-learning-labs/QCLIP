@@ -20,7 +20,7 @@ python scripts/benchmark.py -cp weights/post_selection_tl3/best.pt -o out.json
 
 ## Data
 `BaseDatasetRetriever("svo-probes").retrieve()` needs no local files: it downloads DeepMind's `svo_probes.csv`, rebuilds our
-train/val/test split from `modules/data_pipeline/svo_probes_assets/`, and downloads the images from their URLs. About 8%
+train/val/test split from `modules/data_pipeline/manifests/svo-probes/`, and downloads the images from their URLs. About 8%
 of the image links have died; the affected pairs are dropped (`data/svo-probes/raw/images_missing.csv`), so the splits are
 slightly smaller (train 4477, val 1535, test 1548, swap 83 on 2026-11-04). The `metrics.json` numbers above come from the
 complete original data, so expect small differences when re-evaluating on the reduced set.
