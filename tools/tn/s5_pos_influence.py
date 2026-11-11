@@ -60,7 +60,7 @@ for split in splits:
             sig = None
             for x in syms[k + 1:]:
                 if x['name'].startswith('w:'): break
-                if x['name'].startswith('t:'): sig = x['name'].split('_core')[0][2:]; break
+                if x['name'].startswith('t'): sig = x['name'].split('_core')[0].split(':', 1)[1]; break   # 't:' or lifted 't.aux:' etc.
             w = d['name'][2:]
             new = [dict(x) for x in syms]; new[k]['name'] = rng.choice(words)
             variants.append((eq, new)); meta.append((ci, w, role(w, sig)))
