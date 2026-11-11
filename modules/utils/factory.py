@@ -47,6 +47,8 @@ def build_experiment(config, device):
             mps_proc = (TR if decomp == 'tr' else MPS)(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'],
                        root_bond=config['text'].get('root_bond_dim'), out_bond=config['text'].get('out_bond_dim'),
                        share_out=config['text'].get('share_out', False), share_args=config['text'].get('share_args'))
+        if compiler.get('lift') and compiler.get('tn_engine') != 'levelwise':   # s5_lift_test: grouped disagrees on spiders
+            raise ValueError('text.lift needs text.tn_engine: levelwise')
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc, decouple=compiler.get('decouple', False),
                             orient=compiler.get('init', 'glorot') == 'norm', lift=compiler.get('lift'),
                             lift_rootmap=compiler.get('lift_rootmap'))

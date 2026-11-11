@@ -1,12 +1,12 @@
 """E2 lifting tests (GPU optional; run from qclip/ with PYTHONPATH=.):
- 1. lift off: compile identical (einsum strings + symbols) to the committed compiler (git HEAD) on N captions;
+ 1. lift off: compile identical (einsum strings + symbols) to the compiler before E2 (5767954~1) on N captions;
  2. lift on: every compiled network is a valid einsum: each index has one dimension, the output index 0 is on exactly one
     tensor and every other index on >= 2 tensors; rule coverage (tokens per rule) on the sample;
  3. engines: levelwise == grouped == direct torch.einsum (fp64, raw TN output through the same head) on lifted captions;
  4. parameter counts with / without lifting, and a few lifted captions printed for reading.
    python tools/tn/s5_lift_test.py [N=20000] [--set k=v ...]   (base config: CP128, configs/tn/dec_t3.yaml)"""
 import sys, subprocess, types, collections, random
-import numpy as np, pandas as pd, torch
+import numpy as np, pandas as pd, torch, opt_einsum as oe
 from modules.utils.general import setup_exp
 from modules.utils.factory import build_experiment
 from modules.data_pipeline.engine import DataEngine
@@ -29,12 +29,12 @@ random.Random(0).shuffle(tns); tns = tns[:N]
 print(f'{len(tns)} captions')
 
 # 1. lift off == committed compiler
-src = subprocess.run(['git', 'show', 'HEAD:modules/compilation/classical/tensor_network.py'], capture_output=True, text=True, check=True).stdout
+src = subprocess.run(['git', 'show', '5767954~1:modules/compilation/classical/tensor_network.py'], capture_output=True, text=True, check=True).stdout
 old = types.ModuleType('old_tn'); exec(compile(src, 'old_tn', 'exec'), old.__dict__)
 config, DEV, SEED, a_new, _ = build(None)
 a_old = old.TNCompiler(obmap=a_new.obmap, decomp_fn=a_new.decomposition, decouple=True, orient=a_new.orient)
 same = all(a_new.compile_tn(t) == a_old.compile_tn(t) for t in tns)
-print('1. lift off == HEAD compiler:', same)
+print('1. lift off == pre-E2 compiler:', same)
 
 # 2. validity + coverage
 config, DEV, SEED, a_lift, _ = build('frobenius')
@@ -74,7 +74,7 @@ for eng in ('levelwise', 'grouped'):
             ts = []
             for s in syms:
                 b, r = tm.sym_loc[s['name']]; ts.append(tm._bank(b)[r].reshape(s['shape']))
-            refs.append(torch.einsum(eq, *ts))
+            refs.append(oe.contract(eq, *ts, backend='torch'))
         ref = torch.nn.functional.normalize(tm.norm_head(torch.stack(refs)), dim=-1)
         res['einsum'] = ref
 cos = lambda x, y: torch.nn.functional.cosine_similarity(x, y, dim=-1).min().item()
