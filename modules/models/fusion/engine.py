@@ -101,14 +101,9 @@ class RunManager:
                 "postselect_types": ",".join(self.config['text'].get('postselect_types') or []) or "none",
                 "env_qubits": self.config['vision'].get('env_qubits', 0),
                 "mixer_layers": self.config['text'].get('mixer_layers', 0),
-                "spread_weight": getattr(self.trainer.loss_fn, 'spread_weight', getattr(self.trainer.loss_fn, 'lambda_reg', None)),
+                "spread_weight": getattr(self.trainer.loss_fn, 'lambda_reg', None),
                 "fs_convention": getattr(self.trainer.loss_fn, 'convention', None),
                 "init_from": self.config.get('init_from') or "none",
-                "hard_negatives": bool(self.config.get('hard_negatives', False)),
-                "learn_temperature": getattr(self.trainer.loss_fn, 'logit_scale', None) is not None,
-                "margin": self.config.get('margin', 0.0),
-                "uniformity_weight": self.config.get('uniformity_weight', 0.0),
-                "shot_weight": self.config.get('shot_weight', 0.0),
                 "purity_anneal_epochs": self.config.get('purity_anneal_epochs', 0),
                 "swap_negatives": bool(self.config.get('swap_negatives', False)),
                 "distill_from": self.config.get('distill_from') or "none",
@@ -166,8 +161,6 @@ class RunManager:
 
                 self._save_checkpoint(epoch, loss, metrics, is_best=is_best)
                 mlflow.log_metric("train_loss", loss, step=epoch)
-                ls_ = getattr(self.trainer.loss_fn, 'logit_scale', None)
-                if ls_ is not None: mlflow.log_metric("logit_scale", float(ls_.exp().clamp(max=100)), step=epoch)
                 every = self.config.get('checkpoint_every')
                 if every and epoch % every == 0:   # per-epoch snapshots for training-dynamics analysis
                     torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
@@ -256,12 +249,8 @@ class ContrastiveTrainer:
             image_emb = self.image_model(images)
             text_emb = self.text_model(texts)
 
-            neg_emb = self.image_model(batch['neg_image'].to(self.device)) if getattr(self, 'hard_negatives', False) and 'neg_image' in batch else None
-            swap_kw = {}
             if getattr(self, 'swap_negatives', False) and 'swap_caption' in batch:
-                swap_kw = {'neg_text_emb': self.text_model(batch['swap_caption']), 'neg_text_valid': batch['swap_valid'].to(self.device)}
-            if neg_emb is not None or swap_kw:
-                loss = self.loss_fn(text_emb, image_emb, neg_emb, **swap_kw)
+                loss = self.loss_fn(text_emb, image_emb, self.text_model(batch['swap_caption']), batch['swap_valid'].to(self.device))
             else:
                 loss = self.loss_fn(text_emb, image_emb)
             if getattr(self, 'teacher', None) is not None:

@@ -70,8 +70,8 @@ class Teacher:
         out = torch.zeros((), device=text_emb.device)
         if self.kd_weight:
             with torch.no_grad():
-                t = self.loss_fn.compute_similarity(self.text[idx], self.image[idx]) * self.loss_fn.scale().to(text_emb.device)
-            s = student_loss_fn.compute_similarity(text_emb, image_emb) * student_loss_fn.scale().to(text_emb.device)
+                t = self.loss_fn.compute_similarity(self.text[idx], self.image[idx]) / self.loss_fn.temperature
+            s = student_loss_fn.compute_similarity(text_emb, image_emb) / student_loss_fn.temperature
             tau = self.kd_tau
             kd = lambda S, T: F.kl_div(F.log_softmax(S / tau, dim=1), F.log_softmax(T / tau, dim=1), log_target=True, reduction='batchmean')
             out = out + self.kd_weight * tau ** 2 * 0.5 * (kd(s, t) + kd(s.T, t.T))

@@ -12,9 +12,7 @@ from modules.models.vision.quantum_map import QuantumFeatureMap, QFMap_CPTP
 from modules.models.vision.clip import FrozenCLIP
 from modules.models.vision.image_model import TTNImageModel
 
-from modules.models.fusion.criteria import FS_InfoNCE, InfoNCE, UJ_InfoNCE, Pauli_InfoNCE, HS_InfoNCE, Bures_InfoNCE
-import math, torch
-import torch.nn as nn
+from modules.models.fusion.criteria import FS_InfoNCE, InfoNCE, UJ_InfoNCE, Pauli_InfoNCE, HS_InfoNCE
 import importlib
 
 def load_obj(import_str: str):
@@ -72,18 +70,11 @@ def build_experiment(config, device):
         if loss_name in ('pauli', 'uj') and not discard:
             raise ValueError(f"loss '{loss_name}' needs density matrices: set text.discard: true")
         ls, temp = config.get('label_smoothing', 0.1), config.get('temperature', 0.07)
-        image_pure = not config['vision'].get('env_qubits', 0)
-        if loss_name == 'bures':
-            loss_fn = Bures_InfoNCE(label_smoothing=ls, temperature=temp, text_dm=discard, image_dm=discard, image_pure=image_pure,
-                                    learn_temperature=config.get('learn_temperature', True), margin=config.get('margin', 0.0),
-                                    uniformity_weight=config.get('uniformity_weight', 0.0), uniformity_t=config.get('uniformity_t', 2.0),
-                                    shot_weight=config.get('shot_weight', 0.0), shot_budget=config.get('shot_budget', 1024),
-                                    shot_z=config.get('shot_z', 2.0))
-        elif loss_name == 'pauli':
+        if loss_name == 'pauli':
             loss_fn = Pauli_InfoNCE(label_smoothing=ls, temperature=temp, num_qubits=config['embedding_qubits'],
-                                    purity_weight=config.get('purity_weight', 0.1), spread_weight=config.get('spread_weight', 0.0))
+                                    purity_weight=config.get('purity_weight', 0.1))
         elif loss_name == 'uj':
-            loss_fn = UJ_InfoNCE(label_smoothing=ls, temperature=temp, image_pure=image_pure)
+            loss_fn = UJ_InfoNCE(label_smoothing=ls, temperature=temp)
         elif loss_name == 'hs':
             loss_fn = HS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1))
         elif loss_name == 'fs':
@@ -92,9 +83,7 @@ def build_experiment(config, device):
             loss_fn = FS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1),
                                  convention=config.get('fs_convention', 'legacy'))
         else:
-            raise ValueError(f"Unknown loss '{loss_name}' (bures, pauli, uj, hs, fs)")
-        if loss_name != 'bures' and config.get('learn_temperature'):
-            loss_fn.logit_scale = nn.Parameter(torch.tensor(math.log(1.0 / temp)))
+            raise ValueError(f"Unknown loss '{loss_name}' (pauli, uj, hs, fs)")
         
     elif model_type == "mlp":
         ansatz = MLPCompiler()
