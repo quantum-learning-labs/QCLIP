@@ -12,7 +12,6 @@ class VQCModel(nn.Module):
         super().__init__()
         self.symbols: List[str] = []
         self.params = nn.ParameterList([])
-        self.path_cache = {}
         self.plan_cache = {}
         self.sym2param: Dict[str, nn.Parameter] = {}
         self.out_q: int = out_q
@@ -89,37 +88,6 @@ class VQCModel(nn.Module):
                 sym: float(thetas[idx].detach().cpu().item()) 
                 for sym, idx in self.sym2param.items()
             }
-
-    def compile_batch(self, batch_recipes):
-        groups = defaultdict(list)
-        for einsum_str, tensors in batch_recipes:
-            groups[einsum_str].append(tensors)
-
-        for einsum_str, tensor_lists in groups.items():
-            minibatch_size = len(tensor_lists)
-            gate_columns = zip(*tensor_lists)
-            shapes = []
-
-            for column in gate_columns:
-                symbol, op_type = column[0]['name'], column[0]['op_type']
-                if symbol is None:
-                    if op_type == '0': shapes.append(torch.Size([minibatch_size, 2]))
-                    elif op_type == 'H': shapes.append(torch.Size([minibatch_size, 2, 2]))
-                    elif op_type == 'CX': shapes.append(torch.Size([minibatch_size, 2, 2, 2, 2]))
-                    data = data.unsqueeze(0).expand(minibatch_size, *data.shape)
-                    shapes.append(data.shape)
-                else:
-                    if op_type == 'Rz' or op_type == 'Rx' or op_type == 'Ry':
-                        shapes.append(torch.Size([minibatch_size, 2, 2]))
-                    elif op_type == 'CRz' or op_type == 'CRx' or op_type == 'CRy': 
-                        shapes.append(torch.Size([minibatch_size, 2, 2, 2, 2]))
-
-            input_subscripts, output_subscript = einsum_str.split('->')
-            batched_inputs = ["$" + s for s in input_subscripts.split(',')]
-            batched_str = f"{','.join(batched_inputs)}->${output_subscript}"
-            cache_key = (batched_str, tuple(shapes))
-            if cache_key not in self.path_cache: 
-                self.path_cache[cache_key] = contract_expression(batched_str, *shapes)
 
     GATE_FNS = {'Rz': Rz, 'Rx': Rx, 'Ry': Ry, 'CRz': CRz, 'CRx': CRx, 'CRy': CRy}
 
