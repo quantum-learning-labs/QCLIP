@@ -56,6 +56,7 @@ def main():
                         opt.max_time = left; signal.alarm(int(left * 1.5) + 60)
                         try: oe.contract_path(T.eq, *arrs, optimize=opt)
                         except TimeoutError: print('    hard stop', flush=True)
+                        except KeyError: pass   # no trial finished yet (large networks, short first chunks): try the next checkpoint
                         finally: signal.alarm(0)
                     if 'tree' not in opt.best: continue
                     wd, lf = score(T.eq, arrs, opt.tree.get_path()); el = time.time() - t0
