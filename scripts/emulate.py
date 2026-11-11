@@ -1,5 +1,4 @@
 import argparse, json
-import yaml
 from pathlib import Path
 import pandas as pd
 
@@ -16,27 +15,14 @@ def main():
     parser.add_argument("--seed", type=int, default=None, help="Overrides the config seed (shot sampling, transpiler)")
     parser.add_argument("--shots", type=str, default=None,
                         help="Comma-separated shot budgets per circuit (e.g. 64,256,1024); circuits are compiled once and run at each")
-    parser.add_argument("--eval_set", type=str, default=None, help="Overrides emulate.set (e.g. std, swap)")
-    parser.add_argument("--noise", action="store_true", help="Overrides emulate.noise: hardware noise model (FakeMiami)")
-    parser.add_argument("--noise_profile", type=str, default=None, choices=["backend", "honest"],
-                        help="backend = Aer NoiseModel.from_backend (default); honest = scaled errors + coherent ZZ + idle decoherence")
-    parser.add_argument("--num_runs", type=int, default=None, help="Overrides emulate.num_runs")
-    parser.add_argument("--method", type=str, default=None, choices=["statevector", "density_matrix", "tensor_network", "matrix_product_state"],
-                        help="Overrides emulate.backend (Aer method; GPU + cuStateVec when CUDA is available)")
-    parser.add_argument("--aer", action="append", default=[], metavar="KEY=VALUE",
-                        help="Extra Aer backend option (YAML value, repeatable), applied last, e.g. --aer batched_shots_gpu=false")
-    parser.add_argument("--profile", type=str, default=None,
-                        help="Device calibration snapshot (qiskit_ibm_runtime fake backend), e.g. fake_kingston; default fake_miami")
-    parser.add_argument("--honest", action="append", default=[], metavar="KEY=VALUE",
-                        help="Override an honest-profile knob (scale_2q, scale_1q, scale_ro, scale_t, zz_rad, idle), repeatable")
-    parser.add_argument("--circuit_batch", type=int, default=64, help="Circuits per Aer job (default 64)")
-    parser.add_argument("--dm_max_qubits", type=int, default=0,
-                        help="Hybrid: circuits with <= N active qubits run as exact density matrices on GPU, larger ones on --method")
-    parser.add_argument("--save_counts", action="store_true", help="Store the full counts of every circuit (first shot run)")
+    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                        help="Override a config value (repeatable), e.g. --set emulate.noise=true --set emulate.profile=kingston "
+                             "--set emulate.noise_profile=honest --set emulate.honest.zz_rad=0 --set emulate.aer_options.batched_shots_gpu=false "
+                             "--set emulate.backend=density_matrix --set emulate.dm_max_qubits=7 --set emulate.save_counts=true")
     parser.add_argument("--mlflow_db", type=str, default=None,
                         help="Also log this emulation to MLflow (sqlite file); on the cluster use one file per job")
     parser.add_argument("--mlflow_experiment", type=str, default=None,
-                        help="MLflow experiment (default: emulation_noise with --noise, else emulation_shot_sweep)")
+                        help="MLflow experiment (default: emulation_noise if emulate.noise, else emulation_shot_sweep)")
     parser.add_argument("-o", "--out", type=str, default=None, help="Results JSON (default: emulate_<checkpoint>.json next to the checkpoint); never overwritten")
     args = parser.parse_args()
 
@@ -45,17 +31,7 @@ def main():
     out_path = Path(args.out) if args.out else (checkpoint_path.parent / f"emulate_{checkpoint_path.stem}.json" if checkpoint_path else None)
     if out_path is not None and out_path.exists():
         raise FileExistsError(f"{out_path} already exists")
-    config, DEV, SEED = setup_exp(config_path, seed=args.seed)
-    if args.eval_set: config['emulate']['set'] = args.eval_set
-    if args.noise: config['emulate']['noise'] = True
-    if args.noise_profile: config['emulate']['noise_profile'] = args.noise_profile
-    if args.num_runs: config['emulate']['num_runs'] = args.num_runs
-    if args.method: config['emulate']['backend'] = args.method
-    if args.honest:
-        config['emulate']['honest'] = {**(config['emulate'].get('honest') or {}), **{k: yaml.safe_load(v) for k, v in (a.split('=', 1) for a in args.honest)}}
-    if args.profile: config['emulate']['profile'] = args.profile
-    if args.aer:
-        config['emulate']['aer_options'] = {k: yaml.safe_load(v) for k, v in (a.split('=', 1) for a in args.aer)}
+    config, DEV, SEED = setup_exp(config_path, seed=args.seed, overrides=args.set)
 
     log_phase("Evaluation Environment")
     print(f" Target Device   : {DEV} | Config : {config_path} | Seed : {SEED}")
@@ -88,12 +64,7 @@ def main():
 
     image_model.eval()
     text_model.eval()
-    if config['emulate'].get('profile'):
-        import qiskit_ibm_runtime.fake_provider as fake_provider
-        cls = {c.lower(): c for c in dir(fake_provider) if c.startswith('Fake')}['fake' + config['emulate']['profile'].lower().replace('fake_', '').replace('fake', '')]
-        backend_manager = BackendManager(config, qlimit, hardware_profile=getattr(fake_provider, cls)())
-    else:
-        backend_manager = BackendManager(config, qlimit)
+    backend_manager = BackendManager(config, qlimit)
 
     log_phase("Extracting Parameter Angle Maps")
     eval_dataset = data_engine.get_dataset(compiled_eval, emulation_set)
@@ -102,16 +73,10 @@ def main():
     # 8. Execution and metric compiling
     log_phase("Executing Emulator Engine Pipeline")
     emulator = Emulator(config, backend_manager.backend)
-    emulator.save_counts = args.save_counts
-    if args.dm_max_qubits:
-        from qiskit_aer import AerSimulator
-        o = backend_manager.backend.options
-        emulator.dm_backend = AerSimulator(method='density_matrix', device=o.device, precision=o.precision, noise_model=getattr(o, 'noise_model', None))
-        emulator.dm_max_qubits = args.dm_max_qubits
+    if emulator.dm_backend is not None:
         widths = [emulator.active_qubits(qc) for qc in pos_circs + neg_circs]
-        print(f" Hybrid emulation: {sum(w <= args.dm_max_qubits for w in widths)}/{len(widths)} circuits as density matrices "
-              f"(<= {args.dm_max_qubits} active qubits); widths {min(widths)}-{max(widths)}, "
-              f"histogram { {w: widths.count(w) for w in sorted(set(widths))} }")
+        print(f" Hybrid emulation: {sum(w <= emulator.dm_max_qubits for w in widths)}/{len(widths)} circuits as density matrices "
+              f"(<= {emulator.dm_max_qubits} active qubits); widths {min(widths)}-{max(widths)}")
     max_nq = max(qc.num_qubits for qc in pos_circs + neg_circs)
     nq_out = config['embedding_qubits']
     emulator.shot_estimation(nq_out, max_nq - nq_out, resolution=config['emulate']['resolution'])
@@ -121,11 +86,11 @@ def main():
         by_shots = {}
         for s in [int(x) for x in args.shots.split(',')]:
             print(f" --- {s} shots per circuit ---")
-            by_shots[s] = emulator.run_experiment(pos_circs, neg_circs, batch_size=args.circuit_batch, shots=s, num_runs=num_runs)
+            by_shots[s] = emulator.run_experiment(pos_circs, neg_circs, shots=s, num_runs=num_runs)
             print(f" shots {s}: accuracy {by_shots[s]['accuracy']:.4f} | accepted fraction {by_shots[s]['accept_frac_mean']:.4f}")
         data = dict(by_shots[max(by_shots)]); data['by_shots'] = by_shots
     else:
-        data = emulator.run_experiment(pos_circs, neg_circs, batch_size=args.circuit_batch, num_runs=num_runs)
+        data = emulator.run_experiment(pos_circs, neg_circs, num_runs=num_runs)
 
     log_phase("Benchmark Emulation Results")
     print(f" {'Metric Key':<35} | {'Value / Score':<25}")

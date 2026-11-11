@@ -94,17 +94,20 @@ def git_state():
         return os.environ.get('QCLIP_GIT_COMMIT', 'unknown')
 
 def apply_overrides(config, overrides):
-    # "a.b=value" -> config['a']['b'] = yaml.safe_load(value)
+    # --set "a.b=value" -> config['a']['b'] = yaml.safe_load(value); missing sections are created (e.g. emulate.honest)
     for item in overrides or []:
         key, sep, value = item.partition('=')
-        if not sep: raise ValueError(f"--set expects key=value, got '{item}'")
+        if not sep:
+            raise ValueError(f"--set expects key=value, got '{item}'")
         *parents, leaf = key.split('.')
         node = config
         for p in parents:
-            if not isinstance(node.get(p), dict): raise KeyError(f"--set {key}: '{p}' is not a config section")
-            node = node[p]
+            node = node.setdefault(p, {})
+            if not isinstance(node, dict):
+                raise KeyError(f"--set {key}: '{p}' is not a config section")
         node[leaf] = yaml.safe_load(value)
-    if overrides: config['overrides'] = list(overrides)
+    if overrides:
+        config['overrides'] = list(overrides)
     return config
 
 def setup_exp(config_path: str, seed=None, overrides=None):

@@ -6,7 +6,7 @@ from tqdm import tqdm
 from qiskit import transpile, QuantumCircuit
 from qiskit_aer import AerSimulator
 from qiskit_aer.noise import NoiseModel, coherent_unitary_error, RelaxationNoisePass
-from qiskit_ibm_runtime.fake_provider import FakeMiami
+import qiskit_ibm_runtime.fake_provider as fake_provider
 from qiskit.circuit.library import RZZGate
 from qiskit.circuit import Delay
 from qiskit.transpiler import PassManager
@@ -29,6 +29,11 @@ HONEST_DEFAULTS = {
     "idle": True,        # ALAP scheduling + thermal relaxation on idle delays (absent from from_backend)
 }
 
+def fake_backend(name):
+    # device calibration snapshot by name, e.g. 'miami', 'fake_kingston' or 'FakeTorino'
+    classes = {c.lower(): c for c in dir(fake_provider) if c.startswith('Fake')}
+    return getattr(fake_provider, classes['fake' + name.lower().replace('fake_', '').replace('fake', '')])()
+
 def honest_backend(backend, knobs):
     # a copy of the fake backend whose target carries the scaled error rates and coherence times
     import copy
@@ -49,7 +54,7 @@ def honest_backend(backend, knobs):
     return b
 
 class BackendManager:
-    def __init__(self, config, qlimit=None, hardware_profile=FakeMiami()):
+    def __init__(self, config, qlimit=None, hardware_profile=None):
         self.config = config
         self.amplitude_encode = True if config['vision']['method'] == 'amp' else False
         self.discard = self.config.get('text', {}).get('discard', False)
@@ -59,7 +64,8 @@ class BackendManager:
         self._backend = None
         self.coupling_map = None
         self.basis_gates = None
-        self.hardware_profile = hardware_profile
+        # emulate.profile: device calibration snapshot (FakeMiami = the 120-qubit Nighthawk by default)
+        self.hardware_profile = hardware_profile or fake_backend(config['emulate'].get('profile', 'miami'))
         self._setup_backend()
 
     def _setup_backend(self):
@@ -127,7 +133,7 @@ class BackendManager:
 
         print(f" Simulation: Profile {self.hardware_profile.name} ({self.qlimit} qubits), Device {qdev}, Method {method}, Noise {'Enabled' if self.config['emulate'].get('noise') else 'Disabled'}"
               + (f" | noise profile {self.noise_profile} {self.honest if self.noise_profile == 'honest' else ''}" if self.config['emulate'].get('noise') else ''))
-        backend_options.update(self.config['emulate'].get('aer_options') or {})   # emulate.py --aer key=value
+        backend_options.update(self.config['emulate'].get('aer_options') or {})   # e.g. --set emulate.aer_options.batched_shots_gpu=false
         custatevec = backend_options.pop('cuStateVec_enable', True)
         if self.config['emulate'].get('aer_options'):
             print(f" Aer option overrides: {self.config['emulate']['aer_options']}")
@@ -314,6 +320,16 @@ class Emulator:
         self.meas_method = self.config.get('emulate', {}).get('measurement_method', 'compute_uncompute')
         self.dataset_name = config['dataset']['name']
         self.experiment_name = gen_id(config)
+        self.save_counts = config['emulate'].get('save_counts', False)   # full counts of every circuit (first shot run)
+        self.batch_size = config['emulate'].get('circuit_batch', 64)      # circuits per Aer job
+        # emulate.dm_max_qubits N (hybrid): circuits with <= N active qubits run as exact density matrices
+        # (cost independent of shots), the rest on the main backend (statevector trajectories)
+        self.dm_max_qubits = config['emulate'].get('dm_max_qubits', 0)
+        self.dm_backend = None
+        if self.dm_max_qubits:
+            options = backend.options
+            self.dm_backend = AerSimulator(method='density_matrix', device=options.device, precision=options.precision,
+                                           noise_model=getattr(options, 'noise_model', None))
 
     def shot_estimation(self, nq_out, nq_ps=0, resolution=50):
         raw_shots = resolution * max(nq_ps, 1) * (2 ** nq_out)
@@ -324,16 +340,15 @@ class Emulator:
         return len({q for inst in qc.data for q in inst.qubits})
 
     def _run_counts(self, chunk, shots):
-        # hybrid (emulate.py --dm_max_qubits N): circuits with <= N active qubits run as exact density matrices
-        # (cost independent of shots), the rest on the main backend (statevector trajectories)
-        dm, nmax = getattr(self, 'dm_backend', None), getattr(self, 'dm_max_qubits', 0)
-        idx_dm = [i for i, qc in enumerate(chunk) if dm is not None and self.active_qubits(qc) <= nmax]
+        idx_dm = [i for i, qc in enumerate(chunk) if self.dm_backend is not None and self.active_qubits(qc) <= self.dm_max_qubits]
         idx_sv = [i for i in range(len(chunk)) if i not in set(idx_dm)]
         out = [None] * len(chunk)
-        for backend, idx in ((dm, idx_dm), (self.backend, idx_sv)):
-            if not idx: continue
+        for backend, idx in ((self.dm_backend, idx_dm), (self.backend, idx_sv)):
+            if not idx:
+                continue
             res = backend.run([chunk[i] for i in idx], shots=shots).result()
-            for j, i in enumerate(idx): out[i] = res.get_counts(j)
+            for j, i in enumerate(idx):
+                out[i] = res.get_counts(j)
         return out
 
     def run_circuit(self, qc_array, shots=None, batch_size=24):
@@ -344,7 +359,7 @@ class Emulator:
             all_counts = self._run_counts(chunk, shots)
             for i, qc in enumerate(chunk):
                 counts = all_counts[i]
-                if getattr(self, 'save_counts', False) and self._run_idx == 0:   # emulate.py --save_counts (first shot run only)
+                if self.save_counts and self._run_idx == 0:
                     self.counts_log.append({'counts': dict(counts), 'out_qs': list(qc.metadata.get('output_qubits', [])),
                                             'num_clbits': qc.num_clbits, 'n_out': len(qc.metadata.get('output_qubits', []))})
                 
@@ -472,9 +487,10 @@ class Emulator:
                 mlflow.log_artifact(str(raw_pkl_path), artifact_path="raw_outputs")
         print(f" Logged run metrics & artifacts to: {mlf_db_path}")
 
-    def run_experiment(self, pos_circs, neg_circs, batch_size=24, shots=None, num_runs=5):
+    def run_experiment(self, pos_circs, neg_circs, shots=None, num_runs=5):
         shots = shots if shots is not None else self.shots
         torch.cuda.empty_cache()
+        self.elapsed_log = []
         self.accept_log = []
         self.circuit_log = []   # per circuit (acceptance, accepted signal / all shots, unconditioned signal / all shots); order: per run, pos then neg
 
@@ -489,13 +505,14 @@ class Emulator:
         for run_idx in range(num_runs):
             self._run_idx = run_idx
             self.backend.set_options(seed_simulator=base_seed + run_idx) 
-            if getattr(self, 'dm_backend', None) is not None: self.dm_backend.set_options(seed_simulator=base_seed + run_idx)
+            if self.dm_backend is not None:
+                self.dm_backend.set_options(seed_simulator=base_seed + run_idx)
 
             start_eval_time = time.time()
-            pos_raw = self.run_circuit(pos_circs, shots=shots, batch_size=batch_size)
-            neg_raw = self.run_circuit(neg_circs, shots=shots, batch_size=batch_size)
+            pos_raw = self.run_circuit(pos_circs, shots=shots, batch_size=self.batch_size)
+            neg_raw = self.run_circuit(neg_circs, shots=shots, batch_size=self.batch_size)
             elapsed = time.time() - start_eval_time
-            self.elapsed_log = (getattr(self, 'elapsed_log', None) or []) + [elapsed]
+            self.elapsed_log.append(elapsed)
 
             correct = (pos_raw > neg_raw).float()
             accuracy = correct.mean().item()
@@ -549,7 +566,7 @@ class Emulator:
             "shots": shots,
             "accept_frac_mean": float(np.mean(self.accept_log)) if self.accept_log else None,
             "accept_frac_median": float(np.median(self.accept_log)) if self.accept_log else None,
-            "per_circuit_counts": self.counts_log or None,   # --save_counts: run 0, pos then neg circuits
-            "elapsed_s_per_run": getattr(self, 'elapsed_log', None),
+            "per_circuit_counts": self.counts_log or None,   # emulate.save_counts: run 0, pos then neg circuits
+            "elapsed_s_per_run": self.elapsed_log,
             "per_circuit_log": self.circuit_log,   # (acceptance, accepted signal/shots, unconditioned signal/shots); per run: pos then neg circuits
         }
