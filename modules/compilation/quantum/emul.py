@@ -1,4 +1,4 @@
-import math, time, torch, mlflow, tempfile, pickle, os
+import math, time, torch, mlflow, tempfile, pickle, os, copy
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
@@ -36,22 +36,27 @@ def fake_backend(name):
 
 def honest_backend(backend, knobs):
     # a copy of the fake backend whose target carries the scaled error rates and coherence times
-    import copy
-    b = copy.deepcopy(backend); t = b.target
-    for name in t.operation_names:
-        props = t[name]
-        if not props: continue
-        nq = t.operation_from_name(name).num_qubits if name != 'measure' else 0
-        scale = knobs['scale_ro'] if name == 'measure' else knobs['scale_2q'] if nq == 2 else knobs['scale_1q']
-        for q, p in props.items():
+    honest = copy.deepcopy(backend)
+    target = honest.target
+    for name in target.operation_names:
+        props = target[name]
+        if not props:
+            continue
+        if name == 'measure':
+            scale, max_error = knobs['scale_ro'], 0.5
+        else:
+            scale = knobs['scale_2q'] if target.operation_from_name(name).num_qubits == 2 else knobs['scale_1q']
+            max_error = 0.75
+        for p in props.values():
             if p is not None and p.error is not None:
-                p.error = min(p.error * scale, 0.5 if name == 'measure' else 0.75)
-    for qp in t.qubit_properties:
-        if qp is None: continue
+                p.error = min(p.error * scale, max_error)
+    for qp in target.qubit_properties:
+        if qp is None:
+            continue
         if qp.t1: qp.t1 *= knobs['scale_t']
         if qp.t2: qp.t2 *= knobs['scale_t']
         if qp.t1 and qp.t2: qp.t2 = min(qp.t2, 1.99 * qp.t1)   # physical bound T2 <= 2 T1 (some snapshot qubits violate it)
-    return b
+    return honest
 
 class BackendManager:
     def __init__(self, config, qlimit=None, hardware_profile=None):
@@ -154,9 +159,17 @@ class BackendManager:
     def transpile(self, circuits, batch_size=128, optimization_level=1):
         transpiled_circs = []
         chunks = [circuits[i:i + batch_size] for i in range(0, len(circuits), batch_size)]
-        
+        idle = self.config['emulate'].get('noise') and self.noise_profile == 'honest' and self.honest['idle']
+        if idle:
+            # ALAP-schedule with the device's gate durations, then thermal relaxation on every idle delay. Two pass managers:
+            # the relaxation pass rewrites nodes the scheduler's start-time map refers to
+            target = self.hardware_profile.target
+            t1s = [q.t1 if q and q.t1 else float('inf') for q in target.qubit_properties]
+            t2s = [q.t2 if q and q.t1 and q.t2 else float('inf') for q in target.qubit_properties]
+            schedule = PassManager([ALAPScheduleAnalysis(target=target), PadDelay(target=target)])
+            relax = PassManager([RelaxationNoisePass(t1s, t2s, dt=self.hardware_profile.dt, op_types=[Delay])])
+
         for chunk in tqdm(chunks, desc="Transpiling", unit="batch"):
-            idle = self.config['emulate'].get('noise') and self.noise_profile == 'honest' and self.honest['idle']
             transpiled_chunk = transpile(
                 chunk, 
                 coupling_map=self.coupling_map,
@@ -166,14 +179,8 @@ class BackendManager:
                 seed_transpiler=self.config.get('seed'),
                 num_processes=4,  # Kept strict to manage RAM limits
             )
-            if idle:   # ALAP-schedule with the device's gate durations, then thermal relaxation on every idle delay
-                tgt = self.hardware_profile.target; qp = tgt.qubit_properties
-                t1s = [q.t1 if q and q.t1 else float('inf') for q in qp]
-                t2s = [min(q.t2, 1.99 * q.t1) if q and q.t1 and q.t2 else float('inf') for q in qp]
-                sched = PassManager([ALAPScheduleAnalysis(target=tgt), PadDelay(target=tgt)])
-                relax = PassManager([RelaxationNoisePass(t1s, t2s, dt=self.hardware_profile.dt, op_types=[Delay])])
-                transpiled_chunk = [relax.run(sched.run(c)) for c in transpiled_chunk]   # separate managers: the
-                # relaxation pass rewrites nodes the scheduler's start-time map refers to
+            if idle:
+                transpiled_chunk = [relax.run(schedule.run(c)) for c in transpiled_chunk]
             transpiled_circs.extend(transpiled_chunk)
         return transpiled_circs
     
@@ -188,31 +195,32 @@ class BackendManager:
         failed_circuits = 0
         unknown_symbols = set()
 
+        def to_f(params):
+            return {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in params.items()}
+
+        def text_circ(recipe):
+            einsum, wires = recipe
+            unknown_symbols.update(g['name'] for g in wires if g['name'] is not None and g['name'] not in txt_params)
+            qc, out_q, prm = tn2qiskit(einsum2interleaved(einsum), wires, txt_params, out_q=self.out_q, meas_output=False)
+            qc.assign_parameters(to_f(prm), inplace=True)
+            return qc, out_q
+
+        def image_circ(image):
+            if self.amplitude_encode:
+                img_vec = image if isinstance(image, np.ndarray) else image.detach().cpu().numpy()
+                normed_img_vec = amplitude_encoding(img_vec)
+                qc = QuantumCircuit(int(math.ceil(math.log2(len(normed_img_vec)))), 0)
+                qc.initialize(normed_img_vec)
+                return qc
+            img_vars = img_params | image_model.encode_features(image)
+            in_idx, out_idx = einsum2interleaved(image_model.einsum_expr.replace('b', ''))
+            qc, _, img_p = tn2qiskit([in_idx, out_idx], image_model.gate_arr, img_vars, out_q=self.out_q, meas_output=False)
+            if img_p: qc.assign_parameters(to_f(img_p), inplace=True)
+            return qc
+
         for idx in tqdm(range(data_size), desc="Compiling Qiskit DAGs", unit="pair"):
             try:
                 sample = dataset[idx]
-                to_f = lambda d: {k: float(v.item()) if hasattr(v, 'item') else float(v) for k, v in d.items()}
-
-                def text_circ(recipe):
-                    einsum, wires = recipe
-                    unknown_symbols.update(g['name'] for g in wires if g['name'] is not None and g['name'] not in txt_params)
-                    qc, out_q, prm = tn2qiskit(einsum2interleaved(einsum), wires, txt_params, out_q=self.out_q, meas_output=False)
-                    qc.assign_parameters(to_f(prm), inplace=True)
-                    return qc, out_q
-
-                def image_circ(image):
-                    if self.amplitude_encode:
-                        img_vec = image if isinstance(image, np.ndarray) else image.detach().cpu().numpy()
-                        normed_img_vec = amplitude_encoding(img_vec)
-                        qc = QuantumCircuit(int(math.ceil(math.log2(len(normed_img_vec)))), 0)
-                        qc.initialize(normed_img_vec)
-                        return qc
-                    img_vars = img_params | image_model.encode_features(image)
-                    in_idx, out_idx = einsum2interleaved(image_model.einsum_expr.replace('b', ''))
-                    qc, _, img_p = tn2qiskit([in_idx, out_idx], image_model.gate_arr, img_vars, out_q=self.out_q, meas_output=False)
-                    if img_p: qc.assign_parameters(to_f(img_p), inplace=True)
-                    return qc
-
                 if "image" in sample:      # text choice (swap): one image, two captions
                     qc_pos_txt, pos_out_q = text_circ(sample["pos_caption"])
                     qc_neg_txt, neg_out_q = text_circ(sample["neg_caption"])

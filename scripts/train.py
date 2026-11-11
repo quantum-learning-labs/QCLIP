@@ -79,11 +79,13 @@ if __name__ == "__main__":
     loss_fn.describe()
     print(f"Training for {total_epochs} epochs with batch size {BATCH_SIZE}")
 
-    trainer = ContrastiveTrainer(image_model, text_model, optimizer, loss_fn, DEV)
-    trainer.swap_negatives = bool(config.get('swap_negatives', False))   # add swapped captions to the image->text softmax (train text_path from retrieve.py --swap train --keep_all)
+    teacher = None
     if config.get('distill_from'):   # frozen post-selected teacher: match its in-batch scores
-        trainer.teacher = Teacher(config['distill_from'], compiled_train, DEV,
-                                  kd_weight=config.get('distill_kd_weight', 1.0), kd_tau=config.get('distill_tau', 1.0))
+        teacher = Teacher(config['distill_from'], compiled_train, DEV,
+                          kd_weight=config.get('distill_kd_weight', 1.0), kd_tau=config.get('distill_tau', 1.0))
+    # swap_negatives: training text_path built with retrieve.py --swap train --keep_all
+    trainer = ContrastiveTrainer(image_model, text_model, optimizer, loss_fn, DEV,
+                                 swap_negatives=bool(config.get('swap_negatives', False)), teacher=teacher)
     evaluator = MMEvaluator(image_model, text_model, DEV)
 
     manager = RunManager(config, trainer, evaluator, DEV, SEED, scheduler=scheduler)

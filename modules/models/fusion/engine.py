@@ -63,6 +63,10 @@ class RunManager:
         if is_best:
             torch.save(payload, self.best_checkpoint_path)
 
+    def _save_snapshot(self, name, epoch, loss, metrics):
+        torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
+                    "epoch": epoch, "train_loss": loss, "val_metrics": metrics}, self.checkpoint_dir / name)
+
     def fit(self, train_loader, val_loader, eval_mapper):
         self._setup_environment()
         hostname = socket.gethostname()
@@ -95,7 +99,7 @@ class RunManager:
                 "discard": self.config['text'].get('discard', False),
                 "loss": type(self.trainer.loss_fn).__name__,
                 "git_commit": self.config['git_commit'],
-                "label_smoothing": self.trainer.loss_fn.label_smoothing if hasattr(self.trainer.loss_fn, 'label_smoothing') else None,
+                "label_smoothing": getattr(self.trainer.loss_fn, 'label_smoothing', None),
                 "weight_decay": self.config.get('weight_decay', 1e-4),
                 "warmup_epochs": self.config.get('warmup_epochs', 5),
                 "purity_weight": getattr(self.trainer.loss_fn, 'purity_weight', None),
@@ -111,9 +115,9 @@ class RunManager:
                 "distill_tau": self.config.get('distill_tau', 1.0),
             })
 
-            if self.config.get('checkpoint_every'):   # the initialisation, as epoch -1
-                torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
-                            "epoch": -1, "train_loss": None, "val_metrics": {}}, self.checkpoint_dir / "epoch_init.pt")
+            checkpoint_every = self.config.get('checkpoint_every')   # extra per-epoch snapshots (training dynamics)
+            if checkpoint_every:
+                self._save_snapshot("epoch_init.pt", -1, None, {})
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
             current_lr = self.config.get('qlr', 1e-3)
             
@@ -152,10 +156,8 @@ class RunManager:
 
                 self._save_checkpoint(epoch, loss, metrics, is_best=is_best)
                 mlflow.log_metric("train_loss", loss, step=epoch)
-                every = self.config.get('checkpoint_every')
-                if every and epoch % every == 0:   # per-epoch snapshots for training-dynamics analysis
-                    torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
-                                "epoch": epoch, "train_loss": loss, "val_metrics": metrics}, self.checkpoint_dir / f"epoch_{epoch:03d}.pt")
+                if checkpoint_every and epoch % checkpoint_every == 0:
+                    self._save_snapshot(f"epoch_{epoch:03d}.pt", epoch, loss, metrics)
 
                 if patience_counter >= patience:
                     stopped_epoch = epoch
@@ -215,12 +217,14 @@ class Teacher:
 
 
 class ContrastiveTrainer:
-    def __init__(self, image_model, text_model, optimizer, loss_fn, device):
+    def __init__(self, image_model, text_model, optimizer, loss_fn, device, swap_negatives=False, teacher=None):
         self.image_model = image_model.to(device)
         self.text_model = text_model.to(device)
         self.optimizer = optimizer
         self.loss_fn = loss_fn
         self.device = device
+        self.swap_negatives = swap_negatives   # swapped captions as extra image->text negatives (needs swap_caption in the batch)
+        self.teacher = teacher                 # Teacher: score distillation from a frozen post-selected model
 
     @torch.no_grad()
     def grad_norm(self):
@@ -286,11 +290,11 @@ class ContrastiveTrainer:
             image_emb = self.image_model(images)
             text_emb = self.text_model(texts)
 
-            if getattr(self, 'swap_negatives', False) and 'swap_caption' in batch:
+            if self.swap_negatives and 'swap_caption' in batch:
                 loss = self.loss_fn(text_emb, image_emb, self.text_model(batch['swap_caption']), batch['swap_valid'].to(self.device))
             else:
                 loss = self.loss_fn(text_emb, image_emb)
-            if getattr(self, 'teacher', None) is not None:
+            if self.teacher is not None:
                 loss = loss + self.teacher.loss(batch['idx'].to(self.device), self.loss_fn, text_emb, image_emb)
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()

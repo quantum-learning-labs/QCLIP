@@ -146,8 +146,10 @@ def resolve_eval_config(config_arg, checkpoint_path):
         return config_arg
     if config_arg is None:
         return str(saved)
-    with open(config_arg) as f: given_cfg = yaml.safe_load(f)
-    with open(saved) as f: saved_cfg = yaml.safe_load(f)
+    with open(config_arg) as f:
+        given_cfg = yaml.safe_load(f)
+    with open(saved) as f:
+        saved_cfg = yaml.safe_load(f)
     diff = [k for k in MODEL_KEYS if given_cfg.get(k) != saved_cfg.get(k)]
     if diff:
         raise ValueError(f"--config {config_arg} differs from {saved} in {diff}; drop --config to use the checkpoint's own.")
