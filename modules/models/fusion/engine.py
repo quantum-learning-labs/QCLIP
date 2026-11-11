@@ -98,9 +98,6 @@ class RunManager:
                 "text_layers": self.config['text']['layers'],
                 "vision_layers": self.config['vision']['layers'],
                 "overrides": " ".join(self.config.get('overrides', [])) or "none",
-                "postselect_types": ",".join(self.config['text'].get('postselect_types') or []) or "none",
-                "env_qubits": self.config['vision'].get('env_qubits', 0),
-                "mixer_layers": self.config['text'].get('mixer_layers', 0),
                 "spread_weight": getattr(self.trainer.loss_fn, 'lambda_reg', None),
                 "fs_convention": getattr(self.trainer.loss_fn, 'convention', None),
                 "init_from": self.config.get('init_from') or "none",
@@ -114,10 +111,6 @@ class RunManager:
             if self.config.get('checkpoint_every'):   # the initialisation, as epoch -1
                 torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
                             "epoch": -1, "train_loss": None, "val_metrics": {}}, self.checkpoint_dir / "epoch_init.pt")
-            if self.config.get('eval_init'):   # validation metrics of the initialisation (logged as init_*, not used for selection)
-                m0 = self.evaluator.eval_set(dataloader=val_loader, tasks=self.eval_tasks, eval_mapper=eval_mapper)
-                mlflow.log_metrics({f"init_{k}": v for k, v in m0.items()})
-                tqdm.write("\nInit | " + " | ".join(f"{k}: {v:.4f}" for k, v in m0.items()))
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
             current_lr = self.config.get('qlr', 1e-3)
             

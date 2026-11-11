@@ -27,16 +27,6 @@ class DataEngine:
             compile_kwargs["curry"] = self.config["text"].get("curry", False)
             compile_kwargs["discard"] = self.config["text"].get("discard", False)
             compile_kwargs["spider"] = self.config["text"].get("spider", False)
-            postselect = tuple(self.config["text"].get("postselect_types") or ())
-            if postselect and not compile_kwargs["discard"]:
-                raise ValueError("text.postselect_types only applies with text.discard: true")
-            compile_kwargs["postselect"] = postselect
-            compile_kwargs["mixer"] = int(self.config["text"].get("mixer_layers", 0) or 0)
-            compile_kwargs["sinks"] = int(self.config["text"].get("sinks", 0) or 0)
-            self.ansatz.mixer_type = self.config["text"].get("mixer_ansatz", "default")   # 'cr': identity-initialisable mixer
-            self.ansatz.phi_block = bool(self.config["text"].get("phi_block", False))   # Theorem A's Phi as a fixed discard block
-            if compile_kwargs["sinks"] and not compile_kwargs["mixer"]:
-                raise ValueError("text.sinks needs text.mixer_layers >= 1 (the sinks are coupled in by the mixer)")
             
         if split == 'train' or split == 'val':
             data = load_pkl(self.config["dataset"][split]["text_path"])
