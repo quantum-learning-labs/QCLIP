@@ -4,7 +4,7 @@
 <header>
   <div class="eyebrow">qclip · SVO-probes image choice · discard vs post-selection · scaling sweep</div>
   <h1>Readout cost figures</h1>
-  <p class="lede">How accuracy, gate count, shot cost and energy per decision scale with circuit size, for the post-selection (PS) model and two discard models. All trained models have 2 ansatz layers; the energy figures (3, 5–9) add untrained circuits of the same structure at 2, 4 and 8 layers, up to 124 qubits. Size grows along two axes: more output qubits e (1 qubit per noun wire), or more qubits per noun wire n (3 output qubits).</p>
+  <p class="lede">How accuracy, gate count, shot cost and energy per decision scale with circuit size, for the post-selection (PS) model and two discard models. All trained models have 2 ansatz layers; the energy and time figures (3, 5–10) add untrained circuits of the same structure at 2, 4 and 8 layers, up to 124 qubits. Size grows along two axes: more output qubits e (1 qubit per noun wire), or more qubits per noun wire n (3 output qubits).</p>
   <div class="facts" id="facts"></div>
 </header>
 
@@ -156,6 +156,25 @@
   <details><summary>Table view</summary><div class="tbl" id="t9"></div></details>
 </section>
 
+<section class="fig" id="f10">
+  <div class="fig-head"><div class="tag">Figure 10</div><h2>Time per decision against qubits</h2>
+  <p>Wall-clock time per discard decision against total qubits, for the same methods, models and settings as Figure 9 (its controls and these are linked). Classical: measured seconds on one NVIDIA L4, or the best path's FLOP count divided by the L4's measured rate (1.3×10¹² FLOP/s, median of the compute-bound runs). QPU: shots one after another on one device plus the job overhead, without queueing. Dotted thin lines are the one-off steps themselves, contraction-path search and transpilation, which are paid once per circuit shape; the per-decision curves include them divided by the reuse when they are counted. Guide lines mark a minute, an hour, a day, a year and the age of the universe.</p></div>
+  <div class="controls">
+    <div class="group" data-ctl="f9L"><span>Ansatz layers</span><button class="chip" data-v="2">2</button><button class="chip" data-v="4">4</button><button class="chip" data-v="8" aria-pressed="true">8</button></div>
+    <div class="group" data-ctl="n0"><span>Noiseless shots N<sub>0</sub></span><button class="chip" data-v="100">100</button><button class="chip" data-v="179" aria-pressed="true">179</button><button class="chip" data-v="1024">1024</button></div>
+    <div class="group" data-ctl="mtg"><span>Approximation target (margin error)</span><button class="chip" data-v="0.1" aria-pressed="true">10%</button><button class="chip" data-v="0.01">1%</button></div>
+    <div class="group" data-ctl="f9tr"><span>Transpilation</span><button class="chip" data-v="on" aria-pressed="true">Counted</button><button class="chip" data-v="off">Not counted</button></div>
+    <div class="group" data-ctl="f9ps"><span>Contraction path search</span><button class="chip" data-v="on" aria-pressed="true">Counted</button><button class="chip" data-v="off">Not counted</button></div>
+    <div class="group" data-ctl="reuse" id="reuse10"><span>Decisions per circuit shape</span><button class="chip" data-v="1">1 (every circuit new)</button><button class="chip chipReuse" data-v="data" aria-pressed="true">Test set</button><button class="chip" data-v="1000">10³</button><button class="chip" data-v="1e6">10⁶</button></div>
+    <div class="group" data-ctl="route"><span>Kingston routing</span><button class="chip" data-v="fit" aria-pressed="true">Median overhead</button><button class="chip" data-v="raw">As transpiled</button></div>
+  </div>
+  <div class="range"><label for="em10">Two-qubit error relative to today's devices</label><input type="range" id="em10" min="-3" max="0" step="0.05" value="0"><output id="em10v"></output></div>
+  <div class="legend" id="lg10"></div>
+  <div class="chart"><canvas id="c10" aria-label="Wall-clock time per decision for every classical method and QPU model against qubits, log scale"></canvas></div>
+  <p class="cap" id="cap10"></p>
+  <details><summary>Table view</summary><div class="tbl" id="t10"></div></details>
+</section>
+
 <footer>
   <div>Sweep sc4: 10 model sizes × {PS, plain discard, warm-start discard} × 3 seeds, 2 text layers. Data: <code>results/shotcost/viz/viz_sc4.json</code> (branch <code>shotcost</code>, quantum-learning-labs/QCLIP), built by <code>analysis/bench/viz_sc4.py</code> from exact branch evaluations, noise runs, gate counts and device statistics.</div>
   <div>Energy constants: IBM 25 kW, 250 µs repetition delay, 2 s job overhead over 190 circuits (public figures, assumed); IonQ 5 kW, 1.5 ms per shot, 10 s per circuit, gates in series (Knitter et al. 2026, arXiv 2605.02798). GPU scaling probe: 20-layer brickwork statevector on an RTX 3090 Ti. CLIP ViT-B/32: 0.36 J per decision. One-off costs: path search and transpilation timed as one process on a cluster CPU node, charged at 20 W (one busy core, assumed: the nodes expose no power counter); they scale linearly with that figure.</div>
@@ -205,7 +224,7 @@ function logY(min, max, unit, extra = {}) {   // log axis with ticks at whole de
     afterBuildTicks: ax => { const t = []; for (let k = lo; k <= hi; k += step) t.push({ value: Math.pow(10, k) }); ax.ticks = t; },
     ticks: { color: tok('--fg2'), padding: 6, autoSkip: false, callback: v => pow10(Math.round(Math.log10(v)), unit) } };
 }
-function draw(id, cfg) { if (charts[id]) charts[id].destroy(); cfg.plugins = [errBars]; charts[id] = new Chart(document.getElementById(id), cfg); }
+function draw(id, cfg) { if (charts[id]) charts[id].destroy(); cfg.plugins = [errBars].concat(cfg.extraPlugins || []); charts[id] = new Chart(document.getElementById(id), cfg); }
 function legend(id, items) { document.getElementById(id).innerHTML = items.map(([l, c, dash]) => `<span><i class="${dash ? 'dash' : ''}" style="${dash ? 'border-color' : 'background'}:${c}"></i>${l}</span>`).join(''); }
 function table(id, head, rows) { document.getElementById(id).innerHTML = `<table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }
 const series = (label, color, pts, extra = {}) => ({ label, data: pts.map(p => ({ x: p.x, y: p.y })), _eb: pts.map(p => p.eb), _rows: pts.map(p => p.row), borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, pointBorderColor: tok('--surface'), pointBorderWidth: 2, tension: 0, showLine: true, ...extra });
@@ -446,7 +465,18 @@ const ADVR = () => { const rows = ((D.adv && D.adv.rows) || []).filter(r => r.la
 const PCPU = 20;   // W: one busy CPU core (search and transpile run as one process); assumed, the cluster nodes expose no power counter
 const reuseData = () => { const u = D.adv && D.adv.reuse; return u ? u.decisions / u.shapes : null; };
 const KRE = () => state.reuse === 'inf' ? Infinity : state.reuse === 'data' ? (reuseData() || 1000) : +state.reuse;
-const qOne = r => ({ ibm: r.ibm_tt != null ? (state.route === 'raw' ? 5 : 1) * r.ibm_tt * PCPU : 0, ionq: r.ionq_tt != null ? r.ionq_tt * PCPU : 0 });   // best of 5 seeds = 5 transpiles
+const qOneT = r => ({ ibm: r.ibm_tt != null ? (state.route === 'raw' ? 5 : 1) * r.ibm_tt : 0, ionq: r.ionq_tt != null ? r.ionq_tt : 0 });   // seconds; best of 5 seeds = 5 transpiles
+const qOne = r => { const t = qOneT(r); return { ibm: t.ibm * PCPU, ionq: t.ionq * PCPU }; };
+let RATE = null;
+function rateFit() {   // FLOP per second of exact TN on the L4, from the same compute-bound runs as etaFit (greedy-path flops / measured seconds)
+  const v = [];
+  for (const r of ADVR()) for (const [eng, lf] of [['tn', r.greedy_ps_lf], ['tn_rho', r.greedy_rho_lf]]) { const g = r.gpu && r.gpu[eng]; if (g && g.s && lf != null && lf >= 10.5) v.push(Math.pow(10, lf) / g.s); }
+  v.sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 1e12;
+}
+const TFLOOR = 0.016;   // s: the fastest measured contraction (kernel launches and Python dominate below this)
+const fmtT = v => { if (v == null || !isFinite(v)) return '–'; const Y = 3.156e7;
+  if (v < 1) return (v * 1e3).toPrecision(2) + ' ms'; if (v < 60) return v.toPrecision(2) + ' s'; if (v < 3600) return (v / 60).toPrecision(2) + ' min';
+  if (v < 86400) return (v / 3600).toPrecision(2) + ' h'; if (v < Y) return (v / 86400).toPrecision(2) + ' days'; if (v < 1e4 * Y) return (v / Y).toPrecision(2) + ' years'; return (v / Y).toExponential(1) + ' years'; };
 const fmtS = t => t == null ? '–' : t >= 3600 ? (t / 3600).toFixed(1) + ' h' : t >= 60 ? (t / 60).toFixed(1) + ' min' : t.toFixed(t < 10 ? 1 : 0) + ' s';
 const SRCH = { greedy: 'greedy', 'random-greedy-128': 'random-greedy', ctg: 'cotengra' };
 const nShots = () => +state.n0 * Math.pow(0.1 / +state.mtg, 2);   // N0 noiseless shots give a 10% margin error; error ~ 1/sqrt(shots)
@@ -456,30 +486,31 @@ function etaFit() {   // FLOP per joule of exact TN on the L4, from compute-boun
   for (const r of ADVR()) for (const [eng, lf] of [['tn', r.greedy_ps_lf], ['tn_rho', r.greedy_rho_lf]]) { const g = r.gpu && r.gpu[eng]; if (g && lf != null && lf >= 10.5) v.push(Math.pow(10, lf) / g.J); }
   v.sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 3e10;
 }
-function classical(r, K = KRE(), only = null) {
-  const g = r.gpu || {}, n0 = nShots(), tgt = +state.mtg, eta = ETA;
+function classical(r, K = KRE(), only = null, unit = 'J') {   // unit 'J': energy per decision; 's': wall time per decision (one L4)
+  const isT = unit === 's', val = x => x ? (isT ? x.s : x.J) : null, fl = isT ? TFLOOR : 1;
+  const g = r.gpu || {}, n0 = nShots(), tgt = +state.mtg, eta = isT ? (RATE = RATE || rateFit()) : ETA;
   const lfP = r.best_ps_lf != null ? r.best_ps_lf : r.greedy_ps_lf, lfR = r.best_rho_lf != null ? r.best_rho_lf : r.greedy_rho_lf;
-  const o = { sv: g.cusv_rho ? g.cusv_rho.J : null };
+  const o = { sv: val(g.cusv_rho) };
   // Tensor network: for every shape, choose among the paths found the one with the lowest (mult x contraction + search / K) energy.
   // Contraction energy of a path: the measured run for the greedy path it used; for another path only the compute part changes: the rest
   // (kernel launches, Python, transfers: measured minus greedy-path flops / efficiency, at least 1 J) stays, so it is max(path flops / efficiency,
   // that overhead), never above the measured run. Without a measurement: flops / efficiency, at least 1 J.
   const tnc = (meas, paths, lfAny, lfGreedy, mult) => {
     if (meas == null && lfAny == null) return null;
-    const over = meas != null ? Math.max(1, meas - (lfGreedy != null ? Math.pow(10, lfGreedy) / eta : 0)) : 1;
-    const runOf = c => meas != null ? (c.o === 'greedy' ? meas : Math.min(meas, Math.max(Math.pow(10, c.lf) / eta, over))) : Math.max(1, Math.pow(10, c.lf) / eta);
+    const over = meas != null ? Math.max(fl, meas - (lfGreedy != null ? Math.pow(10, lfGreedy) / eta : 0)) : fl;
+    const runOf = c => meas != null ? (c.o === 'greedy' ? meas : Math.min(meas, Math.max(Math.pow(10, c.lf) / eta, over))) : Math.max(fl, Math.pow(10, c.lf) / eta);
     let shapes = paths && paths.length ? paths : [[{ o: 'greedy', lf: lfAny, s: r.greedy_path_s || 0 }]];
     if (only) { shapes = shapes.map(cs => cs.filter(c => c.o === only)); if (shapes.some(cs => !cs.length)) return null; }
-    const per = shapes.map(cs => cs.map(c => { const run = runOf(c), one = c.s * PCPU; return { tot: mult * run + (K === Infinity ? 0 : one / K), run, one, o: c.o, s: c.s, meas: meas != null && run === meas }; }).reduce((a, b) => b.tot < a.tot ? b : a));
+    const per = shapes.map(cs => cs.map(c => { const run = runOf(c), one = isT ? c.s : c.s * PCPU; return { tot: mult * run + (K === Infinity ? 0 : one / K), run, one, o: c.o, s: c.s, meas: meas != null && run === meas }; }).reduce((a, b) => b.tot < a.tot ? b : a));
     const gm = f => Math.exp(per.reduce((t, x) => t + Math.log(f(x)), 0) / per.length), av = f => per.reduce((t, x) => t + f(x), 0) / per.length;
     const cnt = {}; per.forEach(x => { cnt[x.o] = (cnt[x.o] || 0) + 1; });
     return { tot: gm(x => x.tot), run: gm(x => x.run), one: av(x => x.one), s: av(x => x.s), by: Object.keys(cnt).reduce((a, b) => cnt[b] > cnt[a] ? b : a), meas: per.every(x => x.meas) };
   };
-  const T = tnc(g.tn_rho ? g.tn_rho.J : null, r.paths_rho, lfR, r.greedy_rho_lf, 1), A = tnc(g.tn ? g.tn.J : null, r.paths_ps, lfP, r.greedy_ps_lf, n0);
+  const T = tnc(val(g.tn_rho), r.paths_rho, lfR, r.greedy_rho_lf, 1), A = tnc(val(g.tn), r.paths_ps, lfP, r.greedy_ps_lf, n0);
   o.tn = T ? T.tot : null; o.tnMeas = !!T && T.meas; o.tnP = T;
   o.amp = A ? A.run : null; o.ampMeas = !!A && A.meas; o.samp = A ? A.tot : null; o.ampP = A;
-  const M = ((r.mps || {}).rho || []).filter(m => m.J && m.mrel != null && m.mrel <= tgt && m.ref === 'exact');   // only errors checked against exact contraction
-  o.mps = M.length ? Math.min(...M.map(m => m.J)) : null;
+  const M = ((r.mps || {}).rho || []).filter(m => val(m) && m.mrel != null && m.mrel <= tgt && m.ref === 'exact');   // only errors checked against exact contraction
+  o.mps = M.length ? Math.min(...M.map(m => val(m))) : null;
   const c = [['statevector', o.sv, null], ['exact TN', o.tn, T], ['TN sampler', o.samp, A], ['MPS', o.mps, null]].filter(x => x[1] != null && !(only && !x[2]));
   const b = c.length ? c.reduce((p, q) => q[1] < p[1] ? q : p) : null; o.best = b ? b[1] : null; o.by = b ? b[0] : null; o.bestP = b ? b[2] : null; return o;
 }
@@ -489,12 +520,13 @@ function qpu(r, m, K = KRE()) {
   const one = qOne(r), am = x => K === Infinity ? 0 : x / K, ibmRun = (N * tS + 2 * 2 / 190) * 25e3, ibm = ibmRun + am(one.ibm);
   const Fi = Math.exp(CAL.a - (CAL.eIonQ * r.ionq_n2q + CAL.e1IonQ * r.ionq_n1q) * m), Ni = n0 / (Fi * Fi);
   const ionq = (Ni * (r.ionq_n1q * 1.1e-4 + r.ionq_n2q * 9e-4 + 1.5e-3) + 2 * 10) * 5e3 + am(one.ionq);
-  return { F, N, ibm, ibmRun, one: one.ibm, tS, Fi, Ni, ionq };
+  const oneT = qOneT(r), ibmT = N * tS + 2 * 2 / 190 + am(oneT.ibm), ionqT = Ni * (r.ionq_n1q * 1.1e-4 + r.ionq_n2q * 9e-4 + 1.5e-3) + 2 * 10 + am(oneT.ionq);   // seconds on one device, no queue
+  return { F, N, ibm, ibmRun, one: one.ibm, tS, Fi, Ni, ionq, ibmT, ionqT, oneT: oneT.ibm };
 }
-function breakEven(r, Ec, K = KRE()) {   // multiplier m* on today's two-qubit error at which IBM energy = Ec (null: never, even error-free)
+function breakEven(r, Ec, K = KRE(), unit = 'J') {   // multiplier m* on today's two-qubit error at which IBM energy (or time, unit 's') = Ec (null: never, even error-free)
   if (r.ibm_n2q == null || Ec == null) return null;
-  if (K !== Infinity) Ec -= qOne(r).ibm / K;   // the QPU's own one-off transpile share comes off the budget
-  const tS = r.ibm_duration_s + 250e-6, Nst = (Ec / 25e3 - 2 * 2 / 190) / tS, n0 = nShots();
+  if (K !== Infinity) Ec -= (unit === 's' ? qOneT(r) : qOne(r)).ibm / K;   // the QPU's own one-off transpile share comes off the budget
+  const tS = r.ibm_duration_s + 250e-6, Nst = ((unit === 's' ? Ec : Ec / 25e3) - 2 * 2 / 190) / tS, n0 = nShots();
   if (!(Nst > n0 * Math.exp(-2 * CAL.a))) return null;
   const F = Math.sqrt(n0 / Nst); return (CAL.a - Math.log(F)) / (CAL.eIBM * r.ibm_n2q);
 }
@@ -634,26 +666,26 @@ function extRows(R) {
       best_ps_lf: lp, best_rho_lf: lr, greedy_ps_lf: lp, greedy_rho_lf: lr, paths_ps: lp == null ? null : [[{ o: 'ctg', lf: lp, s: sMean }]], paths_rho: lr == null ? null : [[{ o: 'ctg', lf: lr, s: sMean }]] }); }
   return out;
 }
-function fig9() {
-  ETA = ETA || etaFit();
-  const L = +state.f9L, m = Math.pow(10, +document.getElementById('em9').value), K = KRE();
+function figAll(U) {
+  ETA = ETA || etaFit(); const isT = U.unit === 's', F = isT ? fmtT : J, QK = isT ? 'ibmT' : 'ibm', QI = isT ? 'ionqT' : 'ionq';
+  const L = +state.f9L, m = Math.pow(10, +document.getElementById(U.em).value), K = KRE();
   const Kc = state.f9ps === 'on' ? K : Infinity, Kq = state.f9tr === 'on' ? K : Infinity;
-  document.getElementById('em9v').textContent = `×${m < 0.01 ? m.toExponential(1) : m.toFixed(m < 0.1 ? 3 : 2)} (ε_eff = ${(CAL.eIBM * m).toExponential(1)})`;
-  document.querySelectorAll('#reuse9 button.chip').forEach(b => { b.disabled = state.f9ps === 'off' && state.f9tr === 'off'; });
+  document.getElementById(U.em + 'v').textContent = `×${m < 0.01 ? m.toExponential(1) : m.toFixed(m < 0.1 ? 3 : 2)} (ε_eff = ${(CAL.eIBM * m).toExponential(1)})`;
+  document.querySelectorAll('#' + U.reuse + ' button.chip').forEach(b => { b.disabled = state.f9ps === 'off' && state.f9tr === 'off'; });
   const all = ADVR(), R = all.filter(r => r.layers === L && r.e === 3 && r.ibm_n2q != null).sort((a, b) => a.nq - b.nq); if (!R.length) return;
   const G = R.concat(extRows(R)), lastBuilt = R[R.length - 1].nq;
   const by2 = {}; for (const r of all) if (r.layers === 2 && r.e === 3) by2[r.nq] = r;
-  const svBase = R.map(r => { const r2 = by2[r.nq], sv2 = r2 && r2.gpu && r2.gpu.cusv_rho ? r2.gpu.cusv_rho.J : null; if (sv2 == null) return null;
+  const svBase = R.map(r => { const r2 = by2[r.nq], sv2 = r2 && r2.gpu && r2.gpu.cusv_rho ? r2.gpu.cusv_rho[U.unit] : null; if (sv2 == null) return null;
     return L === 2 ? { x: r.nq, y: sv2, kind: 'meas' } : { x: r.nq, y: sv2 * r.ibm_n2q / r2.ibm_n2q, kind: 'model' }; }).filter(Boolean);
   const svFit = fitLin(svBase.slice(-3).map(p => [p.x, Math.log10(p.y)])), svLast = svBase.length ? svBase[svBase.length - 1].x : null;
   const P = G.map(r => {
-    const q = qpu(r, m, Kq), q0 = qpu(r, 0, Kq), c = classical(r, Kc), k = meas => r.ext ? 'ext' : meas ? 'meas' : 'model';
+    const q = qpu(r, m, Kq), q0 = qpu(r, 0, Kq), c = classical(r, Kc, null, U.unit), cI = isT ? classical(r, Infinity, null, 's') : null, k = meas => r.ext ? 'ext' : meas ? 'meas' : 'model';
     const svp = svBase.find(p => p.x === r.nq), sv = svp || (svFit && r.nq > svLast ? { y: Math.pow(10, svFit(r.nq)), kind: 'ext' } : null);
     const C = { sv, tn: c.tn != null ? { y: c.tn, kind: k(c.tnMeas) } : null, samp: c.samp != null ? { y: c.samp, kind: k(c.ampMeas) } : null, mps: c.mps != null ? { y: c.mps, kind: 'meas' } : null };
     const NAME = { sv: 'statevector', tn: 'exact TN', samp: 'TN sampler', mps: 'MPS' };
     const cand = Object.entries(C).filter(([, v]) => v), b = cand.length ? cand.reduce((a, z) => z[1].y < a[1].y ? z : a) : null;
     const best = b ? { y: b[1].y, kind: r.ext ? 'ext' : 'model', by: NAME[b[0]], pathBy: b[0] === 'tn' ? c.tnP : b[0] === 'samp' ? c.ampP : null } : null;
-    return { r, x: r.nq, q, q0, C, best, ms: best ? breakEven(r, best.y, Kq) : null };
+    return { r, x: r.nq, q, q0, C, best, ms: best ? breakEven(r, best.y, Kq, U.unit) : null, srch: cI && cI.bestP ? cI.bestP.s : (cI && r.ext && r.paths_ps ? r.paths_ps[0][0].s : null) };
   });
   const ds = [];
   const add = (label, col, pts, opt = {}) => {   // pts [{x, y, kind}]: measured filled, model hollow, extrapolated dashed (no markers)
@@ -663,52 +695,70 @@ function fig9() {
       ds.push({ label: label + ', extrapolated', data: lead.concat(ext).map(p => ({ x: p.x, y: p.y })), _rows: lead.concat(ext), borderColor: opt.borderColor || col, backgroundColor: col, borderDash: [2, 4], borderWidth: Math.min(opt.borderWidth || 1.5, 3), pointRadius: 0, showLine: true, order: opt.order }); }
   };
   const S9 = f => P.filter(p => f(p) != null).map(p => ({ x: p.x, ...f(p) }));
-  add('IBM Kingston (noise model)', tok('--s1'), S9(p => p.q ? { y: p.q.ibm, kind: p.r.ext ? 'ext' : 'meas' } : null));
-  add('IBM, error-free limit', tok('--s1'), S9(p => p.q0 ? { y: p.q0.ibm, kind: p.r.ext ? 'ext' : 'meas' } : null), { borderDash: [1, 3], borderWidth: 1, pointRadius: 0 });
-  add('IonQ Forte (noise model)', tok('--s2'), S9(p => p.q && p.x <= 36 ? { y: p.q.ionq, kind: 'meas' } : null), { borderDash: [6, 4] });
-  const iq = S9(p => p.q && p.x >= 31 ? { y: p.q.ionq, kind: 'meas' } : null);
+  add('IBM Kingston (noise model)', tok('--s1'), S9(p => p.q ? { y: p.q[QK], kind: p.r.ext ? 'ext' : 'meas' } : null));
+  add('IBM, error-free limit', tok('--s1'), S9(p => p.q0 ? { y: p.q0[QK], kind: p.r.ext ? 'ext' : 'meas' } : null), { borderDash: [1, 3], borderWidth: 1, pointRadius: 0 });
+  add('IonQ Forte (noise model)', tok('--s2'), S9(p => p.q && p.x <= 36 ? { y: p.q[QI], kind: 'meas' } : null), { borderDash: [6, 4] });
+  const iq = S9(p => p.q && p.x >= 31 ? { y: p.q[QI], kind: 'meas' } : null);
   if (iq.length > 1) ds.push({ label: 'IonQ, beyond its 36 qubits', data: iq.map(p => ({ x: p.x, y: p.y })), _rows: iq, borderColor: tok('--s2'), backgroundColor: tok('--s2'), borderDash: [1, 4], borderWidth: 1, pointRadius: 0, showLine: true });
   add('Best classical (frontier)', tok('--fg'), S9(p => p.best), { borderWidth: 7, order: 10, borderColor: tok('--fg') + '4d', pointRadius: 3 });
   add('Statevector (cuStateVec, L4)', tok('--muted'), S9(p => p.C.sv), { borderDash: [3, 3], borderWidth: 1.5 });
   add('Exact TN (discard network)', tok('--s7'), S9(p => p.C.tn), { borderDash: [3, 3], borderWidth: 1.5 });
   add('TN sampler (N amplitudes)', tok('--s3'), S9(p => p.C.samp), { borderDash: [3, 3], borderWidth: 1.5 });
   add('MPS at the target', tok('--s4'), S9(p => p.C.mps), { borderDash: [3, 3], borderWidth: 1.5 });
-  const wins = P.filter(p => p.q && p.best && (p.q.ibm < p.best.y || (p.x <= 36 && p.q.ionq < p.best.y)));
-  if (wins.length) ds.push({ label: 'QPU cheaper than every classical method', data: wins.map(p => ({ x: p.x, y: Math.min(p.q.ibm, p.x <= 36 ? p.q.ionq : Infinity) })), borderColor: tok('--fg'), backgroundColor: 'transparent', borderWidth: 2, pointStyle: 'circle', pointRadius: 10, showLine: false });
-  const fr = P.filter(p => p.best).map(p => p.best.y), qs = P.filter(p => p.q).map(p => p.q.ibm);
-  const ymin = Math.pow(10, Math.floor(Math.log10(Math.min(...fr, ...P.filter(p => p.q0).map(p => p.q0.ibm))) - 0.3));
+  const wins = P.filter(p => p.q && p.best && (p.q[QK] < p.best.y || (p.x <= 36 && p.q[QI] < p.best.y)));
+  if (wins.length) ds.push({ label: isT ? 'QPU faster than every classical method' : 'QPU cheaper than every classical method', data: wins.map(p => ({ x: p.x, y: Math.min(p.q[QK], p.x <= 36 ? p.q[QI] : Infinity) })), borderColor: tok('--fg'), backgroundColor: 'transparent', borderWidth: 2, pointStyle: 'circle', pointRadius: 10, showLine: false });
+  if (isT) {   // the one-off steps themselves (paid once per circuit shape; the curves above include them / reuse when counted)
+    add('Path search, one-off (best path found)', tok('--fg2'), S9(p => p.srch != null ? { y: p.srch, kind: p.r.ext ? 'ext' : 'meas' } : null), { borderDash: [1, 2], borderWidth: 1.5, pointRadius: 2 });
+    add('Transpile, one-off (Kingston)', tok('--s1'), S9(p => p.q && p.q.oneT ? { y: p.q.oneT, kind: p.r.ext ? 'ext' : 'meas' } : null), { borderDash: [1, 2], borderWidth: 1, pointRadius: 2 });
+  }
+  const fr = P.filter(p => p.best).map(p => p.best.y), qs = P.filter(p => p.q).map(p => p.q[QK]);
+  const ymin = Math.pow(10, Math.floor(Math.log10(Math.min(...fr, ...P.filter(p => p.q0).map(p => p.q0[QK]))) - 0.3));
   const ymax = Math.pow(10, Math.ceil(Math.log10(Math.min(Math.max(...qs, ...fr), Math.max(...fr) * 1e12)) + 0.3));
-  legend('lg9', [['IBM Kingston', tok('--s1')], ['IBM error-free limit', tok('--s1'), true], ['IonQ Forte (dotted past its 36 qubits)', tok('--s2'), true], ['Best classical', tok('--fg')], ['Statevector', tok('--muted'), true], ['Exact TN', tok('--s7'), true], ['TN sampler', tok('--s3'), true], ['MPS', tok('--s4'), true]]
-    .concat([['filled: measured · hollow: model · dashed, no markers: extrapolated', tok('--fg2'), true]]).concat(wins.length ? [['ring: QPU wins', tok('--fg')]] : []));
-  draw('c9', { type: 'scatter', data: { datasets: ds }, options: baseOpts('Energy per decision', { xTitle: 'Total qubits in the circuit', x: { min: 12, max: XMAX9 + 4 }, y: logY(ymin, ymax, 'J'),
-    tt: { label: c => { const p = c.dataset._rows && c.dataset._rows[c.dataIndex]; const kd = p && p.kind ? { meas: '', model: ' (model)', ext: ' (extrapolated)' }[p.kind] || '' : ''; return `${c.dataset.label}: ${J(c.parsed.y)} at ${c.parsed.x} qubits${kd}`; } } }) });
+  legend(U.lg, (isT ? [['path search and transpile, one-off', tok('--fg2'), true]] : []).concat([['IBM Kingston', tok('--s1')], ['IBM error-free limit', tok('--s1'), true], ['IonQ Forte (dotted past its 36 qubits)', tok('--s2'), true], ['Best classical', tok('--fg')], ['Statevector', tok('--muted'), true], ['Exact TN', tok('--s7'), true], ['TN sampler', tok('--s3'), true], ['MPS', tok('--s4'), true]]
+    .concat([['filled: measured · hollow: model · dashed, no markers: extrapolated', tok('--fg2'), true]]).concat(wins.length ? [['ring: QPU wins', tok('--fg')]] : [])));
+  const GUIDES = isT ? [[60, '1 minute'], [3600, '1 hour'], [86400, '1 day'], [3.156e7, '1 year'], [4.35e17, 'age of the universe']].filter(([v]) => v >= ymin && v <= ymax) : [];
+  for (const [v, lab] of GUIDES) ds.push({ label: lab, data: [{ x: 12, y: v }, { x: XMAX9 + 4, y: v }], borderColor: tok('--muted'), borderDash: [1, 3], borderWidth: 1, pointRadius: 0, showLine: true, order: 20 });
+  const guideText = { id: 'guideText', afterDatasetsDraw(ch) { const { ctx, chartArea: ar, scales: { y } } = ch; ctx.save(); ctx.font = '11px ' + getComputedStyle(document.body).fontFamily; ctx.fillStyle = tok('--muted'); ctx.textAlign = 'right';
+    for (const [v, lab] of GUIDES) ctx.fillText(lab, ar.right - 4, y.getPixelForValue(v) - 3); ctx.restore(); } };
+  draw(U.c, { type: 'scatter', extraPlugins: [guideText], data: { datasets: ds }, options: baseOpts(isT ? 'Time per decision' : 'Energy per decision', { xTitle: 'Total qubits in the circuit', x: { min: 12, max: XMAX9 + 4 }, y: logY(ymin, ymax, U.unit),
+    tt: { label: c => { const p = c.dataset._rows && c.dataset._rows[c.dataIndex]; const kd = p && p.kind ? { meas: '', model: ' (model)', ext: ' (extrapolated)' }[p.kind] || '' : ''; return `${c.dataset.label}: ${F(c.parsed.y)} at ${c.parsed.x} qubits${kd}`; } } }) });
   // table: every grid size; italic = extrapolated, m = model
-  const fmt = v => !v ? '–' : v.kind === 'ext' ? `<i>${J(v.y)}</i>` : J(v.y) + (v.kind === 'model' ? '<sup>m</sup>' : '');
-  table('t9', ['Qubits', 'IBM Kingston', 'IonQ Forte', 'Statevector', 'Exact TN', 'TN sampler', 'MPS', 'Best classical', 'log₁₀ IBM / best', 'Break-even ε'], P.map(p => {
+  const fmt = v => !v ? '–' : v.kind === 'ext' ? `<i>${F(v.y)}</i>` : F(v.y) + (v.kind === 'model' ? '<sup>m</sup>' : '');
+  table(U.t, ['Qubits', 'IBM Kingston', 'IonQ Forte', 'Statevector', 'Exact TN', 'TN sampler', 'MPS', 'Best classical', 'log₁₀ IBM / best', 'Break-even ε'].concat(isT ? ['Path search, one-off', 'Transpile, one-off'] : []), P.map(p => {
     const e = p.r.ext ? s => `<i>${s}</i>` : s => s;
-    return [e(String(p.x)), p.q ? e(J(p.q.ibm)) : '–', p.q ? e(J(p.q.ionq)) + (p.x > 36 ? ' <small>(no device)</small>' : '') : '–', fmt(p.C.sv), fmt(p.C.tn), fmt(p.C.samp), fmt(p.C.mps), p.best ? e(`${J(p.best.y)} <small>${p.best.by}</small>`) : '–',
-      p.q && p.best ? e((Math.log10(p.q.ibm / p.best.y) >= 0 ? '+' : '') + Math.log10(p.q.ibm / p.best.y).toFixed(1)) : '–', p.ms == null ? 'never' : e(`${(p.ms * CAL.eIBM).toExponential(1)} (${p.ms >= 1 ? 'reached' : (1 / p.ms).toFixed(0) + '× below'})`)]; }));
+    return [e(String(p.x)), p.q ? e(F(p.q[QK])) : '–', p.q ? e(F(p.q[QI])) + (p.x > 36 ? ' <small>(no device)</small>' : '') : '–', fmt(p.C.sv), fmt(p.C.tn), fmt(p.C.samp), fmt(p.C.mps), p.best ? e(`${F(p.best.y)} <small>${p.best.by}</small>`) : '–',
+      p.q && p.best ? e((Math.log10(p.q[QK] / p.best.y) >= 0 ? '+' : '') + Math.log10(p.q[QK] / p.best.y).toFixed(1)) : '–', p.ms == null ? 'never' : e(`${(p.ms * CAL.eIBM).toExponential(1)} (${p.ms >= 1 ? 'reached' : (1 / p.ms).toFixed(0) + '× below'})`)].concat(isT ? [p.srch != null ? e(fmtT(p.srch)) : '–', p.q ? e(fmtT(p.q.oneT)) : '–'] : []); }));
   const bes = P.filter(p => p.ms != null).sort((a, b) => b.ms - a.ms), b0 = bes[0], b0in = bes.filter(p => !p.r.ext)[0];
   const tr = state.f9tr === 'on', ps = state.f9ps === 'on', kTxt = K === Infinity ? '∞' : K >= 100 ? num(K) : K.toFixed(K < 10 && K !== 1 ? 1 : 0);
   const last = P.filter(p => !p.r.ext).slice(-1)[0];
-  const sdom = ps && Kc !== Infinity ? P.filter(p => !p.r.ext && p.best && p.best.pathBy && p.best.pathBy.one / Kc > 0.5 * p.best.y).map(p => p.x) : [];
-  document.getElementById('cap9').innerHTML = `${L} layers, ${num(nShots())} noiseless shots per decision (N₀ = ${state.n0} at a ${Math.round(100 * state.mtg)}% margin error); transpilation ${tr ? 'counted' : 'not counted'}, path search ${ps ? 'counted' : 'not counted'}${tr || ps ? `, shared by ${kTxt} decision${K === 1 ? '' : 's'} per circuit shape` : ''}. `
-    + (wins.length ? `<b>A QPU beats every classical method at ${wins.map(p => p.x + (p.r.ext ? ' (extrapolated)' : '')).join(', ')} qubits</b> at this two-qubit error. ` : `<b>No QPU point beats the best classical method</b> at this two-qubit error, up to ${XMAX9} qubits. `)
-    + (b0 ? `The most forgiving size is ${b0.x} qubits${b0.r.ext ? ' (extrapolated)' : ''}: IBM would break even at a two-qubit error of ${(b0.ms * CAL.eIBM).toExponential(1)}, ${b0.ms >= 1 ? 'already reached' : (1 / b0.ms).toFixed(0) + '× below Kingston today'}${b0in && b0in !== b0 ? `; within the built circuits, ${b0in.x} qubits at ${(b0in.ms * CAL.eIBM).toExponential(1)} (${(1 / b0in.ms).toFixed(0)}× below)` : ''}. ` : `At no size can even an error-free QPU match the classical frontier. `)
-    + (last && last.q && last.best ? `At ${last.x} qubits (largest built) IBM costs ${J(last.q.ibm)} and the best classical method (${last.best.by}) ${J(last.best.y)}. ` : '')
+  const sdom = !isT && ps && Kc !== Infinity ? P.filter(p => !p.r.ext && p.best && p.best.pathBy && p.best.pathBy.one / Kc > 0.5 * p.best.y).map(p => p.x) : [];
+  document.getElementById(U.cap).innerHTML = `${L} layers, ${num(nShots())} noiseless shots per decision (N₀ = ${state.n0} at a ${Math.round(100 * state.mtg)}% margin error); transpilation ${tr ? 'counted' : 'not counted'}, path search ${ps ? 'counted' : 'not counted'}${tr || ps ? `, shared by ${kTxt} decision${K === 1 ? '' : 's'} per circuit shape` : ''}. `
+    + (wins.length ? `<b>A QPU ${isT ? 'is faster than' : 'beats'} every classical method at ${wins.map(p => p.x + (p.r.ext ? ' (extrapolated)' : '')).join(', ')} qubits</b> at this two-qubit error. ` : `<b>No QPU point ${isT ? 'is faster than' : 'beats'} the best classical method</b> at this two-qubit error, up to ${XMAX9} qubits. `)
+    + (b0 ? `The most forgiving size is ${b0.x} qubits${b0.r.ext ? ' (extrapolated)' : ''}: IBM would ${isT ? 'match the classical time' : 'break even'} at a two-qubit error of ${(b0.ms * CAL.eIBM).toExponential(1)}, ${b0.ms >= 1 ? 'already reached' : (1 / b0.ms).toFixed(0) + '× below Kingston today'}${b0in && b0in !== b0 ? `; within the built circuits, ${b0in.x} qubits at ${(b0in.ms * CAL.eIBM).toExponential(1)} (${(1 / b0in.ms).toFixed(0)}× below)` : ''}. ` : `At no size can even an error-free QPU match the classical frontier. `)
+    + (last && last.q && last.best ? `At ${last.x} qubits (largest built) IBM ${isT ? 'takes' : 'costs'} ${F(last.q[QK])} and the best classical method (${last.best.by}) ${F(last.best.y)}. ` : '')
     + (sdom.length ? `At ${sdom.join(', ')} qubits more than half of the best classical cost is the one-off path search: the greedy path is no longer good enough there, and a better one took a long search. More reuse lowers these points (Figure 8). ` : '')
-    + `Search costs are the times our searches took (cotengra with a fixed 600 s budget), so they are upper bounds: a budget fitted to each circuit could cost less. `
+    + (isT ? U.capT(P, K, Kc, ps) : '') + `Search ${isT ? 'times' : 'costs'} are the times our searches took (cotengra with a fixed 600 s budget), so they are upper bounds: a budget fitted to each circuit could cost less. `
     + `Past ${lastBuilt} qubits every curve is extrapolated from the 3 largest built circuits. Statevector beyond 31 qubits does not fit one 24 GB GPU; its line follows the measured growth. MPS has points only where it reached the target against an exact result (2 layers, up to 49 qubits); at 4 and 8 layers it never did. `
     + `Other statevector engines (Aer, torch) and the RTX 3090 Ti runs are in Figure 3.`;
 }
+
+const U9 = { unit: 'J', c: 'c9', lg: 'lg9', t: 't9', cap: 'cap9', em: 'em9', reuse: 'reuse9' };
+const U10 = { unit: 's', c: 'c10', lg: 'lg10', t: 't10', cap: 'cap10', em: 'em10', reuse: 'reuse10',
+  capT: (P, K, Kc, ps) => {   // time-specific sentences: where the one-off path search outlasts many decisions
+    const B = P.filter(p => !p.r.ext && p.best && p.srch != null), slow = B.filter(p => p.srch > 100 * p.best.y);
+    const f = slow[0], l = slow[slow.length - 1];
+    return (slow.length ? `Finding the contraction path takes longer than 100 decisions at ${slow.map(p => p.x).join(', ')} qubits (at ${f.x} qubits: ${fmtT(f.srch)} against ${fmtT(f.best.y)} per decision). ` : '')
+      + `The QPU's one-off transpile takes under a second. Classical times are for one L4 GPU running the ${num(nShots())} sampler contractions one after another; spread over many GPUs the time falls (the energy does not). QPU times are shots in series on one device, without queueing. `; } };
+function fig9() { figAll(U9); }
+function fig10() { figAll(U10); }
 
 function showErr(what, err) { const box = document.getElementById('errbox'); box.hidden = false; box.insertAdjacentHTML('beforeend', `<div>${what} failed to render: ${err}</div>`); }
 function renderAll() {
   if (!S) return;
   if (typeof Chart === 'undefined') { showErr('Charts', 'chart library did not load'); return; }
-  [fig1, fig2, fig3, figAcc, fig5, fig6, fig7, fig8, fig9].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + [1, 2, 3, 4, 5, 6, 7, 8, 9][i], err); } });
+  [fig1, fig2, fig3, figAcc, fig5, fig6, fig7, fig8, fig9, fig10].forEach((f, i) => { try { f(); } catch (err) { showErr('Figure ' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10][i], err); } });
 }
-document.getElementById('em9').addEventListener('input', () => { try { fig9(); } catch (err) { showErr('Figure 9', err); } });
+for (const [a, b] of [['em9', 'em10'], ['em10', 'em9']]) document.getElementById(a).addEventListener('input', () => { document.getElementById(b).value = document.getElementById(a).value; for (const [f, n] of [[fig9, 9], [fig10, 10]]) { try { f(); } catch (err) { showErr('Figure ' + n, err); } } });
 document.getElementById('em').addEventListener('input', () => { [fig5, fig6, fig7, fig8].forEach(f => { try { f(); } catch (err) { showErr(f.name, err); } }); });
 document.querySelectorAll('.group').forEach(g => g.addEventListener('click', e => {
   const b = e.target.closest('button.chip'); if (!b) return;
