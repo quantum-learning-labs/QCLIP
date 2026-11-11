@@ -2,7 +2,11 @@ import torch, yaml, mlflow, time, socket, math
 from collections import defaultdict
 from typing import Callable
 import torch.nn.functional as F
-from modules.utils.general import gen_id, log_phase, git_state
+import pandas as pd
+from torch.utils.data import DataLoader
+from modules.utils.general import gen_id, log_phase, git_state, CheckpointManager
+from modules.utils.factory import build_experiment
+from modules.data_pipeline.engine import DataEngine
 from pathlib import Path
 from tqdm import tqdm
 
@@ -105,7 +109,6 @@ class RunManager:
                 "distill_from": self.config.get('distill_from') or "none",
                 "distill_kd_weight": self.config.get('distill_kd_weight', 1.0) if self.config.get('distill_from') else 0.0,
                 "distill_tau": self.config.get('distill_tau', 1.0),
-                "distill_state_weight": self.config.get('distill_state_weight', 0.0) if self.config.get('distill_from') else 0.0,
             })
 
             if self.config.get('checkpoint_every'):   # the initialisation, as epoch -1
@@ -164,6 +167,52 @@ class RunManager:
                     break
                 
         log_phase("Experiment Run Concluded")
+
+class Teacher:
+    # Frozen post-selected teacher for score distillation (distill_from). Its circuits compile differently from the
+    # student's, so its text and image embeddings are computed once for every training row and looked up by row index.
+    def __init__(self, checkpoint_path, student_train_df, device, kd_weight=1.0, kd_tau=1.0):
+        self.kd_weight = kd_weight
+        self.kd_tau = kd_tau
+
+        with open(Path(checkpoint_path).parent / 'config.yaml') as f:
+            config = yaml.safe_load(f)
+        ansatz, image_model, text_model, self.loss_fn = build_experiment(config, device)
+        data_engine = DataEngine(config, ansatz, device)
+        compiled_train = data_engine.compile_text('train')
+        compiled_val = data_engine.compile_text('val')
+        if len(compiled_train) != len(student_train_df) or (compiled_train['pos_image_id'].values != student_train_df['pos_image_id'].values).any():
+            raise RuntimeError("Teacher and student training rows are not aligned (row count or image ids differ)")
+
+        data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
+        data_engine.image_init(image_model)
+        CheckpointManager.load_model(checkpoint_path, image_model, text_model, device)
+        image_model.to(device).eval()
+        text_model.to(device).eval()
+
+        loader = DataLoader(data_engine.get_dataset(compiled_train, split='train'), batch_size=config['batch_size'],
+                            shuffle=False, collate_fn=data_engine.collate_fn, num_workers=0)
+        text_arr, image_arr = [], []
+        with torch.no_grad():
+            for batch in loader:
+                image_arr.append(image_model(batch['pos_image'].to(device)))
+                text_arr.append(text_model(batch['caption']))
+        self.text_emb = torch.cat(text_arr)
+        self.image_emb = torch.cat(image_arr)
+        print(f"Teacher {checkpoint_path}: {len(self.text_emb)} rows | KD weight: {kd_weight} | KD tau: {kd_tau}")
+
+    def kl_div(self, student_logits, teacher_logits):
+        return F.kl_div(F.log_softmax(student_logits / self.kd_tau, dim=1), F.log_softmax(teacher_logits / self.kd_tau, dim=1),
+                        log_target=True, reduction='batchmean')
+
+    def loss(self, idx, student_loss_fn, text_emb, image_emb):
+        # symmetric KL between the student's and the teacher's in-batch score matrices (both directions), times tau^2
+        with torch.no_grad():
+            teacher_logits = self.loss_fn.compute_similarity(self.text_emb[idx], self.image_emb[idx]) / self.loss_fn.temperature
+        student_logits = student_loss_fn.compute_similarity(text_emb, image_emb) / student_loss_fn.temperature
+        kd = 0.5 * (self.kl_div(student_logits, teacher_logits) + self.kl_div(student_logits.T, teacher_logits.T))
+        return self.kd_weight * self.kd_tau ** 2 * kd
+
 
 class ContrastiveTrainer:
     def __init__(self, image_model, text_model, optimizer, loss_fn, device):

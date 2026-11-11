@@ -4,7 +4,7 @@ import pandas as pd
 from modules.utils.factory import build_experiment
 from modules.utils.general import log_phase, setup_exp, CheckpointManager
 from modules.data_pipeline.engine import DataEngine
-from modules.models.fusion.engine import ContrastiveTrainer, MMEvaluator, RunManager, adaptive_optimizer
+from modules.models.fusion.engine import ContrastiveTrainer, MMEvaluator, RunManager, Teacher, adaptive_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
 # uv run python train.py --config configs/tensor_network.yaml
@@ -81,10 +81,9 @@ if __name__ == "__main__":
 
     trainer = ContrastiveTrainer(image_model, text_model, optimizer, loss_fn, DEV)
     trainer.swap_negatives = bool(config.get('swap_negatives', False))   # add swapped captions to the image->text softmax (train text_path from make_swap.py --keep_all)
-    if config.get('distill_from'):   # frozen post-selected teacher: match its scores (KD) and/or its states
-        from modules.models.fusion.distill import Teacher
-        trainer.teacher = Teacher(config['distill_from'], config, compiled_train, DEV, kd_weight=config.get('distill_kd_weight', 1.0),
-                                  kd_tau=config.get('distill_tau', 1.0), state_weight=config.get('distill_state_weight', 0.0))
+    if config.get('distill_from'):   # frozen post-selected teacher: match its in-batch scores
+        trainer.teacher = Teacher(config['distill_from'], compiled_train, DEV,
+                                  kd_weight=config.get('distill_kd_weight', 1.0), kd_tau=config.get('distill_tau', 1.0))
     evaluator = MMEvaluator(image_model, text_model, DEV)
 
     manager = RunManager(config, trainer, evaluator, DEV, SEED, scheduler=scheduler)

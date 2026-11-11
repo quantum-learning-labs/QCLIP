@@ -13,7 +13,6 @@ epochs: 100
 purity_weight: 0.0
 distill_kd_weight: 1.0
 distill_tau: 1.0
-distill_state_weight: 0.0
 embedding_qubits: 3
 out_dim: 512
 
