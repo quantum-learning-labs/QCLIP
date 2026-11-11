@@ -54,6 +54,22 @@ for f in ('qpu_tt_*.csv', 'qpu_esp4_*.csv'):
         acc[(r['ckpt'], r['nq'])].append(r)
     for (ck, nq), v in acc.items():
         x = R(ck, nq); x['ibm_tt'] = min(fl(t['ibm_transpile_s']) for t in v); x['ionq_tt'] = min(fl(t['ionq_transpile_s']) for t in v)   # min over the CU circuits (same shape): the first call of a process also builds the backend target (~12 s, once per session)
+# anytime path search (path_anytime.py): per network, the best path's log10 flops after s seconds of one cotengra search (+ the greedy start),
+# and the exact optimum where the dynamic programme finished (status ok) or its cap (timeout / memory)
+anchors = collections.defaultdict(dict)   # circuits outside the size grid (trained 6-13 qubit models): kept apart, as the exact-optimum anchor
+for r in rd('anyt_*.csv'):
+    if r['ckpt'] == 'ckpt' or isbad(r): continue
+    key = (layers_of(r['ckpt']), int(float(r['nq'])))
+    if key in rows: x = R(r['ckpt'], r['nq'])
+    else: x = anchors[(r['ckpt'], key[1])]; x.update(layers=key[0], nq=key[1], e=int(re.search(r'_e(\d+)_', r['ckpt']).group(1)), n=int(re.search(r'_n(\d+)_', r['ckpt']).group(1)))
+    net = r['net']; lf = fl(r['log10_flops'])
+    if r['kind'] in ('trace', 'greedy') and lf is not None:
+        x.setdefault(f'anyt_{net}', []).append(dict(s=round(fl(r['elapsed_s']), 2), lf=round(lf, 3), w=fl(r['width']), k=r['kind']))
+    elif r['kind'] == 'optimal':
+        x[f'optimal_{net}'] = dict(status=r['status'], s=round(fl(r['elapsed_s']), 1), lf=None if lf is None else round(lf, 3), cap=fl(r['checkpoint_s']))
+for x in list(rows.values()) + list(anchors.values()):
+    for net in ('ps', 'rho'):
+        if f'anyt_{net}' in x: x[f'anyt_{net}'] = sorted(x[f'anyt_{net}'], key=lambda t: t['s'])
 # decisions per circuit shape on the std test set (shape_reuse.py)
 reuse = None
 for f in sorted(glob.glob(os.path.join(H, 'shape_reuse_*.csv'))):
@@ -89,7 +105,7 @@ for f in ('mps_a.csv', 'mps_b.csv'):
 cal = rd('noise_calib.csv')
 out = dict(rows=[dict(layers=L, nq=nq, **v) for (L, nq), v in sorted(rows.items())],
            noise_calib=[dict(e=int(r['e']), n=int(r['n']), method=r['method'], seed=int(r['seed']), nq=fl(r['nq_mean']), F=fl(r['F_eff'])) for r in cal],
-           reuse=reuse,
+           reuse=reuse, opt_anchor=sorted(anchors.values(), key=lambda x: (x['layers'], x['nq'], x['e'])),
            noise_fit=dict(a=-0.187, b=-0.00331, note='ln F_eff = a + b * n2q_native (Kingston CU readout, 54 noisy runs, 6-13 qubits)'))
 json.dump(out, open(os.path.join(H, 'adv.json'), 'w'), indent=1)
 for r in out['rows']:
