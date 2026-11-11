@@ -1,5 +1,5 @@
 # Plain discard from scratch (hpsearch hp2 discard_tl3_pw0): Pauli_InfoNCE, 3 text layers, purity_weight 0.
-# Seeds 0-2: test std 0.820+-0.011. Better discard models start from post-selected weights: vqc_discard_distill.yaml
+# 10 seeds: val 0.836+-0.009, test std 0.813+-0.013. Better discard models start from post-selected weights: vqc_discard_distill.yaml
 model_type: "vqc"
 mlflow_db: "mlf_dbs/svo-probes_final.db"
 batch_size: 256

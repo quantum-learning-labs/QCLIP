@@ -47,18 +47,18 @@ of traced qubits grows. Much of the recent work in this repo makes discard (CPTP
 modules/
   symbolic/          CCG parsing (Bobcat via lambeq), grammar types, the diagram -> tensor-network functor
   compilation/
-    quantum/         ansatz.py: tensor network -> circuit (curried ansatz, discard, sinks, mixers, Phi block)
+    quantum/         ansatz.py: tensor network -> circuit (curried ansatz, post-selection or discard)
                      gates.py: batched gates; emul.py: Qiskit/Aer circuit export and emulation
     classical/       tensor-network and neural compilers (classical baselines)
   models/
     text/            einsum_quantum.py (VQC text model), einsum_classical.py (TN), neural_model.py (MLP)
     vision/          CLIP features and their map to quantum states (quantum_map.py)
-    fusion/          criteria.py (losses), engine.py (trainer, evaluator, run manager), distill.py (teacher)
-  data_pipeline/     dataset retrieval, image embedding, datasets and collate functions, DataEngine
+    fusion/          criteria.py (losses), engine.py (trainer, distillation teacher, evaluator, run manager)
+  data_pipeline/     dataset retrieval (+ manifests/ of our splits), image embedding, datasets, swap sets, DataEngine
   utils/             factory (builds an experiment from a config), quantum/tensor ops, visualisation
-scripts/             train.py, benchmark.py, emulate.py, retrieve.py, make_swap.py, run_hp.sh, run_baseline.sh
+scripts/             train.py, benchmark.py, emulate.py, retrieve.py, run_hp.sh, run_baseline.sh
 configs/             vqc.yaml, tn.yaml, mlp.yaml (templates); baseline/ (sweep bases); final/ (recommended configs)
-analysis/            analysis scripts: cptp/ (discard vs post-selection), discard_gap/ (gap reports v1, v2)
+analysis/            discard_gap/: discard vs post-selection gap reports v1, v2
 notebooks/           train_{vqc,tn,mlp}.ipynb
 assets/              figures
 ```
@@ -90,15 +90,17 @@ dataset lives under `data/<name>/`:
 data/svo-probes/processed/
   train.pkl  val.pkl  test.pkl     parsed captions with positive and negative images
   swap.pkl                         95 subject/object-swap pairs (text choice)
-  swap_full.pkl  swap_animate.pkl  larger swap sets built with make_swap.py
+  swap_full.pkl  swap_animate.pkl  larger swap sets (retrieve.py --swap)
   image_embeddings.pt              CLIP image features
 ```
 
-- `scripts/retrieve.py` downloads a dataset, parses its captions and embeds its images with CLIP. Set
-  `DATASET` and `PARSER_PATH` at the bottom of the script.
-- `scripts/make_swap.py <in.pkl> <out.pkl> [--keep_all]` builds a subject/object-swap set from any split. It drops
-  symmetric verbs and swaps that leave the sentence unchanged, and it never overwrites a file. With `--keep_all` it
-  keeps every row and marks the real swaps, which is the input format for training with `swap_negatives`.
+- `python scripts/retrieve.py <dataset>` downloads a dataset, parses its captions and embeds its images with CLIP
+  (Bobcat model directory from `BOBCAT_PATH`). Datasets and their sources are listed in
+  `modules/data_pipeline/retrieval.py` (`DATASET_SOURCES`). SVO-Probes comes from DeepMind's CSV and image URLs plus
+  our split manifest in `modules/data_pipeline/manifests/svo-probes/`.
+- `python scripts/retrieve.py svo-probes --swap <split> [--keep_all] -o <file>` builds a subject/object-swap set from
+  a processed split. It drops symmetric verbs and swaps that leave the sentence unchanged, and it never overwrites a
+  file. With `--keep_all` it keeps every row and marks the real swaps, the input for training with `swap_negatives`.
 
 Set the dataset in the config's `dataset:` block. `configs/vqc.yaml` has SVO-Probes active and ARO parked as `_dataset`.
 
@@ -139,20 +141,23 @@ optionally, hardware noise:
 
 ```bash
 # noiseless shot sweep on the std set
-PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --eval_set std --shots 64,256,1024
+PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.set=std --shots 64,256,1024
 # noisy, using the calibration of a real IBM device
-PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --eval_set std --shots 1024 --noise \
-    --profile fake_kingston --method statevector \
-    --aer batched_shots_gpu=false --aer shot_branching_enable=false
+PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --shots 1024 --set emulate.set=std \
+    --set emulate.noise=true --set emulate.profile=fake_kingston --set emulate.backend=statevector \
+    --set emulate.aer_options.batched_shots_gpu=false --set emulate.aer_options.shot_branching_enable=false
 ```
 
-- `--profile` picks any `qiskit_ibm_runtime` fake backend (a calibration snapshot); the default is `fake_miami`.
-- `--noise_profile honest` adds scheduled idle decoherence and coherent ZZ to the backend noise model, and its
-  knobs can be changed with `--honest k=v`. The default, `backend`, is Aer's `NoiseModel.from_backend`.
-- `--method` sets the Aer method. Density matrix is faster for small circuits. `--dm_max_qubits N` runs circuits
-  with at most N active qubits as density matrices and the rest with `--method`.
-- For noisy statevector runs, keep the two `--aer` flags shown above, or GPU memory grows until the job dies.
-- `--num_runs` repeats the shot sampling only (shot noise), not training variance.
+Emulation settings are `emulate.*` config keys, changed with `--set` as in `train.py`:
+- `profile`: any `qiskit_ibm_runtime` fake backend (a calibration snapshot); the default is `fake_miami`.
+- `noise_profile: honest` adds scheduled idle decoherence and coherent ZZ to the backend noise model; its
+  knobs are `emulate.honest.<knob>`. The default, `backend`, is Aer's `NoiseModel.from_backend`.
+- `backend` is the Aer method. Density matrix is faster for small circuits. `dm_max_qubits: N` runs circuits
+  with at most N active qubits as density matrices and the rest with `backend`.
+- `aer_options.<option>` sets any Aer option. For noisy statevector runs keep the two shown above, or GPU memory
+  grows until the job dies.
+- `num_runs` repeats the shot sampling only (shot noise), not training variance; `circuit_batch` circuits go to Aer
+  per call; `save_counts: true` stores every circuit's counts.
 
 ### Hyperparameter sweeps
 
@@ -182,23 +187,16 @@ The main keys:
 | `model_type` | `vqc` (quantum), `tn` (classical tensor network), `mlp` |
 | `qlr`, `clr` | base learning rates for the circuit and the classical parameters |
 | `embedding_qubits` | qubits of the sentence (output) wire and of the image state |
-| `loss` | `fs` (Fubini-Study, post-selection), `pauli`, `uj`, `hs`, `bures` (discard); default by `text.discard` |
-| `learn_temperature` | learnable logit scale |
-| `purity_weight`, `spread_weight` | loss regularisers (purity: `pauli`; spread: `pauli`, `hs`, `fs`) |
-| `hard_negatives` | add each caption's negative image to the softmax |
-| `swap_negatives` | add subject/object-swapped captions as text negatives (train split from `make_swap.py --keep_all`) |
-| `distill_from`, `distill_kd_weight`, `distill_tau`, `distill_state_weight` | distil from a frozen post-selected teacher checkpoint |
-| `init_by_symbol` | warm start by symbol name (when the two circuits differ, e.g. extra mixer gates) |
+| `loss` | `fs` (Fubini-Study, post-selection), `pauli`, `uj`, `hs` (discard); default by `text.discard` |
+| `fs_convention` | `fs` overlap map for similarity and regulariser: `arccos`, `arcsin` or `legacy` (the mixed form of older runs) |
+| `purity_weight`, `spread_weight` | loss regularisers (purity: `pauli`; text-text spread: `hs`, `fs`) |
+| `swap_negatives` | add subject/object-swapped captions as text negatives (train split from `retrieve.py --swap train --keep_all`) |
+| `distill_from`, `distill_kd_weight`, `distill_tau` | distil from a frozen post-selected teacher checkpoint |
 | `text.layers` | ansatz depth per word, the most important knob |
 | `text.curry` | curried ansatz (cups removed); `text.spider` must stay `false` |
 | `text.discard` | discard (partial trace) instead of post-selection |
-| `text.postselect_types` | with discard: still post-select wires of these atomic types (hybrid) |
-| `text.mixer_layers`, `text.mixer_ansatz` | entangling layers on the sentence wires before the trace; `cr` is identity at angle 0 (safe for warm starts) |
-| `text.sinks` | extra traced qubits coupled in by the mixer (needs `mixer_layers >= 1`) |
-| `text.phi_block` | a fixed, parameter-free discard block whose channel reproduces post-selection's decisions (research use) |
 | `vision.method`, `vision.layers` | image map: `mlp`, `pca` or `amp` (amplitude encoding) |
-| `vision.env_qubits` | traced environment qubits, giving mixed image states (discard only) |
-| `emulate.*` | defaults for `emulate.py` (set, shots, backend, `measurement_method`: `compute_uncompute` or `destructive_swap`) |
+| `emulate.*` | settings of `emulate.py` (set, backend, noise, profile, `measurement_method`: `compute_uncompute` or `destructive_swap`, ...) |
 
 ## Results
 
@@ -225,19 +223,13 @@ Test `std` hard-negative accuracy (image choice, ~1.8k pairs), mean ± std over 
 Findings so far:
 - Text depth is the most important setting for both readouts (3 layers >> 2 >> 1).
 - The discard gap sits on subject negatives; on verb and object negatives the two readouts are within 2 points.
-  Other losses (Bures, exact fidelity, purity schedules) did not close it.
+  Other losses (Bures angle, exact fidelity, purity schedules), extra traced qubits and mixers did not close it
+  (that code was removed; it is on the research branches).
 - Warm-starting from a post-selected model and distilling its scores closes most of the gap (10/10 paired wins
   over the warm start alone).
 - In noisy emulation with realistic device calibrations, post-selection still wins at m=4 traced qubits.
   At m=8 the order reverses and plain discard is best: noise shrinks the margins and post-selection also
   loses most of its shots.
-
-## Analysis scripts
-
-`analysis/` holds the scripts behind the discard vs post-selection study: readout swaps (the same weights read by
-both methods), gradient probes, margin bounds, noise and shot-cost summaries, branch decomposition and loss
-checks. See [analysis/cptp/README.md](analysis/cptp/README.md) and
-[analysis/discard_gap/README.md](analysis/discard_gap/README.md).
 
 ## Citation
 
