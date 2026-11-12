@@ -49,7 +49,6 @@ dataset:
     diagnostics:
       - "evaluate_image_choice"
       - "diagnostic_image_choice"
-        # - "cptp_diagnostic_image_choice"
 
   test:
     std:

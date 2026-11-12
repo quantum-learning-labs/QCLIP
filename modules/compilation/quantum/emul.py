@@ -152,10 +152,6 @@ class BackendManager:
     def backend(self):
         return self._backend
 
-    @property
-    def get_physical_circuit(self):
-        return self.basis_gates, self.coupling_map
-    
     def transpile(self, circuits, batch_size=128, optimization_level=1):
         transpiled_circs = []
         chunks = [circuits[i:i + batch_size] for i in range(0, len(circuits), batch_size)]
@@ -451,49 +447,6 @@ class Emulator:
 
         fidelity = weighted_parity_sum / accepted_shots
         return max(0.0, float(fidelity))
-
-    def log_experiment(self, data, exec_time, einsum_data):
-        mlf_db_path = Path.cwd() / f"mlf_dbs/{self.dataset_name}.db"
-        mlf_db_path.parent.mkdir(parents=True, exist_ok=True)
-        mlflow.pytorch.autolog(log_models=False)
-        mlflow.set_tracking_uri(f"sqlite:///{mlf_db_path}")
-        mlflow.set_experiment(self.dataset_name+'emul')
-
-        meas_method = self.config.get('emulate', {}).get('measurement_method', 'compute_uncompute')
-        with mlflow.start_run(run_name=f"{self.experiment_name}"):
-            mlflow.log_params({
-                "dataset": self.dataset_name,
-                "measurement_method": meas_method,
-                "embedding_qubits": self.config.get('embedding_qubits', 0),
-                "discard_qubits": self.config.get('text', {}).get('discard', False),
-                "epsilon": self.config.get('emulate', {}).get('eps', 0.01),
-                "shots": self.shots,
-                "backend_method": self.config.get('emulate', {}).get('backend', 'statevector'),
-                "noise_enabled": self.config.get("noise", False), 
-                "vision_method": self.config.get('vision', {}).get('method'),
-            })
-
-            if einsum_data:
-                max_dict = {'max_qubits': einsum_data['max'][0], 
-                            'max_gates': einsum_data['max'][1], 
-                            'max_depth': einsum_data['max'][2], 
-                            'max_intermediate_state': einsum_data['max'][3], 
-                            'max_2q_gates': einsum_data['max'][4]}
-                mlflow.log_metrics(max_dict)
-                avg_dict = {'avg_qubits': einsum_data['avg'][0], 
-                            'avg_gates': einsum_data['avg'][1], 
-                            'avg_depth': einsum_data['avg'][2], 
-                            'avg_intermediate_state': einsum_data['avg'][3], 
-                            'avg_2q_gates': einsum_data['avg'][4]}
-                mlflow.log_metrics(avg_dict)
-            
-            mlflow.log_metrics({'execution_time': exec_time, 'accuracy': data['accuracy']})
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                raw_pkl_path = Path(tmp_dir) / "raw_data.pkl"
-                with open(raw_pkl_path, "wb") as f:
-                    pickle.dump(data, f)
-                mlflow.log_artifact(str(raw_pkl_path), artifact_path="raw_outputs")
-        print(f" Logged run metrics & artifacts to: {mlf_db_path}")
 
     def run_experiment(self, pos_circs, neg_circs, shots=None, num_runs=5):
         shots = shots if shots is not None else self.shots

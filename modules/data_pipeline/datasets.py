@@ -3,14 +3,7 @@ import zipfile, io, torch, random, re
 from pathlib import Path
 import pandas as pd
 from PIL import Image
-from torch.utils.data import Dataset, Subset
-
-def subsample_data(dataset, nsamp=0):
-    # Using this function without specifying nsamp is equivalent to a random shuffle of the data
-    if nsamp == 0: 
-        nsamp = len(dataset)
-    idx_arr = random.sample(range(0, len(dataset)), nsamp)
-    return Subset(dataset, idx_arr)
+from torch.utils.data import Dataset
 
 class BaseDataset(Dataset):
     def __init__(self, compiled_df: pd.DataFrame, img_path: str | None, image_transform=None, mode: str = "train"):
@@ -235,71 +228,3 @@ def build_swap_set(df, keep_all=False):
     cols = [c for c in swap_df.columns if not c.endswith('_diagram')] + ['corrected_sentence_diagram', 'swapped_sentence_diagram']
     print(f"Swap set: {stats} -> kept {len(swap_df)}")
     return swap_df[cols]
-
-class SugarCrepePPDataset(BaseDataset):
-    """Handles SugarCrepe / ARO layout: 1 Image -> (Positive Caption vs Negative Caption)."""
-    def __getitem__(self, idx):
-        row_compiled = self.compiled_df.iloc[idx]
-        
-        # Load image
-        image_ref = row_compiled.get('filename')
-        image = self._load_image(image_ref)
-        
-        # Extract both expressions side-by-side for comparison scoring
-        pos1 = (row_compiled['caption_einsum'], row_compiled['caption_symbols'])
-        pos2 = (row_compiled['caption2_einsum'], row_compiled['caption2_symbols'])
-        neg = (row_compiled['negative_caption_einsum'], row_compiled['negative_caption_symbols'])
-        
-        return {"image": image,
-                "pos_caption1": pos1,
-                "pos_caption2": pos2,
-                "neg_caption": neg
-                }
-
-def sugarcrepe_collate_fn(batch):
-    images = torch.stack([item['image'] for item in batch])
-    pos1_captions = [item['pos_caption1'] for item in batch] 
-    pos2_captions = [item['pos_caption2'] for item in batch]
-    neg_captions = [item['neg_caption'] for item in batch]
-    
-    return {
-        "image": images,
-        "pos_caption1": pos1_captions,
-        "pos_caption2": pos2_captions,
-        "neg_caption": neg_captions
-    }
-
-class WinoGroundDataset(BaseDataset):
-    """Handles Winoground layout: 2 Images and 2 Captions per test group."""
-    def __getitem__(self, idx):
-        row_compiled = self.compiled_df.iloc[idx]
-        
-        # Winoground contains 2 separate image columns per row
-        img_0 = self._load_image(row_compiled['image_0'])
-        img_1 = self._load_image(row_compiled['image_1'])
-        
-        # Extract both distinct compiled caption blueprints
-        c0_einsum = row_compiled['caption_0_einsum']
-        c0_symbols = row_compiled['caption_0_symbols']
-        
-        c1_einsum = row_compiled['caption_1_einsum']
-        c1_symbols = row_compiled['caption_1_symbols']
-        
-        return {'image_0': img_0,
-                'image_1': img_1,
-                'caption_0': (c0_einsum, c0_symbols),
-                'caption_1': (c1_einsum, c1_symbols)
-            }
-    
-def winoground_collate_fn(batch):
-    img_0 = torch.stack([item['image_0'] for item in batch])
-    img_1 = torch.stack([item['image_1'] for item in batch])
-    caption_0 = [item['caption_0'] for item in batch] 
-    caption_1 = [item['caption_1'] for item in batch]
-    
-    return {
-        'image_0': img_0,
-        'image_1': img_1,
-        'caption_0': caption_0,
-        'caption_1': caption_1
-    }

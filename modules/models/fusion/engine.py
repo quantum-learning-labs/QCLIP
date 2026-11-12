@@ -36,7 +36,6 @@ class RunManager:
         self.eval_tasks = config['dataset']['val'].get('diagnostics', ['global_retrieval'])
 
     def _setup_environment(self):
-        # never reuse a run directory (runs started in the same minute used to share one)
         if self.checkpoint_dir.exists():
             raise FileExistsError(f"{self.checkpoint_dir} already exists; choose another run_name")
         self.checkpoint_dir.mkdir(parents=True)
@@ -225,15 +224,6 @@ class ContrastiveTrainer:
         self.teacher = teacher                 # Teacher: score distillation from a frozen post-selected model
 
     @torch.no_grad()
-    def grad_norm(self):
-        grad_norm = 0.0
-
-        for _, param in list(self.image_model.named_parameters()) + list(self.text_model.named_parameters()):
-            if param.grad is not None:
-                grad_norm += param.grad.data.norm(2).item() ** 2
-        return grad_norm ** 0.5
-
-    @torch.no_grad()
     def grad_norm_by_type(self) -> dict:
         verb_grad_sq = 0.0
         noun_grad_sq = 0.0
@@ -302,52 +292,6 @@ class ContrastiveTrainer:
             epoch_loss += loss.item() * images.shape[0]
         
         return epoch_loss / len(dataloader.dataset)
-
-def adaptive_optimizer(text_model, image_model, base_qlr: float = 1e-3, base_clr: float = 1e-5, 
-                       arity_factor: float = 1.5, weight_decay: float = 0.01) -> torch.optim.AdamW:
-    
-    sym2param = getattr(text_model, 'sym2param', {})
-    param2sym = {idx: sym for sym, idx in sym2param.items()}
-    arity_param_groups = defaultdict(list)
-
-    for name, param in text_model.named_parameters():
-        if not param.requires_grad:
-            continue
-
-        if "params" in name:
-            try:
-                idx = int(name.split(".")[-1])
-                sym_name = param2sym.get(idx, "")
-            except ValueError:
-                sym_name = ""
-        else:
-            sym_name = name
-
-        cmplx_type = sym_name.split('__')[1].split('_')[0].split('@')
-        op_arity = max(1, len(cmplx_type))
-        arity_param_groups[op_arity].append(param)
-
-    param_groups = []
-    
-    for arity in sorted(arity_param_groups.keys()):
-        params = arity_param_groups[arity]
-        group_lr = base_qlr * (arity_factor ** (arity - 1))
-        
-        param_groups.append({
-            'params': params,
-            'lr': group_lr,
-            'name': f'q_text_arity_{arity}_lr_{group_lr:.1e}'
-        })
-        print(f"[Optimizer Config] Arity {arity} | {len(params)} params | LR: {group_lr:.6f}")
-
-    # Add classical image tower group
-    param_groups.append({
-        'params': image_model.parameters(),
-        'lr': base_clr,
-        'name': 'image_tower'
-    })
-    print("[Optimizer Config] Classical Image Tower | {} params | LR: {:.6f}".format(len(list(image_model.parameters())), base_clr))
-    return torch.optim.AdamW(param_groups, weight_decay=weight_decay)
 
 class MMEvaluator:
     def __init__(self, image_model, text_model, device):
@@ -498,141 +442,6 @@ class MMEvaluator:
     def evaluate_image_choice(self, dataloader) -> dict:
         return self.hard_neg_eval(dataloader, choice='image')
 
-    @torch.no_grad()
-    def evaluate_sugarcrepe_pp(self, dataloader: torch.utils.data.DataLoader) -> float:
-        correct = total = 0
-        for batch in dataloader:
-            img_emb = self._encode_img(batch["image"])
-            pos1_emb = self._encode_txt(batch["pos_caption1"])
-            pos2_emb = self._encode_txt(batch["pos_caption2"])
-            neg_emb = self._encode_txt(batch["neg_caption"])
-            
-            sim_pos1 = torch.sum(img_emb.conj() * pos1_emb, dim=1).abs()
-            sim_pos2 = torch.sum(img_emb.conj() * pos2_emb, dim=1).abs()
-            sim_neg  = torch.sum(img_emb.conj() * neg_emb, dim=1).abs()
-            
-            match = (sim_pos1 > sim_neg) & (sim_pos2 > sim_neg)
-            correct += match.sum().item()
-            total += img_emb.size(0)
-            
-        return {"acc": correct / total}
-
-    @torch.no_grad()
-    def evaluate_winoground(self, dataloader) -> dict:
-        text_corr = img_corr = group_corr = total = 0
-        for batch in dataloader:
-            i0, c0 = self._encode_img(batch["image_0"]), self._encode_txt(batch["caption_0"])
-            i1, c1 = self._encode_img(batch["image_1"]), self._encode_txt(batch["caption_1"])
-            
-            s_i0_c0 = torch.sum(i0.conj() * c0, dim=1).abs()
-            s_i0_c1 = torch.sum(i0.conj() * c1, dim=1).abs()
-            s_i1_c0 = torch.sum(i1.conj() * c0, dim=1).abs()
-            s_i1_c1 = torch.sum(i1.conj() * c1, dim=1).abs()
-
-            t_match = (s_i0_c0 > s_i0_c1) & (s_i1_c1 > s_i1_c0)
-            i_match = (s_i0_c0 > s_i1_c0) & (s_i1_c1 > s_i0_c1)
-            g_match = t_match & i_match
-
-            text_corr += t_match.sum().item()
-            img_corr += i_match.sum().item()
-            group_corr += g_match.sum().item()
-            total += i0.size(0)
-        
-        return {"txt_score": text_corr/total, "img_score": img_corr/total, "grp_score": group_corr/total}
-
-    @torch.no_grad()
-    def cptp_diagnostic(self, dataloader, choice="text") -> dict:
-        self.image_model.eval()
-        self.text_model.eval()
-
-        sum_m1_purity, sum_m1_entropy, sum_m1_eff_rank = 0.0, 0.0, 0.0
-        sum_m2_purity, sum_m2_entropy, sum_m2_eff_rank = 0.0, 0.0, 0.0
-        total_samples = 0
-        metrics = {}
-
-        def _to_density_matrix(emb: torch.Tensor) -> torch.Tensor:
-            B = emb.size(0)
-            if emb.dim() == 2:
-                D = int(math.sqrt(emb.size(1)))
-                return emb.view(B, D, D).to(torch.complex64)
-            return emb.to(torch.complex64)
-
-        def _compute_state_stats(rho: torch.Tensor):
-            # 1. Purity P = Tr(rho^2) computed natively on GPU
-            purity = torch.real(torch.einsum('bmn,bnm->b', rho, rho))
-
-            # 2. CPU Offloading for Hermitian Eigenvalues to avoid cuSOLVER/CUDA driver crashes
-            rho_cpu = rho.detach().cpu()
-            evals = torch.linalg.eigvalsh(rho_cpu).clamp(min=1e-8)
-
-            # 3. von Neumann Entropy S(rho) = -Tr(rho ln rho)
-            entropy = -(evals * torch.log(evals)).sum(dim=-1)
-
-            # 4. Effective Rank / Participation Ratio R_eff = 1 / Tr(rho^2)
-            eff_rank = 1.0 / (evals ** 2).sum(dim=-1)
-
-            return purity.sum().item(), entropy.sum().item(), eff_rank.sum().item()
-
-        for batch in dataloader:
-            if choice == "text":
-                m1_emb = self._encode_img(batch["image"])
-                pos_m2_emb = self._encode_txt(batch["pos_caption"])
-                neg_m2_emb = self._encode_txt(batch["neg_caption"])
-            elif choice == "image":
-                m1_emb = self._encode_txt(batch["caption"])
-                pos_m2_emb = self._encode_img(batch["pos_image"])
-                neg_m2_emb = self._encode_img(batch["neg_image"])
-
-            B = m1_emb.size(0)
-            rho_m1 = _to_density_matrix(m1_emb)
-            rho_m2_pos = _to_density_matrix(pos_m2_emb)
-            rho_m2_neg = _to_density_matrix(neg_m2_emb)
-
-            # Modality 1 statistics
-            m1_pur, m1_ent, m1_rank = _compute_state_stats(rho_m1)
-            sum_m1_purity += m1_pur
-            sum_m1_entropy += m1_ent
-            sum_m1_eff_rank += m1_rank
-
-            # Modality 2 statistics (averaged across positive and negative pairs)
-            m2_pos_pur, m2_pos_ent, m2_pos_rank = _compute_state_stats(rho_m2_pos)
-            m2_neg_pur, m2_neg_ent, m2_neg_rank = _compute_state_stats(rho_m2_neg)
-
-            sum_m2_purity += 0.5 * (m2_pos_pur + m2_neg_pur)
-            sum_m2_entropy += 0.5 * (m2_pos_ent + m2_neg_ent)
-            sum_m2_eff_rank += 0.5 * (m2_pos_rank + m2_neg_rank)
-
-            total_samples += B
-
-        if total_samples == 0:
-            return {}
-
-        # Map modality identifiers based on query choice
-        m1_name = "img" if choice == "text" else "txt"
-        m2_name = "txt" if choice == "text" else "img"
-
-        mean_m1_pur = sum_m1_purity / total_samples
-        mean_m2_pur = sum_m2_purity / total_samples
-
-        # 1. Purities & Purity Imbalance Ratio
-        metrics[f"diag_mean_{m1_name}_purity"] = mean_m1_pur
-        metrics[f"diag_mean_{m2_name}_purity"] = mean_m2_pur
-        metrics["diag_purity_imbalance"] = abs(mean_m1_pur - mean_m2_pur)
-
-        # 2. von Neumann Entropies
-        metrics[f"diag_mean_{m1_name}_entropy"] = sum_m1_entropy / total_samples
-        metrics[f"diag_mean_{m2_name}_entropy"] = sum_m2_entropy / total_samples
-
-        # 3. Effective Ranks / Participation Ratios
-        metrics[f"diag_mean_{m1_name}_eff_rank"] = sum_m1_eff_rank / total_samples
-        metrics[f"diag_mean_{m2_name}_eff_rank"] = sum_m2_eff_rank / total_samples
-
-        # Legacy backward-compatibility key
-        metrics["diag_mean_text_purity"] = metrics["diag_mean_txt_purity"]
-
-        return metrics
-    
-    @torch.no_grad()
     def diagnostic(self, dataloader, choice="text") -> dict:
         self.image_model.eval()
         self.text_model.eval()
@@ -655,12 +464,6 @@ class MMEvaluator:
     def diagnostic_image_choice(self, dataloader) -> dict:
         return self.diagnostic(dataloader, choice="image")
 
-    def cptp_diagnostic_text_choice(self, dataloader) -> dict:
-        return self.cptp_diagnostic(dataloader, choice="text")
-
-    def cptp_diagnostic_image_choice(self, dataloader) -> dict:
-        return self.cptp_diagnostic(dataloader, choice="image")
-    
     @torch.no_grad()
     def eval_set(self, dataloader, tasks, eval_mapper) -> dict:
         self.image_model.eval()

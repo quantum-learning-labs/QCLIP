@@ -6,17 +6,6 @@ import numpy as np
 from random import randint
 import torch.nn.functional as F
 
-def fs_distance(state1, state2):
-    inner_product = torch.sum(state1 * state2.conj(), dim=1)
-    return (torch.asin(inner_product.abs().clamp(0,1)))
-    # return (torch.full(inner_product.size(), torch.pi/2) - torch.acos(inner_product.abs().clamp(0,1)))
-
-def qcosine(bstates1, bstates2, eps=1e-9):
-    norm1 = torch.linalg.vector_norm(bstates1, ord=2, dim=1)
-    norm2 = torch.linalg.vector_norm(bstates2, ord=2, dim=1)
-    inner_product = torch.sum(bstates1 * bstates2.conj(), dim=1)
-    return inner_product.abs() / (norm1 * norm2 + eps)
-
 def amplitude_encoding(vector):
     is_numpy = isinstance(vector, np.ndarray)
     is_1d = (vector.ndim == 1)

@@ -113,7 +113,7 @@ class DataEngine:
                 batch_size=self.config['batch_size'], 
                 collate_fn=self.collate_fn, 
                 shuffle=(split=='train'), 
-                num_workers=self.config.get("num_workers", 0),  # workers deadlocked runs at start (2026-10-17); data is in memory
+                num_workers=self.config.get("num_workers", 0),
                 pin_memory=True
             )
             return loader
@@ -125,7 +125,7 @@ class DataEngine:
                 batch_size=self.config['batch_size'], 
                 collate_fn=collate_fn, 
                 shuffle=False, 
-                num_workers=self.config.get("num_workers", 0),  # workers deadlocked runs at start (2026-10-17); data is in memory
+                num_workers=self.config.get("num_workers", 0),
                 pin_memory=True
             )
             return loader

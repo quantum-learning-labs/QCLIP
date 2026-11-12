@@ -4,7 +4,7 @@ import pandas as pd
 from modules.utils.factory import build_experiment
 from modules.utils.general import log_phase, setup_exp, CheckpointManager
 from modules.data_pipeline.engine import DataEngine
-from modules.models.fusion.engine import ContrastiveTrainer, MMEvaluator, RunManager, Teacher, adaptive_optimizer
+from modules.models.fusion.engine import ContrastiveTrainer, MMEvaluator, RunManager, Teacher
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
 # uv run python train.py --config configs/tensor_network.yaml
@@ -61,7 +61,6 @@ if __name__ == "__main__":
     quantum_params = list(text_model.parameters()) + list(image_model.params)
     classical_params = list(image_model.projector.parameters()) if config['vision']['method'] == 'mlp' else []
 
-    # optimizer = adaptive_optimizer(text_model, image_model, base_qlr=config['qlr'], base_clr=config['clr'], weight_decay=1.8)
     optimizer = torch.optim.Adam(
         [{'params': quantum_params, 'lr': config['qlr']},
          {'params': classical_params, 'lr': config['clr']}], 

@@ -15,25 +15,6 @@ class TextProcessor:
         self.parser_path = parser_path or os.getenv("BOBCAT_PARSER_PATH", "./bobcat")
         self.parser = BobcatParser(model_name_or_path=self.parser_path, cache_dir=self.parser_path, device=device, batch_size=batch_size)
 
-    def _text2diagram(self, sentence_arr, idx=False):
-        if isinstance(sentence_arr, str):
-            sentence_arr = [sentence_arr]
-        tree_arr = self.parser.sentences2trees(sentence_arr, suppress_exceptions=True)
-        processed_tns = []
-        idx_arr = []
-        for flat_idx, tree in enumerate(tree_arr):
-            if tree is not None:
-                try:
-                    tn = unify_codomain(tree2einsum(tree, simplify=True))
-                    processed_tns.append(tn)
-                    idx_arr.append(flat_idx)
-                except Exception as e:
-                    print(f"Error normalizing tree at flat index {flat_idx}: {e}")
-        if idx:
-            return processed_tns, idx_arr
-        else:
-            return processed_tns
-
     def text2diagram(self, path, dataset, text_labels: list[str]):
         # path should be data_root / dataset_name / 'processed'
         if not isinstance(path, Path):

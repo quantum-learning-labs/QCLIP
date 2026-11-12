@@ -30,14 +30,6 @@ class VQCModel(nn.Module):
         self.register_buffer('gate_0', zero_gate, persistent=False)
         self.register_buffer('gate_0_dag', zero_gate, persistent=False)
 
-    @property
-    def grad_norm(self):
-        total_norm = 0.0
-        for param in self.parameters():
-            if param.grad is not None:
-                total_norm += param.grad.data.norm(2).item() ** 2
-        return total_norm ** 0.5
-
     def from_symbols(self, tn_arr, id_init=False):
         symbols_hash = set(self.symbols)
 
@@ -75,9 +67,6 @@ class VQCModel(nn.Module):
         self.sym2param = {sym: idx for idx, sym in enumerate(self.symbols)}
         self.unk_param_index = len(self.params)
         self.params.append(nn.Parameter(torch.zeros(1), requires_grad=False))
-
-    # def _get_params(self):
-    #     return {sym: float(self.params[idx].detach().cpu().item()) for sym, idx in self.sym2param.items()}
 
     def _get_params(self):
         with torch.no_grad():

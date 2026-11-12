@@ -1,5 +1,5 @@
 # factory.py
-from modules.compilation.quantum.ansatz import CustomV5Ansatz, CustomV6Ansatz
+from modules.compilation.quantum.ansatz import CustomV5Ansatz
 from modules.compilation.classical.tensor_network import TNCompiler
 from modules.compilation.classical.decompositions import MPS
 from modules.compilation.classical.neural import MLPCompiler
