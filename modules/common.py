@@ -45,6 +45,8 @@ MOVED = {
     'modules.models.fusion.engine.svo_mapper': 'modules.data_pipeline.datasets.svo_mapper',
     'modules.models.fusion.engine.aro_mapper': 'modules.data_pipeline.datasets.aro_mapper',
     'modules.models.fusion.engine.mscoco_mapper': 'modules.data_pipeline.datasets.mscoco_mapper',
+    'modules.data_pipeline.datasets.swap_collate_fn': 'modules.data_pipeline.datasets.text_choice_collate_fn',
+    'modules.data_pipeline.datasets.aro_collate_fn': 'modules.data_pipeline.datasets.text_choice_collate_fn',
 }
 
 def load_obj(import_str: str):

@@ -84,36 +84,6 @@ def coco_collate_fn(batch):
         "caption": captions
     }
 
-class ARODataset(BaseDataset):
-    def __getitem__(self, idx):
-        row_compiled = self.compiled_df.iloc[idx]
-        
-        # Load image
-        image = self._load_image(row_compiled['image_id'])
-        
-        # Extract both expressions side-by-side for comparison scoring
-        pos_einsum = row_compiled['true_caption_einsum']
-        pos_symbols = row_compiled['true_caption_symbols']
-        
-        neg_einsum = row_compiled['false_caption_einsum']
-        neg_symbols = row_compiled['false_caption_symbols']
-        
-        return {"image": image,
-                "pos_caption": (pos_einsum, pos_symbols),
-                "neg_caption": (neg_einsum, neg_symbols)
-                }
-    
-def aro_collate_fn(batch):
-    images = torch.stack([item['image'] for item in batch])
-    pos_captions = [item['pos_caption'] for item in batch] 
-    neg_captions = [item['neg_caption'] for item in batch]
-    
-    return {
-        "image": images,
-        "pos_caption": pos_captions,
-        "neg_caption": neg_captions
-    }
-    
 class SVODataset(BaseDataset):
     def __getitem__(self, idx):
         row_compiled = self.compiled_df.iloc[idx]
@@ -131,7 +101,7 @@ class SVODataset(BaseDataset):
                 "neg_image": neg_image,
                 "idx": idx,   # row index (distillation looks up the teacher's embeddings by it)
                 }
-        if 'swapped_sentence_einsum' in row_compiled.index:   # training with swapped-caption negatives (retrieve.py --swap train --keep_all)
+        if 'swapped_sentence_einsum' in row_compiled.index:   # training with swapped-caption negatives (swap_negatives)
             item["swap_caption"] = (row_compiled['swapped_sentence_einsum'], row_compiled['swapped_sentence_symbols'])
             item["swap_valid"] = bool(row_compiled.get('swap_valid', True))
         return item
@@ -150,34 +120,27 @@ def svo_collate_fn(batch):
             "swap_valid": torch.tensor([item['swap_valid'] for item in batch])} if 'swap_caption' in batch[0] else {}),
     }
 
-class SwapDataset(BaseDataset):
+class TextChoiceDataset(BaseDataset):
+    # one image and two captions, the true one first (SVO swap sets: subject and object swapped; ARO: attributes swapped)
+    image_col, pos_col, neg_col = 'pos_image_id', 'corrected_sentence', 'swapped_sentence'
+
     def __getitem__(self, idx):
         row_compiled = self.compiled_df.iloc[idx]
-        
-        # Load image
-        image = self._load_image(row_compiled['pos_image_id'])
-        
-        # Extract both expressions side-by-side for comparison scoring
-        pos_einsum = row_compiled['corrected_sentence_einsum']
-        pos_symbols = row_compiled['corrected_sentence_symbols']
+        return {"image": self._load_image(row_compiled[self.image_col]),
+                "pos_caption": (row_compiled[f'{self.pos_col}_einsum'], row_compiled[f'{self.pos_col}_symbols']),
+                "neg_caption": (row_compiled[f'{self.neg_col}_einsum'], row_compiled[f'{self.neg_col}_symbols'])}
 
-        neg_einsum = row_compiled['swapped_sentence_einsum']
-        neg_symbols = row_compiled['swapped_sentence_symbols']
-        
-        return {"image": image,
-                "pos_caption": (pos_einsum, pos_symbols),
-                "neg_caption": (neg_einsum, neg_symbols)
-                }
-    
-def swap_collate_fn(batch):
-    images = torch.stack([item['image'] for item in batch])
-    pos_captions = [item['pos_caption'] for item in batch] 
-    neg_captions = [item['neg_caption'] for item in batch]
-    
+class SwapDataset(TextChoiceDataset):
+    pass
+
+class ARODataset(TextChoiceDataset):
+    image_col, pos_col, neg_col = 'image_id', 'true_caption', 'false_caption'
+
+def text_choice_collate_fn(batch):
     return {
-        "image": images,
-        "pos_caption": pos_captions,
-        "neg_caption": neg_captions
+        "image": torch.stack([item['image'] for item in batch]),
+        "pos_caption": [item['pos_caption'] for item in batch],
+        "neg_caption": [item['neg_caption'] for item in batch]
     }
 
 # verbs whose subject/object swap usually still describes the image: their swapped captions are not negatives

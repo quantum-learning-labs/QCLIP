@@ -9,10 +9,7 @@ from modules.symbolic.functor import tree2einsum, unify_codomain
 
 class TextProcessor:
     def __init__(self, parser_path: str | None = None, batch_size: int = 32, device = 'cpu'):
-        # parser_path = '/Users/tls/Desktop/Work/COMP0267/assignment_5/COMP0267_CW/bobcat'
-        # parser_path = '/cs/research/pplv/comp_bridge/bobcat'
-        # os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        self.parser_path = parser_path or os.getenv("BOBCAT_PARSER_PATH", "./bobcat")
+        self.parser_path = parser_path or os.getenv("BOBCAT_PATH", "./bobcat")   # Bobcat parser model directory
         self.parser = BobcatParser(model_name_or_path=self.parser_path, cache_dir=self.parser_path, device=device, batch_size=batch_size)
 
     def text2diagram(self, path, dataset, text_labels: list[str]):

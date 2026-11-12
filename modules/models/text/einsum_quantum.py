@@ -117,40 +117,33 @@ class VQCModel(nn.Module):
         for einsum_str, items in groups.items():
             indices, tensor_lists = zip(*items)
             minibatch_size = len(indices)
-            try:
-                plan = self._plan(einsum_str, tensor_lists[0])
-                operands = [None] * plan['n_ops']
-                for pos, buf_name in plan['static']:
-                    buf = getattr(self, buf_name)
-                    operands[pos] = buf.expand(minibatch_size, *buf.shape)
-                if plan['param_pos']:
-                    param_idx = torch.tensor([[self.sym2param.get(tensors[p]['name'], self.unk_param_index) for p in plan['param_pos']]
-                                              for tensors in tensor_lists], device=dev)
-                    angles = thetas[param_idx].to(dtype=self.precision)  # [minibatch, n_param_gates]
-                    for op_type, cols in plan['by_type'].items():
-                        gate_batch = self.GATE_FNS[op_type](angles[:, cols])  # [minibatch, len(cols), 2, 2(, 2, 2)]
-                        for j, c in enumerate(cols):
-                            operands[plan['param_pos'][c]] = gate_batch[:, j]
-                group_out = plan['expr'](*operands, backend='torch')
+            plan = self._plan(einsum_str, tensor_lists[0])
+            operands = [None] * plan['n_ops']
+            for pos, buf_name in plan['static']:
+                buf = getattr(self, buf_name)
+                operands[pos] = buf.expand(minibatch_size, *buf.shape)
+            if plan['param_pos']:
+                param_idx = torch.tensor([[self.sym2param.get(tensors[p]['name'], self.unk_param_index) for p in plan['param_pos']]
+                                          for tensors in tensor_lists], device=dev)
+                angles = thetas[param_idx].to(dtype=self.precision)  # [minibatch, n_param_gates]
+                for op_type, cols in plan['by_type'].items():
+                    gate_batch = self.GATE_FNS[op_type](angles[:, cols])  # [minibatch, len(cols), 2, 2(, 2, 2)]
+                    for j, c in enumerate(cols):
+                        operands[plan['param_pos'][c]] = gate_batch[:, j]
+            group_out = plan['expr'](*operands, backend='torch')
 
-                if self.discard:
-                    elems_per_item = group_out.numel() // minibatch_size
-                    target_sent_dim = 2**self.out_q
-                    if elems_per_item >= target_sent_dim and elems_per_item % target_sent_dim == 0:
-                        sent_dim = target_sent_dim
-                        traced_dim = elems_per_item // sent_dim
-                    else:
-                        sent_dim = elems_per_item
-                        traced_dim = 1
-                    group_out = group_out.reshape(minibatch_size, sent_dim, traced_dim)
-                    rho = torch.bmm(group_out, group_out.conj().transpose(1, 2))
-                    results[list(indices)] = rho
-                else:    
-                    results[list(indices)] = group_out
-            except Exception as e:
-                if self.discard:
-                    results[list(indices)] = torch.zeros(minibatch_size, 2**self.out_q, 2**self.out_q, dtype=self.precision, device=dev)
+            if self.discard:
+                elems_per_item = group_out.numel() // minibatch_size
+                target_sent_dim = 2**self.out_q
+                if elems_per_item >= target_sent_dim and elems_per_item % target_sent_dim == 0:
+                    sent_dim = target_sent_dim
+                    traced_dim = elems_per_item // sent_dim
                 else:
-                    results[list(indices)] = torch.zeros(minibatch_size, *[2]*self.out_q, dtype=self.precision, device=dev)
-                print(f"[Error] Failed to contract batch with error: {e}. Returning zeroed tensors for this batch.")
+                    sent_dim = elems_per_item
+                    traced_dim = 1
+                group_out = group_out.reshape(minibatch_size, sent_dim, traced_dim)
+                rho = torch.bmm(group_out, group_out.conj().transpose(1, 2))
+                results[list(indices)] = rho
+            else:    
+                results[list(indices)] = group_out
         return results

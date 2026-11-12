@@ -50,14 +50,14 @@ dataset:
       task: evaluate_image_choice
     swap:
       class: modules.data_pipeline.datasets.SwapDataset
-      collate_fn: modules.data_pipeline.datasets.swap_collate_fn
+      collate_fn: modules.data_pipeline.datasets.text_choice_collate_fn
       text_path: data/svo-probes/processed/swap.pkl
       img_path: data/svo-probes/processed/image_embeddings.pt
       task: evaluate_text_choice
 _dataset:
   name: aro
   class: modules.data_pipeline.datasets.ARODataset
-  collate_fn: modules.data_pipeline.datasets.aro_collate_fn
+  collate_fn: modules.data_pipeline.datasets.text_choice_collate_fn
   eval_mapper: modules.data_pipeline.datasets.aro_mapper
   train:
     text_path: data/aro/processed/train.pkl
@@ -71,13 +71,13 @@ _dataset:
   test:
     att:
       class: modules.data_pipeline.datasets.ARODataset
-      collate_fn: modules.data_pipeline.datasets.aro_collate_fn
+      collate_fn: modules.data_pipeline.datasets.text_choice_collate_fn
       text_path: data/aro/processed/test_att.pkl
       img_path: data/aro/processed/image_embeddings.pt
       task: evaluate_text_choice
     rel:
       class: modules.data_pipeline.datasets.ARODataset
-      collate_fn: modules.data_pipeline.datasets.aro_collate_fn
+      collate_fn: modules.data_pipeline.datasets.text_choice_collate_fn
       text_path: data/aro/processed/test_rel.pkl
       img_path: data/aro/processed/image_embeddings.pt
       task: evaluate_text_choice

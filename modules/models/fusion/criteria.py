@@ -1,7 +1,15 @@
 import torch, math, itertools
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Any, Tuple
+
+def unit_rows(emb: torch.Tensor) -> torch.Tensor:
+    # each embedding flattened to a unit vector (a statevector, or a density matrix in Hilbert-Schmidt norm)
+    return F.normalize(emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
+
+def density_matrices(emb: torch.Tensor, dtype=torch.complex64) -> torch.Tensor:
+    # [B, D*D] or [B, D, D] -> [B, D, D]
+    D = int(round(math.sqrt(emb[0].numel())))
+    return emb.reshape(emb.size(0), D, D).to(dtype)
 
 class BaseInfoNCELoss(nn.Module):
     def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0):
@@ -9,29 +17,6 @@ class BaseInfoNCELoss(nn.Module):
         self.temperature = temperature
         self.label_smoothing = label_smoothing
         self.cross_entropy = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-
-    def describe(self) -> None:
-        hyperparams = self.get_hyperparams()
-        param_str = " | ".join([f"{k}: {v}" for k, v in hyperparams.items()])
-        print(f"{self.__class__.__name__} {param_str}")
-
-    def get_hyperparams(self) -> Dict[str, Any]:
-        return {
-            "temperature": self.temperature,
-            "label_smoothing": self.label_smoothing,
-        }
-
-    def _ensure_density_matrices(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int]:
-        B = text_emb.size(0)
-        if text_emb.dim() == 2:
-            D = int(math.sqrt(text_emb.size(1)))
-            rho_text = text_emb.view(B, D, D).to(torch.complex64)
-            rho_image = image_emb.view(B, D, D).to(torch.complex64)
-        else:
-            D = text_emb.size(-1)
-            rho_text = text_emb.to(torch.complex64)
-            rho_image = image_emb.to(torch.complex64)
-        return rho_text, rho_image, D
 
     def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError("Subclasses must implement compute_similarity().")
@@ -85,48 +70,33 @@ class InfoNCE(nn.Module):
         
         return 0.5 * (loss_t2i + loss_i2t)
 
-class HS_InfoNCE(BaseInfoNCELoss):
-    # similarity = Tr(rho sigma) / sqrt(P_rho P_sigma): Hilbert-Schmidt cosine *including* the identity component
-    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.1):
-        super().__init__(temperature=temperature, label_smoothing=label_smoothing)
-
-    def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
-        text_flat = F.normalize(text_emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
-        image_flat = F.normalize(image_emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
-        return (text_flat @ image_flat.conj().T).abs()
-
 class FS_InfoNCE(BaseInfoNCELoss):
-    # similarity = 1 - theta / (pi/2), theta = arccos|<t|i>| the Fubini-Study angle between the pure states
+    # pure states: similarity = 1 - theta / (pi/2), theta = arccos|<t|i>| the Fubini-Study angle
     def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.1, eps: float = 1e-7):
         super().__init__(temperature=temperature, label_smoothing=label_smoothing)
         self.eps = eps
 
-    def get_hyperparams(self) -> Dict[str, Any]:
-        hp = super().get_hyperparams()
-        hp.update({"eps": self.eps})
-        return hp
-
     def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
-        text_flat = F.normalize(text_emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
-        image_flat = F.normalize(image_emb.flatten(start_dim=1).to(torch.complex64), p=2, dim=1)
-        overlap = torch.clamp((text_flat @ image_flat.conj().T).abs(), 0.0, 1.0 - self.eps)
+        overlap = torch.clamp((unit_rows(text_emb) @ unit_rows(image_emb).conj().T).abs(), 0.0, 1.0 - self.eps)
         return 1.0 - (torch.acos(overlap) / (math.pi / 2))
 
+class HS_InfoNCE(BaseInfoNCELoss):
+    # density matrices: similarity = Tr(rho sigma) / sqrt(P_rho P_sigma), the Hilbert-Schmidt cosine including the identity component
+    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.1):
+        super().__init__(temperature=temperature, label_smoothing=label_smoothing)
+
+    def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
+        return (unit_rows(text_emb) @ unit_rows(image_emb).conj().T).abs()
+
 class UJ_InfoNCE(BaseInfoNCELoss):
-    # similarity = arcsin(sqrt F) / (pi/2), F = Tr(rho sigma): the Uhlmann-Jozsa fidelity, which needs no matrix square root
-    # because the image state sigma is pure
+    # density matrices: similarity = arcsin(sqrt F) / (pi/2), F = Tr(rho sigma): the Uhlmann-Jozsa fidelity, which needs no
+    # matrix square root because the image state sigma is pure
     def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, eps: float = 1e-6):
         super().__init__(temperature=temperature, label_smoothing=label_smoothing)
         self.eps = eps
 
-    def get_hyperparams(self) -> Dict[str, Any]:
-        hp = super().get_hyperparams()
-        hp.update({"eps": self.eps})
-        return hp
-
     def _unit_trace(self, emb: torch.Tensor) -> torch.Tensor:
-        D = int(round(math.sqrt(emb[0].numel())))
-        rho = emb.reshape(emb.size(0), D, D).to(torch.complex128)
+        rho = density_matrices(emb, torch.complex128)
         return rho / torch.diagonal(rho, dim1=-2, dim2=-1).sum(-1).real.clamp(min=1e-12)[:, None, None]
 
     def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
@@ -134,6 +104,8 @@ class UJ_InfoNCE(BaseInfoNCELoss):
         return torch.asin(fidelity.clamp(self.eps, 1 - self.eps).sqrt()) / (math.pi / 2.0)
 
 class Pauli_InfoNCE(BaseInfoNCELoss):
+    # density matrices: similarity = cosine of the Pauli vectors r_k = Tr(rho P_k) (identity dropped), i.e. of the traceless
+    # parts rho - I/d; blind to purity, hence the optional purity regulariser (purity_weight)
     def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, num_qubits: int = 3, eps: float = 1e-8, purity_weight: float = 0.1):
         super().__init__(temperature=temperature, label_smoothing=label_smoothing)
         self.num_qubits = num_qubits
@@ -158,82 +130,18 @@ class Pauli_InfoNCE(BaseInfoNCELoss):
             
         self.register_buffer("pauli_basis", torch.stack(basis_list), persistent=False)
 
-    def get_hyperparams(self) -> Dict[str, Any]:
-        hp = super().get_hyperparams()
-        hp.update({
-            "purity_weight": self.purity_weight,
-            "num_qubits": self.num_qubits,
-            "eps": self.eps
-        })
-        return hp
-
     def _to_pauli_vector(self, rho: torch.Tensor) -> torch.Tensor:
-        pauli_vec = torch.real(torch.einsum('bmn, knm -> bk', rho, self.pauli_basis.to(rho.device)))
-        return pauli_vec
-
-    def _compute_purity_from_pauli(self, v_pauli: torch.Tensor) -> torch.Tensor:
-        v_norm_sq = torch.sum(v_pauli ** 2, dim=-1)
-        purity = (1.0 + v_norm_sq) / self.dim_hilbert
-        return torch.clamp(purity, min=1.0 / self.dim_hilbert, max=1.0)
+        return torch.real(torch.einsum('bmn, knm -> bk', rho, self.pauli_basis.to(rho.device)))
 
     def compute_similarity(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
-        rho_text, rho_image, _ = self._ensure_density_matrices(text_emb, image_emb)
-        
-        v_text = self._to_pauli_vector(rho_text)    # [B_txt, 63]
-        v_image = self._to_pauli_vector(rho_image)  # [B_img, 63]
-        
-        v_text_norm = torch.nn.functional.normalize(v_text, dim=-1, eps=self.eps)
-        v_image_norm = torch.nn.functional.normalize(v_image, dim=-1, eps=self.eps)
-        
+        v_text_norm = F.normalize(self._to_pauli_vector(density_matrices(text_emb)), dim=-1, eps=self.eps)
+        v_image_norm = F.normalize(self._to_pauli_vector(density_matrices(image_emb)), dim=-1, eps=self.eps)
         return torch.matmul(v_text_norm, v_image_norm.T)
 
     def compute_regularization(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
         if self.purity_weight <= 0:
             return torch.tensor(0.0, device=text_emb.device)
-
-        rho_text, rho_image, _ = self._ensure_density_matrices(text_emb, image_emb)
-        v_text = self._to_pauli_vector(rho_text)
-        
-        text_purity = self._compute_purity_from_pauli(v_text)
-        text_purity_loss = (1.0 - text_purity).mean()
-
-        loss_purity = text_purity_loss
-
-        return self.purity_weight * loss_purity
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        # purity Tr(rho^2) = (1 + |r|^2) / d
+        v_norm_sq = torch.sum(self._to_pauli_vector(density_matrices(text_emb)) ** 2, dim=-1)
+        purity = torch.clamp((1.0 + v_norm_sq) / self.dim_hilbert, min=1.0 / self.dim_hilbert, max=1.0)
+        return self.purity_weight * (1.0 - purity).mean()

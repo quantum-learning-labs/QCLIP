@@ -37,7 +37,7 @@ if __name__ == "__main__":
     optimizer, scheduler = build_optimizer(config, text_model, image_model)
     print(f"Optimizer: {optimizer.__class__.__name__} | Quantum LR: {config['qlr']} | Classical LR: {config['clr']} | Weight Decay: {config.get('weight_decay', 1e-4)}")
     print(f"Scheduler: {scheduler.__class__.__name__} | Warmup Epochs: {config.get('warmup_epochs', 5)} | Total Epochs: {config['epochs']} | Patience : {config['patience']} | Delta : {config['min_delta']}")
-    exp.loss_fn.describe()
+    print(f"Loss: {exp.loss_fn.__class__.__name__} | temperature: {exp.loss_fn.temperature} | label smoothing: {exp.loss_fn.label_smoothing}")
     print(f"Training for {config['epochs']} epochs with batch size {config['batch_size']}")
 
     teacher = None

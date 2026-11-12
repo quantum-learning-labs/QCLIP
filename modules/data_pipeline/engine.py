@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 from modules.common import load_pkl, load_obj
 from modules.compilation.einsum import tn_metadata, analyse_einsum
+from modules.data_pipeline.datasets import build_swap_set
 
 class DataEngine:
     def __init__(self, config, ansatz, device):
@@ -23,22 +24,26 @@ class DataEngine:
         else:
             self.img_transform = None
 
+    def split_config(self, split):
+        return self.config['dataset'][split] if split in ('train', 'val') else self.config['dataset']['test'][split]
+
+    def load_text(self, split):
+        # derive: swap builds the subject/object swap set of the split; swap_negatives adds swapped captions to train
+        entry = self.split_config(split)
+        data = load_pkl(entry["text_path"])
+        if entry.get('derive') == 'swap':
+            data = build_swap_set(data)
+        if split == 'train' and self.config.get('swap_negatives', False):
+            data = build_swap_set(data, keep_all=True)
+        return data
+
     def compile_text(self, split):
         compile_kwargs = {}
         if self.config["model_type"] == "vqc":
             compile_kwargs["curry"] = self.config["text"].get("curry", False)
             compile_kwargs["discard"] = self.config["text"].get("discard", False)
             compile_kwargs["spider"] = self.config["text"].get("spider", False)
-            
-        if split == 'train' or split == 'val':
-            data = load_pkl(self.config["dataset"][split]["text_path"])
-            return self.ansatz.compile_dataset(data, **compile_kwargs)
-        elif split not in ['train', 'val']:
-            data = load_pkl(self.config["dataset"]["test"][split]["text_path"])
-            compiled_data = self.ansatz.compile_dataset(data, **compile_kwargs)
-            return compiled_data
-        else:
-            raise ValueError(f"Unsupported split '{split}' for text compilation. Must be 'train' or 'val'.")
+        return self.ansatz.compile_dataset(self.load_text(split), **compile_kwargs)
 
     def text_init(self, text_model, compiled_data):
         if hasattr(text_model, "from_symbols"):
@@ -87,49 +92,12 @@ class DataEngine:
             return metrics
 
     def get_dataset(self, compiled_data, split='train'):
-        if split == 'train' or split == 'val':
-            return self.DatasetClass(
-                compiled_data, 
-                self.config['dataset'][split]['img_path'], 
-                image_transform=self.img_transform, 
-                mode=split
-            )
-        elif split not in ['train', 'val']:
-            BenchDatasetClass = load_obj(self.config['dataset']['test'][split].get('class', None))
-            if BenchDatasetClass is None:
-                raise ValueError(f"No dataset class specified for test split '{split}' in config.")
-            return BenchDatasetClass(
-                compiled_data, 
-                self.config['dataset']['test'][split]['img_path'], 
-                image_transform=self.img_transform, 
-                mode='test'
-            )
-        else:
-            raise ValueError(f"Unsupported split '{split}' for loader. Must be 'train', 'val', or a test split name.")
-        
+        DatasetClass = self.DatasetClass if split in ('train', 'val') else load_obj(self.split_config(split)['class'])
+        return DatasetClass(compiled_data, self.split_config(split)['img_path'], image_transform=self.img_transform,
+                            mode=split if split in ('train', 'val') else 'test')
+
     def get_loader(self, compiled_data, split='train'):
-        if split == 'train' or split == 'val':
-            dataset = self.get_dataset(compiled_data, split=split)
-            loader = DataLoader(
-                dataset, 
-                batch_size=self.config['batch_size'], 
-                collate_fn=self.collate_fn, 
-                shuffle=(split=='train'), 
-                num_workers=self.config.get("num_workers", 0),
-                pin_memory=True
-            )
-            return loader
-        elif split not in ['train', 'val']:
-            dataset = self.get_dataset(compiled_data, split=split)
-            collate_fn = load_obj(self.config['dataset']['test'][split]['collate_fn'])
-            loader = DataLoader(
-                dataset, 
-                batch_size=self.config['batch_size'], 
-                collate_fn=collate_fn, 
-                shuffle=False, 
-                num_workers=self.config.get("num_workers", 0),
-                pin_memory=True
-            )
-            return loader
-        else:
-            raise ValueError(f"Unsupported split '{split}' for loader. Must be 'train', 'val', or a test split name.")
+        collate_fn = self.collate_fn if split in ('train', 'val') else load_obj(self.split_config(split)['collate_fn'])
+        return DataLoader(self.get_dataset(compiled_data, split=split), batch_size=self.config['batch_size'],
+                          collate_fn=collate_fn, shuffle=(split == 'train'), num_workers=self.config.get("num_workers", 0),
+                          pin_memory=True)
