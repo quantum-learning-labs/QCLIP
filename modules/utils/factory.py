@@ -8,7 +8,7 @@ from modules.models.text.einsum_quantum import VQCModel
 from modules.models.text.einsum_classical import TNModel
 from modules.models.text.neural_model import MLPModel
 
-from modules.models.vision.quantum_map import QuantumFeatureMap, QFMap_CPTP
+from modules.models.vision.quantum_map import QuantumFeatureMap
 from modules.models.vision.clip import FrozenCLIP
 from modules.models.vision.image_model import TTNImageModel
 
@@ -74,12 +74,9 @@ def build_experiment(config, device):
         elif loss_name == 'uj':
             loss_fn = UJ_InfoNCE(label_smoothing=ls, temperature=temp)
         elif loss_name == 'hs':
-            loss_fn = HS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1))
+            loss_fn = HS_InfoNCE(label_smoothing=ls, temperature=temp)
         elif loss_name == 'fs':
-            # fs_convention: 'arccos' | 'arcsin' | 'legacy'; a config without the key (every config and checkpoint before 2026-11-11)
-            # trained with 'legacy', so that stays its default and old runs, checkpoints and distillation teachers reproduce
-            loss_fn = FS_InfoNCE(label_smoothing=ls, temperature=temp, lambda_reg=config.get('spread_weight', 0.1),
-                                 convention=config.get('fs_convention', 'legacy'))
+            loss_fn = FS_InfoNCE(label_smoothing=ls, temperature=temp)
         else:
             raise ValueError(f"Unknown loss '{loss_name}' (pauli, uj, hs, fs)")
         

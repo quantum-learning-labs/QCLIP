@@ -96,5 +96,3 @@ _dataset:
       img_path: "data/aro/processed/image_embeddings.pt"
       task: "evaluate_text_choice"
 
-# FS_InfoNCE (non-discard loss) overlap map for both the similarity and the regulariser: arccos | arcsin | legacy (pre-2026-11-11 mixed form)
-fs_convention: arccos

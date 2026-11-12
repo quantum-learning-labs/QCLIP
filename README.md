@@ -188,8 +188,7 @@ The main keys:
 | `qlr`, `clr` | base learning rates for the circuit and the classical parameters |
 | `embedding_qubits` | qubits of the sentence (output) wire and of the image state |
 | `loss` | `fs` (Fubini-Study, post-selection), `pauli`, `uj`, `hs` (discard); default by `text.discard` |
-| `fs_convention` | `fs` overlap map for similarity and regulariser: `arccos`, `arcsin` or `legacy` (the mixed form of older runs) |
-| `purity_weight`, `spread_weight` | loss regularisers (purity: `pauli`; text-text spread: `hs`, `fs`) |
+| `purity_weight` | purity regulariser of `pauli` (default 0.1; every final recipe uses 0) |
 | `swap_negatives` | add subject/object-swapped captions as text negatives (train split from `retrieve.py --swap train --keep_all`) |
 | `distill_from`, `distill_kd_weight`, `distill_tau` | distil from a frozen post-selected teacher checkpoint |
 | `text.layers` | ansatz depth per word, the most important knob |

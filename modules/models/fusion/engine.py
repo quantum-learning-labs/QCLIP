@@ -106,8 +106,6 @@ class RunManager:
                 "text_layers": self.config['text']['layers'],
                 "vision_layers": self.config['vision']['layers'],
                 "overrides": " ".join(self.config.get('overrides', [])) or "none",
-                "spread_weight": getattr(self.trainer.loss_fn, 'lambda_reg', None),
-                "fs_convention": getattr(self.trainer.loss_fn, 'convention', None),
                 "init_from": self.config.get('init_from') or "none",
                 "swap_negatives": bool(self.config.get('swap_negatives', False)),
                 "distill_from": self.config.get('distill_from') or "none",
