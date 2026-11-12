@@ -7,7 +7,7 @@ from collections import Counter
     
 class TNCompiler: 
     def __init__(self, obmap: dict[str, int], decomp_fn, decouple: bool = False, orient: bool = False, lift=None,
-                 lift_rootmap: str = None):
+                 lift_rootmap: str = None, own_pairs: str = None):
         # decouple: one shared vector per word + one shared tensor per complex type (compile_decoupled_tn)
         # orient: each symbol also gets 'out' = position of its leg towards the sentence output (for text.init: norm)
         self.obmap = obmap
@@ -30,6 +30,22 @@ class TNCompiler:
             self.rootmap = load_rootmap(lift_rootmap or 'modules/compilation/classical/e2_rootmap.json')
             self.lift_stats = Counter()
             self.id += '_lift' + ''.join(r[1:] for r in self.lift)
+        # own_pairs (text.own_pairs, decoupled only, default off; E1): JSON from tools/tn/s5_e1_pairs.py. Each listed
+        # (relation word, type symbol) occurrence gets its own tensor 'u:<word>|<symbol>' (no word leg, own argument factors:
+        # never shared via share_args); every other occurrence keeps the shared word-vector + type-tensor path
+        self.own = None
+        if own_pairs:
+            import json, copy, hashlib
+            if not decouple:
+                raise ValueError('text.own_pairs needs text.decouple: true')
+            if not self.lift:   # R1 maps every root to an atomic type: own tensors never carry the 'out' leg
+                raise ValueError('text.own_pairs needs text.lift (R1 at least)')
+            raw = open(own_pairs, 'rb').read()
+            self.own = frozenset(json.loads(raw)['pairs'])
+            self.own_decomp = copy.copy(decomp_fn)
+            if self.own_decomp is not None and hasattr(self.own_decomp, 'share_args'):
+                self.own_decomp.share_args = None
+            self.id += '_own' + hashlib.md5(raw).hexdigest()[:8]
 
     def compile_tn(self, tn):
         if self.decouple:
@@ -89,6 +105,15 @@ class TNCompiler:
             if len(idx_arr) != len(type_arr):
                 raise ValueError(f"Mismatch between indices and types for word '{word}' in sentence '{' '.join([w for w, _, _ in tn])}': "
                                  f"indices={idx_arr}, types={type_arr}")
+            symbol = type_symbol or 't:' + '@'.join(type_arr)
+            if self.own and f'{word}|{symbol}' in self.own:   # E1: the word's own tensor for this role
+                dims = [self.obmap.get(t, 1) for t in type_arr]
+                own_sym = f'u:{word}|{symbol}'
+                if self.own_decomp is None:
+                    processed_tensors.append((own_sym, list(idx_arr), tuple(dims)))
+                else:
+                    processed_tensors.extend(self.own_decomp.decompose(own_sym, list(idx_arr), dims, index_counter))
+                continue
             wire = next(index_counter)
             processed_tensors.append(('w:' + word, [wire], (self.word_dim,)))
 
@@ -96,7 +121,6 @@ class TNCompiler:
             type_idx = list(idx_arr[:mid]) + [wire] + list(idx_arr[mid:])
             dims = [self.obmap.get(t, 1) for t in type_arr]
             type_dims = dims[:mid] + [self.word_dim] + dims[mid:]
-            symbol = type_symbol or 't:' + '@'.join(type_arr)
             if self.decomposition is None:
                 processed_tensors.append((symbol, type_idx, tuple(type_dims)))
             else:
@@ -107,7 +131,7 @@ class TNCompiler:
         if uf is not None:   # spiders: every leg of one spider gets the same index (a hyperedge of the einsum)
             processed_tensors = [(s, [uf.find(i) for i in idx], sh) for s, idx, sh in processed_tensors]
             # one output path: with R1 no type tensor keeps an 'out' leg (the codomain maps m:X->out are the only route out)
-            assert not any(s.startswith('t') and 'out' in s.split(':')[-1].split('_core')[0].split('@') for s, _, _ in processed_tensors), \
+            assert not any(s[0] in 'tu' and 'out' in s.split(':')[-1].split('_core')[0].split('@') for s, _, _ in processed_tensors), \
                 [s for s, _, _ in processed_tensors]
 
         input_subs = []
