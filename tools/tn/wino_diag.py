@@ -32,7 +32,11 @@ for ck in sys.argv[2:]:
                "caption_cos_gt_0.99": int((cc > 0.99).sum()), "same_einsum_structure": int(sum(same_expr)),
                "img_pair_cos_mean": None, "n": len(S),
                # caption preference independent of the image: c0 preferred by both images (or c1 by both)
-               "caption_dominated": int((((S[:, 0] > S[:, 1]) == (S[:, 2] > S[:, 3]))).sum())}
+               "caption_dominated": int((((S[:, 0] > S[:, 1]) == (S[:, 2] > S[:, 3]))).sum()),
+               # E3: image preference independent of the caption: i0 preferred by both captions (or i1 by both)
+               "image_dominated": int((((S[:, 0] > S[:, 2]) == (S[:, 1] > S[:, 3]))).sum()),
+               "txt_given_not_caption_dominated": (t[(S[:, 0] > S[:, 1]) != (S[:, 2] > S[:, 3])].float().mean().item()),
+               "img_given_not_image_dominated": (i[(S[:, 0] > S[:, 2]) != (S[:, 1] > S[:, 3])].float().mean().item())}
     print(ck, {k: v for k, v in out[ck].items() if k != 'grp_items'}, flush=True)
 ids = [set(v['grp_items']) for v in out.values()]
 out['grp_items_common_to_all'] = sorted(set.intersection(*ids)) if ids else []
