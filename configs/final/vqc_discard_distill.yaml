@@ -1,6 +1,6 @@
 # Best pure-discard recipe (2026-10-18, 10 seeds: test std 0.850+-0.011): 3 text layers, purity_weight 0,
 # warm start + score distillation from the post-selected final model of the SAME seed. Per seed run:
-#   train.py --config configs/final/vqc_discard_distill.yaml --seed S --init_from T --set distill_from=T
+#   train.py -cfg configs/final/vqc_discard_distill.yaml --seed S -cp T --set distill_from=T
 #   with T = checkpoints/svo-probes/vqc/hp_hp2_nodiscard_tl3_qlr3e-3_sS/best.pt (configs/final/vqc_nodiscard.yaml)
 model_type: "vqc"
 mlflow_db: "mlf_dbs/svo-probes_final.db"
