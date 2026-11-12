@@ -1,9 +1,8 @@
 import torch
 from torch.utils.data import DataLoader
-from modules.utils.general import load_pkl
-from modules.utils.analysis import tn_metadata, analyse_einsum
 from torchvision.transforms import v2
-from modules.utils.factory import build_dataset, load_obj
+from modules.common import load_pkl, load_obj
+from modules.compilation.einsum import tn_metadata, analyse_einsum
 
 class DataEngine:
     def __init__(self, config, ansatz, device):
@@ -11,7 +10,10 @@ class DataEngine:
         self.ansatz = ansatz
         self.device = device
         
-        self.DatasetClass, self.collate_fn, self.eval_mapper = build_dataset(config)
+        ds_config = config['dataset']
+        self.DatasetClass = load_obj(ds_config['class'])
+        self.collate_fn = load_obj(ds_config['collate_fn'])
+        self.eval_mapper = load_obj(ds_config['eval_mapper'])
         if config['vision']['method'] == 'amp':
             self.img_transform = v2.Compose([
                 v2.ToImage(),               

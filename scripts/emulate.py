@@ -1,76 +1,39 @@
-import argparse, json
-from pathlib import Path
-import pandas as pd
+from modules.common import log_phase
+from modules.config import parse_args, setup_eval, git_state, write_results
+from modules.factory import load_experiment
+from modules.compilation.quantum.backends import BackendManager
+from modules.compilation.quantum.circuits import compile_circuits
+from modules.compilation.quantum.emul import Emulator
 
-from modules.utils.factory import build_experiment
-from modules.utils.general import log_phase, setup_exp, CheckpointManager, resolve_eval_config, git_state
-from modules.data_pipeline.engine import DataEngine
-from modules.compilation.quantum.emul import BackendManager, Emulator
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-cfg', '--config', type=str, default=None, help='Config YAML (default: the config.yaml saved next to the checkpoint)')
-    parser.add_argument('-cp',"--checkpoint", type=str, default=None, help="Path to model checkpoint (.pt file)")
-    parser.add_argument('-l', "--limit", type=int, default=None, help="Debug Flag: Truncate execution to top N samples")
-    parser.add_argument("--seed", type=int, default=None, help="Overrides the config seed (shot sampling, transpiler)")
-    parser.add_argument("--shots", type=str, default=None,
-                        help="Comma-separated shot budgets per circuit (e.g. 64,256,1024); circuits are compiled once and run at each")
-    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
-                        help="Override a config value (repeatable), e.g. --set emulate.noise=true --set emulate.profile=kingston "
-                             "--set emulate.noise_profile=honest --set emulate.honest.zz_rad=0 --set emulate.aer_options.batched_shots_gpu=false "
-                             "--set emulate.backend=density_matrix --set emulate.dm_max_qubits=7 --set emulate.save_counts=true")
-    parser.add_argument("--mlflow_db", type=str, default=None,
-                        help="Also log this emulation to MLflow (sqlite file); on the cluster use one file per job")
-    parser.add_argument("--mlflow_experiment", type=str, default=None,
-                        help="MLflow experiment (default: emulation_noise if emulate.noise, else emulation_shot_sweep)")
-    parser.add_argument("-o", "--out", type=str, default=None, help="Results JSON (default: emulate_<checkpoint>.json next to the checkpoint); never overwritten")
-    args = parser.parse_args()
-
-    checkpoint_path = Path(args.checkpoint) if args.checkpoint is not None else None
-    config_path = resolve_eval_config(args.config, checkpoint_path)
-    out_path = Path(args.out) if args.out else (checkpoint_path.parent / f"emulate_{checkpoint_path.stem}.json" if checkpoint_path else None)
-    if out_path is not None and out_path.exists():
-        raise FileExistsError(f"{out_path} already exists")
-    config, DEV, SEED = setup_exp(config_path, seed=args.seed, overrides=args.set)
+# python scripts/emulate.py -cp checkpoints/.../best.pt --set emulate.noise=true --set emulate.profile=kingston
+#   --set emulate.shots=[64,256,1024]   shot budgets per circuit (circuits compiled once); default from emulate.resolution
+#   --set emulate.limit=40              first N pairs only
+if __name__ == "__main__":
+    args = parse_args("Shot-based emulation (Aer) of a checkpoint on emulate.set")
+    config, DEV, SEED, config_path, checkpoint_path, out_path = setup_eval(args, 'emulate')
+    em = config['emulate']
 
     log_phase("Evaluation Environment")
     print(f" Target Device   : {DEV} | Config : {config_path} | Seed : {SEED}")
-
-    log_phase("Instantiating Architecture")
-    ansatz, image_model, text_model, _ = build_experiment(config, DEV)
-
-    data_engine = DataEngine(config, ansatz, DEV)
-    compiled_train = data_engine.compile_text('train')
-    compiled_val = data_engine.compile_text('val')
-    emulation_set = config['emulate']['set']
-    compiled_eval = data_engine.compile_text(emulation_set)
-    einsum_data = data_engine.describe_einsum(text_model, compiled_eval, return_metrics=True)
-    if config['emulate']['measurement_method'] == 'compute_uncompute':
-        qlimit = einsum_data['max'][0] # (einsum_data['max'][0] + einsum_data['avg'][0]) // 2
-    else:
-        qlimit = einsum_data['max'][0] + config['embedding_qubits']
-
-    log_phase("Restoring Dynamic Parameter Spaces")
-    data_engine.text_init(text_model, pd.concat([compiled_train, compiled_val], ignore_index=True))
-    data_engine.image_init(image_model)
-
-    log_phase("Loading Model Checkpoint Weights")
-    checkpoint = {}
-    if checkpoint_path is not None:
-        checkpoint = CheckpointManager.load_model(checkpoint_path, image_model, text_model, DEV)
-        print(f" Recovered from ({checkpoint_path.name}) Epoch: {checkpoint.get('epoch', 'N/A')} | Historical Loss: {checkpoint.get('train_loss', 'N/A')}")
-    else:
+    exp = load_experiment(config, DEV, checkpoint_path)
+    if checkpoint_path is None:
         print(" [Warning] No checkpoint given: emulating untrained (randomly initialised) weights")
+    else:
+        print(f" Recovered from ({checkpoint_path.name}) Epoch: {exp.state.get('epoch', 'N/A')} | Historical Loss: {exp.state.get('train_loss', 'N/A')}")
+    exp.image_model.eval()
+    exp.text_model.eval()
 
-    image_model.eval()
-    text_model.eval()
+    compiled_eval = exp.data.compile_text(em['set'])
+    einsum_data = exp.data.describe_einsum(exp.text_model, compiled_eval, return_metrics=True)
+    qlimit = einsum_data['max'][0] + (0 if em['measurement_method'] == 'compute_uncompute' else config['embedding_qubits'])
     backend_manager = BackendManager(config, qlimit)
 
-    log_phase("Extracting Parameter Angle Maps")
-    eval_dataset = data_engine.get_dataset(compiled_eval, emulation_set)
-    pos_circs, neg_circs = backend_manager.compile_circuits(eval_dataset, text_model, image_model, args.limit, opt_lvl=config['emulate']['optimization_level'])
+    log_phase("Compiling Circuits")
+    eval_dataset = exp.data.get_dataset(compiled_eval, em['set'])
+    pos_circs, neg_circs = compile_circuits(eval_dataset, exp.text_model, exp.image_model, config, qlimit, em.get('limit'))
+    pos_circs = backend_manager.transpile(pos_circs, batch_size=256, optimization_level=em['optimization_level'])
+    neg_circs = backend_manager.transpile(neg_circs, batch_size=256, optimization_level=em['optimization_level'])
 
-    # 8. Execution and metric compiling
     log_phase("Executing Emulator Engine Pipeline")
     emulator = Emulator(config, backend_manager.backend)
     if emulator.dm_backend is not None:
@@ -79,16 +42,18 @@ def main():
               f"(<= {emulator.dm_max_qubits} active qubits); widths {min(widths)}-{max(widths)}")
     max_nq = max(qc.num_qubits for qc in pos_circs + neg_circs)
     nq_out = config['embedding_qubits']
-    emulator.shot_estimation(nq_out, max_nq - nq_out, resolution=config['emulate']['resolution'])
+    emulator.shot_estimation(nq_out, max_nq - nq_out, resolution=em['resolution'])
     print(f" Simulating quantum states across {len(pos_circs)} pairs with {emulator.shots} shot resolution")
-    num_runs = config['emulate'].get('num_runs', 5)
-    if args.shots:
+    num_runs = em.get('num_runs', 5)
+    shots = em.get('shots')
+    if shots is not None:
         by_shots = {}
-        for s in [int(x) for x in args.shots.split(',')]:
+        for s in (shots if isinstance(shots, list) else [shots]):
             print(f" --- {s} shots per circuit ---")
             by_shots[s] = emulator.run_experiment(pos_circs, neg_circs, shots=s, num_runs=num_runs)
             print(f" shots {s}: accuracy {by_shots[s]['accuracy']:.4f} | accepted fraction {by_shots[s]['accept_frac_mean']:.4f}")
-        data = dict(by_shots[max(by_shots)]); data['by_shots'] = by_shots
+        data = dict(by_shots[max(by_shots)])
+        data['by_shots'] = by_shots
     else:
         data = emulator.run_experiment(pos_circs, neg_circs, num_runs=num_runs)
 
@@ -98,7 +63,6 @@ def main():
     print(f"  {'Evaluated Dataset Pairs':<34} | {len(pos_circs):.6f}")
     print(f"  {'Evaluation Runs':<34} | {num_runs}")
     print(f"  {'Pipeline Cumulative Accuracy':<34} | \033[92m{data['accuracy']:.6f}\033[0m")
-    
     if num_runs > 1:
         print(f"  {'Accuracy Std Deviation':<34} | ±{data['accuracy_std']:.6f}")
         print(f"  {'Accuracy Sample Variance':<34} | {data['accuracy_var']:.6f}")
@@ -107,32 +71,8 @@ def main():
         print(f"  {'Neg Pair Fidelity (Mean ± Std)':<34} | {data['neg_fidelity_mean']:.4f} ± {data['neg_fidelity_std']:.4f}")
     print(" " + "—" * 63 + "\n")
 
-    if args.mlflow_db:   # same schema as the central importer (qclip_snapshots/tools/central_import.py)
-        import mlflow
-        mlflow.set_tracking_uri(f"sqlite:///{Path(args.mlflow_db).resolve()}")
-        em = config['emulate']
-        mlflow.set_experiment(args.mlflow_experiment or ('emulation_noise' if em.get('noise') else 'emulation_shot_sweep'))
-        name = out_path.stem if out_path is not None else Path(args.checkpoint).parent.name
-        with mlflow.start_run(run_name=name, tags={'source_key': f"emu:direct:{name}", 'analysis': 'E6 emulation',
-                                                   'step_meaning': 'shots per circuit (total, incl. rejected post-selection shots)'}):
-            mlflow.log_params({'checkpoint': str(checkpoint_path), 'trained_method': 'discard' if config['text'].get('discard') else 'nodiscard',
-                               'seed': SEED, 'pairs': len(pos_circs), 'eval_set': em.get('set'), 'noise': bool(em.get('noise')),
-                               'noise_profile': em.get('noise_profile', 'backend') if em.get('noise') else 'none', 'aer_method': em.get('backend'),
-                               'measurement_method': em.get('measurement_method'), 'git_commit': git_state(), 'honest_knobs': str(em.get('honest') or 'defaults')})
-            for s, r in (data.get('by_shots') or {emulator.shots: data}).items():
-                for k, v in (('accuracy', r['accuracy']), ('accuracy_std_over_shot_runs', r.get('accuracy_std')),
-                             ('accept_fraction', r.get('accept_frac_mean')), ('pos_fidelity_mean', r.get('pos_fidelity_mean')),
-                             ('neg_fidelity_mean', r.get('neg_fidelity_mean'))):
-                    if v is not None: mlflow.log_metric(k, float(v), step=int(s))
-
     if out_path is not None:
-        payload = {"checkpoint": str(checkpoint_path), "config": config_path, "epoch": checkpoint.get('epoch'),
-                   "seed": SEED, "discard": config['text'].get('discard', False), "git_commit": git_state(),
-                   "train_git_commit": config.get('git_commit'), "pairs": len(pos_circs), "shots": emulator.shots,
-                   "limit": args.limit, "emulate": config['emulate'], "results": data}
-        with open(out_path, 'x') as f:
-            json.dump(payload, f, indent=1, default=float)
-        print(f" Results written to {out_path}")
-
-if __name__ == "__main__":
-    main()
+        write_results(out_path, {"checkpoint": str(checkpoint_path), "config": config_path, "epoch": exp.state.get('epoch'),
+                                 "seed": SEED, "discard": config['text'].get('discard', False), "git_commit": git_state(),
+                                 "train_git_commit": config.get('git_commit'), "pairs": len(pos_circs), "shots": emulator.shots,
+                                 "limit": em.get('limit'), "emulate": em, "results": data})

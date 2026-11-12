@@ -35,7 +35,7 @@ dataset:
   name: "svo-probes"
   class: "modules.data_pipeline.datasets.SVODataset"
   collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
-  eval_mapper: "modules.models.fusion.engine.svo_mapper"
+  eval_mapper: "modules.data_pipeline.datasets.svo_mapper"
 
   train:
     text_path: "data/svo-probes/processed/train.pkl"
@@ -67,7 +67,7 @@ _dataset:
   name: "aro"
   class: "modules.data_pipeline.datasets.ARODataset"
   collate_fn: "modules.data_pipeline.datasets.aro_collate_fn"
-  eval_mapper: "modules.models.fusion.engine.aro_mapper"
+  eval_mapper: "modules.data_pipeline.datasets.aro_mapper"
 
   train:
     text_path: "data/aro/processed/train.pkl"

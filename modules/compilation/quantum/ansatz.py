@@ -1,10 +1,8 @@
-import pandas as pd
 from itertools import count
 from collections import Counter
 from abc import ABC, abstractmethod
 from tqdm import tqdm
-from modules.utils.tensor_ops import interleaved2einsum, sort_tn
-from modules.compilation.quantum.gates import *
+from modules.compilation.einsum import interleaved2einsum, sort_tn
 
 class BaseAnsatz(ABC):
     def __init__(self, obmap=set(), layers=1):

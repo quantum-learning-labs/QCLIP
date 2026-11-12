@@ -228,3 +228,8 @@ def build_swap_set(df, keep_all=False):
     cols = [c for c in swap_df.columns if not c.endswith('_diagram')] + ['corrected_sentence_diagram', 'swapped_sentence_diagram']
     print(f"Swap set: {stats} -> kept {len(swap_df)}")
     return swap_df[cols]
+
+# (images, captions) of a training batch, for the losses and global retrieval
+mscoco_mapper = lambda batch: (batch["image"], batch["caption"])
+aro_mapper = lambda batch: (batch["image"], batch["pos_caption"])
+svo_mapper = lambda batch: (batch["pos_image"], batch["caption"])

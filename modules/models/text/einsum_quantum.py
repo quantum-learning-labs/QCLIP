@@ -1,11 +1,10 @@
 from tqdm import tqdm
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List
 import torch
 import torch.nn as nn
 from opt_einsum import contract_expression
 from collections import defaultdict
 from modules.compilation.quantum.gates import *
-from modules.utils.general import get_device
 
 class VQCModel(nn.Module):
     def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64):

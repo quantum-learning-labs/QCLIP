@@ -1,8 +1,8 @@
 import torch.nn as nn
 from itertools import count
-import torch, math
+import torch
 import numpy as np
-from sklearn.decomposition import PCA, IncrementalPCA
+from sklearn.decomposition import IncrementalPCA
 from opt_einsum import contract_expression
 from modules.compilation.quantum.gates import *
 

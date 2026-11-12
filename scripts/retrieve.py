@@ -1,4 +1,4 @@
-from modules.utils.general import get_device
+from modules.common import get_device
 from modules.data_pipeline.embeddings import ImgStream, embed_images
 from modules.data_pipeline.retrieval import BaseDatasetRetriever
 from modules.data_pipeline.datasets import build_swap_set
