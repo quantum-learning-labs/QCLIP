@@ -115,7 +115,8 @@ class Ansatz:
             # (an intransitive verb maps n (1 qubit) -> out (embedding_qubits), so it must not)
             same_widths = all(self.obmap.get(t_in, 1) == self.obmap.get(t_out, 1)
                               for t_in, t_out in zip(input_types, output_types))
-            if len(input_wires) == len(output_wires) and same_widths:
+            passthrough = len(input_wires) == len(output_wires) and same_widths
+            if passthrough:
                 for in_idx, out_idx in zip(input_wires, output_wires):
                     current_wires.extend(ccg_map[in_idx])
                     ccg_map[out_idx] = ccg_map[in_idx]
@@ -136,6 +137,13 @@ class Ansatz:
             input_indices.extend([[idx for idx in ten] for ten in new_indices])
             tensor_arr.extend(new_tensors)
             
+            if passthrough:   # the outputs carry the box's wires on; the inputs are used up
+                i = 0
+                for idx, typ in zip(output_wires, output_types):
+                    n = self.obmap.get(typ, 1)
+                    ccg_map[idx] = current_wires[i:i+n]
+                    i += n
+                continue
             i = 0
             for idx, typ in zip(idx_arr, type_arr):
                 n = self.obmap.get(typ, 1)
