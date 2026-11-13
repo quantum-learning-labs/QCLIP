@@ -11,7 +11,7 @@ out_dim: 512
 emulate:
   set: "swap_full"
   noise: false
-  provider: "ibm" # 'ibm' or 'iqm': local calibration snapshots, emulate.profile picks the device (default miami / garnet)
+  provider: "ibm" # 'ibm', 'iqm' (local calibration snapshots on Aer) or 'ionq' (IonQ cloud simulator); emulate.profile picks the device / noise model (default miami / garnet / forte-1)
   optimization_level: 1 # 0, 1, 2, 3
   resolution: 10000
   num_runs: 10

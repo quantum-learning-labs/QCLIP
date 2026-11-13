@@ -156,6 +156,9 @@ PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.set=std 
 PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std \
     --set emulate.noise=true --set emulate.profile=fake_kingston --set emulate.backend=statevector \
     --set emulate.aer_options.batched_shots_gpu=false --set emulate.aer_options.shot_branching_enable=false
+# IonQ's cloud simulator with the Forte noise model (API key from $IONQ_API_KEY or ~/.ionq_key; never a QPU)
+PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std --set emulate.limit=40 \
+    --set emulate.noise=true --set emulate.provider=ionq --set emulate.profile=forte-1 --set emulate.circuit_batch=40
 # the same with an IQM device (Garnet, 20 qubits, native r and cz gates)
 PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std \
     --set emulate.noise=true --set emulate.provider=iqm --set emulate.profile=garnet
@@ -164,9 +167,12 @@ PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=10
 Emulation settings are `emulate.*` config keys, changed with `--set` as in `train.py`:
 - `shots`: shot budget(s) per circuit (circuits are compiled once and run at each); by default it follows
   `resolution`. `limit: N` emulates only the first N pairs.
-- `provider` and `profile`: the device whose calibration snapshot is emulated, locally on Aer (no account or token,
-  never hardware). `ibm` (default): any `qiskit_ibm_runtime` fake backend, default `fake_miami`. `iqm`: an IQM fake
-  backend from `iqm-client[qiskit]` (`garnet` (default), `apollo`, `aphrodite`, `adonis`), whose noise model is IQM's own.
+- `provider` and `profile`: the device to emulate; never hardware. `ibm` (default): any `qiskit_ibm_runtime` fake
+  backend (a calibration snapshot, run locally on Aer), default `fake_miami`. `iqm`: an IQM fake backend from
+  `iqm-client[qiskit]` (`garnet` (default), `apollo`, `aphrodite`, `adonis`) with IQM's own noise model, on Aer.
+  `ionq`: IonQ's cloud simulator with one of IonQ's noise models (`forte-1` (default), `aria-1`, ...; `noise: false` is
+  the ideal simulator). It needs an IonQ API key in `$IONQ_API_KEY` or in the file `emulate.ionq_key_file` (default
+  `~/.ionq_key`, keep it `chmod 600`). The code only ever opens IonQ's simulator; seeds go to its `sampler_seed`.
 - `noise_profile: honest` (IBM profiles only) adds scheduled idle decoherence and coherent ZZ to the backend noise model; its
   knobs are `emulate.honest.<knob>`. The default, `backend`, is Aer's `NoiseModel.from_backend`.
 - `backend` is the Aer method. Density matrix is faster for small circuits. `dm_max_qubits: N` runs circuits

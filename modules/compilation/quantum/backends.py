@@ -1,4 +1,4 @@
-import copy, torch
+import copy, os, torch
 from tqdm import tqdm
 from qiskit import transpile
 from qiskit_aer import AerSimulator
@@ -20,9 +20,9 @@ HONEST_DEFAULTS = {
     "idle": True,        # ALAP scheduling + thermal relaxation on idle delays (absent from from_backend)
 }
 
-# emulate.provider -> its default emulate.profile. Every profile is a local calibration snapshot of a real device,
-# simulated with Aer: no account, no token, never hardware
-DEFAULT_PROFILE = {'ibm': 'miami', 'iqm': 'garnet'}
+# emulate.provider -> its default emulate.profile. ibm and iqm: local calibration snapshots of real devices, simulated with
+# Aer (no account, no token). ionq: IonQ's cloud simulator with a device noise model (needs an API key; never a QPU)
+DEFAULT_PROFILE = {'ibm': 'miami', 'iqm': 'garnet', 'ionq': 'forte-1'}
 
 def fake_backend(name, provider='ibm'):
     # device calibration snapshot by name, e.g. ('kingston', 'ibm') or ('garnet', 'iqm')
@@ -42,6 +42,20 @@ def iqm_fake_backend(name):
         raise ValueError(f"IQM profile {name!r}: choose from {devices}")
     module = importlib.import_module(f'iqm.qiskit_iqm.fake_backends.fake_{name}')
     return getattr(module, f'IQMFake{name.capitalize()}')()
+
+def ionq_simulator(noise_model, key_file='~/.ionq_key'):
+    # IonQ's cloud simulator, the only IonQ backend this code opens. The API key comes from $IONQ_API_KEY or key_file
+    # (keep it chmod 600, outside the repository); it is never printed or stored in configs and results
+    from qiskit_ionq import IonQProvider
+    token = os.environ.get('IONQ_API_KEY')
+    if not token:
+        with open(os.path.expanduser(key_file)) as f:
+            token = f.read().strip()
+    backend = IonQProvider(token=token).get_backend('simulator')
+    if backend.name != 'ionq_simulator':
+        raise RuntimeError(f"expected the IonQ simulator, got {backend.name}")
+    backend.set_options(noise_model=noise_model)
+    return backend
 
 def noise_model(backend, provider):
     return backend.noise_model if provider == 'iqm' else NoiseModel.from_backend(backend)
@@ -82,9 +96,24 @@ class BackendManager:
         self.provider = config['emulate'].get('provider', 'ibm')
         if self.provider not in DEFAULT_PROFILE:
             raise ValueError(f"emulate.provider {self.provider!r}: choose from {list(DEFAULT_PROFILE)}")
-        self.hardware_profile = hardware_profile or fake_backend(config['emulate'].get('profile', DEFAULT_PROFILE[self.provider]),
-                                                                 self.provider)
+        self.profile = config['emulate'].get('profile', DEFAULT_PROFILE[self.provider])
+        if self.provider == 'ionq':
+            self._setup_ionq()
+            return
+        self.hardware_profile = hardware_profile or fake_backend(self.profile, self.provider)
         self._setup_backend()
+
+    def _setup_ionq(self):
+        # emulate.profile is IonQ's noise model (e.g. forte-1, aria-1); emulate.noise false runs the ideal simulator.
+        # All-to-all connectivity: transpile against the simulator's own target
+        em = self.config['emulate']
+        if em.get('noise') and em.get('noise_profile', 'backend') != 'backend':
+            raise ValueError("emulate.noise_profile honest is calibrated on IBM snapshots: use noise_profile backend with ionq")
+        self.noise_profile = 'backend'
+        self.honest = {**HONEST_DEFAULTS, 'idle': False}
+        self._backend = ionq_simulator(self.profile if em.get('noise') else 'ideal', em.get('ionq_key_file', '~/.ionq_key'))
+        self.hardware_profile = self._backend
+        print(f" Simulation: ionq cloud simulator, noise model {self._backend.options.noise_model} ({self.qlimit} qubits)")
 
     def _setup_backend(self):
         devices = AerSimulator().available_devices()
@@ -177,11 +206,11 @@ class BackendManager:
             schedule = PassManager([ALAPScheduleAnalysis(target=target), PadDelay(target=target)])
             relax = PassManager([RelaxationNoisePass(t1s, t2s, dt=self.hardware_profile.dt, op_types=[Delay])])
 
+        device = {'backend': self._backend} if self.provider == 'ionq' else {'coupling_map': self.coupling_map, 'basis_gates': self.basis_gates}
         for chunk in tqdm(chunks, desc="Transpiling", unit="batch"):
             transpiled_chunk = transpile(
                 chunk, 
-                coupling_map=self.coupling_map,
-                basis_gates=self.basis_gates,
+                **device,
                 optimization_level=optimization_level,
                 seed_transpiler=self.config.get('seed'),
                 num_processes=4,  # Kept strict to manage RAM limits
