@@ -3,6 +3,7 @@ from collections import Counter
 from abc import ABC, abstractmethod
 from tqdm import tqdm
 from modules.compilation.einsum import interleaved2einsum, sort_tn
+from modules.symbolic.root import COPY_BOX
 
 class BaseAnsatz(ABC):
     # Tensor network -> circuit compilation shared by every ansatz (wires, currying, discard, einsum strings).
@@ -39,6 +40,42 @@ class BaseAnsatz(ABC):
                 if idx not in ccg_map:
                     ccg_map[idx] = [self.get_char() for _ in range(self.obmap.get(typ, 1))]
         return ccg_map
+
+    def box(self, word, current_wires, base_symbol, curried):
+        # structural boxes (text.root) have fixed gates shared by every ansatz; word boxes get the ansatz
+        if word == COPY_BOX:
+            return self.copy_gates(current_wires, curried)
+        return self.ansatz(current_wires, base_symbol)
+
+    def _cx(self, wires, c, t, new_indices, new_tensors):
+        c_out, t_out = self.get_char(), self.get_char()
+        new_indices.append(wires[c] + wires[t] + c_out + t_out)
+        new_tensors.append({'name': None, 'op_type': 'CX'})
+        wires[c], wires[t] = c_out, t_out
+
+    def copy_gates(self, current_wires, curried):
+        # Frobenius copy N -> N^(x)m, |i> -> |i>^(x)m, on wires [n input qubits] + [s = m*n output qubits, copy k qubit j at k*n+j].
+        # curried (input wires carry the state): CX fan-out to every copy, then uncompute the input from copy 0, which leaves
+        #   the input wires in |0> exactly (their post-selection succeeds with probability 1; under discard they trace out).
+        # uncurried (the box is a state joined by a cup): sum_i |i>|i>^(x)m, i.e. H on the input then the fan-out.
+        n, s = self.obmap['n'], self.obmap['s']
+        if s % n:
+            raise ValueError(f"text.root frobenius needs s a multiple of n (s={s}, n={n})")
+        if len(current_wires) == n:   # s == n, curried: a pass-through box, and the copy N -> N is the identity
+            return list(current_wires), [], []
+        wires, new_indices, new_tensors = list(current_wires), [], []
+        if not curried:
+            for j in range(n):
+                nxt = self.get_char()
+                new_indices.append(wires[j] + nxt)
+                new_tensors.append({'name': None, 'op_type': 'H'})
+                wires[j] = nxt
+        for j in range(n):
+            for k in range(s // n):
+                self._cx(wires, j, n + k * n + j, new_indices, new_tensors)
+            if curried:
+                self._cx(wires, n + j, j, new_indices, new_tensors)
+        return wires, new_indices, new_tensors
 
     @abstractmethod
     def ansatz(self, current_wires, base_symbol):
@@ -82,7 +119,7 @@ class BaseAnsatz(ABC):
                 tensor_arr.append({'name': None, 'op_type': '0'})
 
             base_symbol = f"{word}__{'@'.join(type_arr)}"
-            current_wires, new_indices, new_tensors = self.ansatz(current_wires, base_symbol)
+            current_wires, new_indices, new_tensors = self.box(word, current_wires, base_symbol, curried=False)
             input_indices.extend(new_indices)
             tensor_arr.extend(new_tensors)
 
@@ -141,7 +178,7 @@ class BaseAnsatz(ABC):
                     tensor_arr.extend([{'name': None, 'op_type': '0'}] * n)
 
             base_symbol = f"{word}__{'@'.join(type_arr)}"
-            current_wires, new_indices, new_tensors = self.ansatz(current_wires, base_symbol)
+            current_wires, new_indices, new_tensors = self.box(word, current_wires, base_symbol, curried=True)
             input_indices.extend([[idx for idx in ten] for ten in new_indices])
             tensor_arr.extend(new_tensors)
             

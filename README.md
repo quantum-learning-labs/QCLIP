@@ -188,7 +188,7 @@ The main keys:
 | `text.layers` | ansatz depth per word, the most important knob |
 | `text.curry` | curried ansatz (cups removed); `text.spider` must stay `false` |
 | `text.discard` | discard (partial trace) instead of post-selection |
-| `text.root` | `word` (default): the root word's open wires become the output, so a root word has its own parameters; `head`: one shared head box per root type maps the open wires to the output |
+| `text.root` | `word` (default): the root word's open wires become the output, so a root word has its own parameters; `head`: one shared head box per root type maps the open wires to the output; `frobenius`: the output is the sentence space S = N^⊗m (needs `text.s` = `embedding_qubits`, a multiple of `text.n`); an `s` root is read out as it is, an `n` root (noun-phrase caption) is copied into the diagonal of S by the parameter-free Frobenius copy, other root types raise (vqc only) |
 | `vision.method`, `vision.layers` | image map: `mlp`, `pca` or `amp` (amplitude encoding) |
 | `emulate.*` | settings of `emulate.py` (set, backend, noise, profile, `measurement_method`: `compute_uncompute` or `destructive_swap`, ...) |
 
