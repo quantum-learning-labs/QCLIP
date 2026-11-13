@@ -484,7 +484,11 @@ class TNModel(nn.Module):
         idx = torch.from_numpy(to_base).to(real.device)
         bls = bls.index_select(0, idx); top = torch.maximum(ls, bls)   # both factors <= 1: no overflow
         diff = real * (ls - top).exp().unsqueeze(1) - base.index_select(0, idx) * (bls - top).exp().unsqueeze(1)
-        return torch.nn.functional.normalize(diff, p=2, dim=-1, eps=1e-30)
+        # unit norm; a caption whose words are all base (word_dropout dropped every word) has diff exactly 0: give it a
+        # denominator of 1 (output 0, finite gradient) instead of normalize's eps, whose gradient 1/eps overflowed (NaN run).
+        # Identical to normalize(eps=1e-30) for every norm > 1e-30
+        nrm = diff.norm(2, -1, keepdim=True)
+        return diff / torch.where(nrm > 1e-30, nrm, torch.ones_like(nrm))
 
     def _expression(self, struct, tensor_shapes):
         # contraction expression of a structure; path cached without the group size: the batch index is on every
