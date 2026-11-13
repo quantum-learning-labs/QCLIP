@@ -15,34 +15,4 @@ text:
 vision:
   method: "amp"   # FrozenCLIP: the image embedding itself
 
-dataset:
-  name: "svo-probes"
-  class: "modules.data_pipeline.datasets.SVODataset"
-  collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
-  eval_mapper: "modules.data_pipeline.datasets.svo_mapper"
-
-  train:
-    text_path: "data/svo-probes/processed/train.pkl"
-    img_path: "data/svo-probes/processed/image_embeddings.pt"
-  val:
-    text_path: "data/svo-probes/processed/val.pkl"
-    img_path: "data/svo-probes/processed/image_embeddings.pt"
-    diagnostics:
-      - "evaluate_image_choice"
-
-  test:
-    std:
-      class: "modules.data_pipeline.datasets.SVODataset"
-      collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
-
-      text_path: "data/svo-probes/processed/test.pkl"
-      img_path: "data/svo-probes/processed/image_embeddings.pt"
-      task: "evaluate_image_choice"
-    swap_full:
-      class: "modules.data_pipeline.datasets.SwapDataset"
-      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
-
-      text_path: "data/svo-probes/processed/test.pkl"
-      derive: swap
-      img_path: "data/svo-probes/processed/image_embeddings.pt"
-      task: "evaluate_text_choice"
+dataset: "svo-probes" # configs/data/svo-probes.yaml; dataset.* keys can be changed with --set

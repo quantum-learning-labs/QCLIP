@@ -59,9 +59,9 @@ modules/
     text/            einsum_quantum.py (VQC text model), einsum_classical.py (TN), neural_model.py (MLP)
     vision/          CLIP features and their map to quantum states (quantum_map.py)
     fusion/          criteria.py (losses), trainer.py (trainer, distillation teacher), evaluator.py, run.py (runs, checkpoints)
-  data_pipeline/     dataset retrieval (+ manifests/ of our splits), image embedding, datasets and swap sets, DataEngine
+  data_pipeline/     dataset retrieval (+ manifests/ of our curation), splits.py, image embedding, datasets and swap sets, DataEngine
 scripts/             train.py, benchmark.py, emulate.py, retrieve.py
-configs/             vqc.yaml, tn.yaml, mlp.yaml (templates); baseline/ (sweep bases); final/ (recommended configs)
+configs/             vqc.yaml, tn.yaml, mlp.yaml (templates); data/ (one file per dataset); baseline/ (sweep bases); final/ (recommended configs)
 notebooks/           train_vqc.ipynb, train_tn.ipynb: minimal training runs
 assets/              figures
 ```
@@ -86,25 +86,33 @@ Run every script from the repository root with the root on the path: `PYTHONPATH
 
 ## Data
 
-The supported datasets are SVO-Probes (the main benchmark), ARO (attribution and relation) and MSCOCO. Each
-dataset lives under `data/<name>/`:
+The supported datasets are SVO-Probes (the main benchmark), ARO (VG-Attribution and VG-Relation) and MSCOCO. A config
+names its dataset (`dataset: "svo-probes"`), whose settings are in `configs/data/<name>.yaml`. Each dataset lives
+under `data/<name>/`:
 
 ```
 data/svo-probes/processed/
-  train.pkl  val.pkl  test.pkl     parsed captions with positive and negative images
-  swap.pkl                         95 subject/object-swap pairs (text choice)
-  image_embeddings.pt              CLIP image features
+  all.pkl                the whole curated dataset: parsed captions with positive and negative images
+  image_embeddings.pt    CLIP image features
 ```
 
 - `python scripts/retrieve.py -cfg <config>` downloads the config's dataset, parses its captions and embeds its
-  images with CLIP. Datasets and their sources are listed in `modules/data_pipeline/retrieval.py` (`DATASET_SOURCES`).
-  SVO-Probes comes from DeepMind's CSV and image URLs plus our split manifest in `modules/data_pipeline/manifests/svo-probes/`.
-- Larger subject/object-swap sets are derived when they are loaded: a test entry with `derive: swap` (as `swap_full`
-  in the SVO-Probes configs, 1777 pairs from `test.pkl`) swaps the two nouns of every caption that has two, dropping
-  symmetric verbs and swaps that leave the sentence unchanged. `swap_negatives: true` adds the swapped captions to
-  the training set as extra negatives.
-
-Set the dataset in the config's `dataset:` block. `configs/vqc.yaml` has SVO-Probes active and ARO parked as `_dataset`.
+  images with CLIP. Sources are listed in `modules/data_pipeline/retrieval.py` (`DATASET_SOURCES`). SVO-Probes comes
+  from DeepMind's CSV and image URLs plus our curation in `modules/data_pipeline/manifests/svo-probes/` (the rows we
+  keep and their captions rewritten as simple subject-verb-object sentences). ARO comes from the authors' release, with
+  every image cropped to its row's box as in their evaluation.
+- Splits are computed when the data is loaded, from the dataset's `split` setting (`modules/data_pipeline/splits.py`).
+  Neither SVO-Probes nor ARO has an official training split, so both are stored whole and split by a seeded function
+  that keeps groups together: every caption of a positive image (SVO-Probes, 60/20/20) or every row of a Visual Genome
+  image (ARO, 70/15/15) lands in one split. A group's split is a hash of (seed, group), so it does not depend on row
+  order or on which captions parse. Change it with `--set dataset.split.seed=1`. Datasets with an official split (MSCOCO)
+  keep it.
+- `--set dataset.split=legacy` gives the SVO-Probes split of all results before 2026-11-13 (`weights/` and the numbers
+  in `configs/final/`). It was made by row, so captions and images are shared between its train, val and test sets.
+- Subject/object-swap sets are derived when they are loaded: a test entry with `derive: swap` (`swap_full`, 1777
+  pairs on the legacy test split) swaps the two nouns of every caption that has two, dropping symmetric verbs and swaps
+  that leave the sentence unchanged. `swap_negatives: true` adds the swapped captions to the training set as extra
+  negatives.
 
 ## Usage
 
@@ -133,7 +141,7 @@ PYTHONPATH=. python scripts/benchmark.py -cp checkpoints/svo-probes/vqc/nodiscar
 ```
 
 This evaluates on every `dataset.test` entry with the config saved next to the checkpoint. On SVO-Probes that
-means `std` (image choice, ~1.8k pairs, the primary metric), `swap` (text choice, 95 pairs) and `swap_full` (1777). It writes a JSON next to
+means `std` (image choice, the primary metric) and `swap_full` (text choice). It writes a JSON next to
 the checkpoint (`-o` sets another path) and never overwrites.
 
 ### Emulate on a simulated quantum device

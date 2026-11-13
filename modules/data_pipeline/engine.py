@@ -4,6 +4,7 @@ from torchvision.transforms import v2
 from modules.common import load_pkl, load_obj
 from modules.compilation.einsum import tn_metadata, analyse_einsum
 from modules.data_pipeline.datasets import build_swap_set
+from modules.data_pipeline.splits import select
 
 class DataEngine:
     def __init__(self, config, ansatz, device):
@@ -28,9 +29,15 @@ class DataEngine:
         return self.config['dataset'][split] if split in ('train', 'val') else self.config['dataset']['test'][split]
 
     def load_text(self, split):
-        # derive: swap builds the subject/object swap set of the split; swap_negatives adds swapped captions to train
+        # with dataset.split set, text_path is the dataset's pool and the entry's rows are computed (splits.py): the
+        # entry's split (train/val/test/all; default its own name) and subset. Without it (configs from before
+        # 2026-11-13), text_path is that split's own file.
+        # derive: swap builds the subject/object swap set of the rows; swap_negatives adds swapped captions to train
         entry = self.split_config(split)
         data = load_pkl(entry["text_path"])
+        spec = self.config['dataset'].get('split')
+        if spec is not None:
+            data = select(data, spec, entry.get('split', split), entry.get('subset'))
         if entry.get('derive') == 'swap':
             data = build_swap_set(data)
         if split == 'train' and self.config.get('swap_negatives', False):

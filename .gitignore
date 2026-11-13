@@ -233,3 +233,14 @@ jobs/
 mlruns/
 .DS_Store
 * copy.*
+
+# private agent notes and credentials: never committed (any branch)
+CLAUDE.md
+CLAUDE.md.*
+NOTES.md
+TN_BRIEF.md
+AGENTS.md
+memory/
+*.key
+*_key
+.env*
