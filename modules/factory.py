@@ -40,6 +40,13 @@ def build_loss(config):
 def build_experiment(config, device):
     model_type = config['model_type']
     
+    root = config.get('text', {}).get('root', 'word')
+    if root == 'frobenius':
+        if model_type != 'vqc':
+            raise NotImplementedError("text.root frobenius is implemented for model_type vqc (the copy box is a gate circuit)")
+        if config['text']['s'] != config['embedding_qubits']:
+            raise ValueError(f"text.root frobenius reads the sentence wire out: set text.s = embedding_qubits ({config['embedding_qubits']})")
+
     if model_type == 'tn':
         compiler = config['text']
         obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_dim']}
