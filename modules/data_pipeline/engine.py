@@ -41,7 +41,7 @@ class DataEngine:
         if spec is not None:
             which = entry.get('split', split)
             if which != 'all' and entry["text_path"] not in self.splits:
-                self.splits[entry["text_path"]] = assign(data, spec, self.config.get('text', {}).get('root', 'word'))
+                self.splits[entry["text_path"]] = assign(data, spec)
                 print(f" Split of {entry['text_path']}: {self.splits[entry['text_path']][1]}")
             labels = self.splits[entry["text_path"]][0] if which != 'all' else None
             data = select(data, labels, which, entry.get('subset'))

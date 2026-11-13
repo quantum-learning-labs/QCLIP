@@ -1,7 +1,7 @@
 import hashlib
 import numpy as np
 import pandas as pd
-from modules.symbolic.root import apply_root
+from modules.symbolic.root import apply_root, COPY_BOX, ROOT_MODES
 
 # Train/val/test splits of a dataset's pool (data/<name>/processed/all.pkl), computed when the data is loaded from
 # config['dataset']['split']:
@@ -22,19 +22,29 @@ def group_split(groups, fractions, seed):
     label = {k: SPLITS[min(int(np.searchsorted(bounds, _unit(seed, k), side='right')), len(SPLITS) - 1)] for k in keys.unique()}
     return keys.map(label).to_numpy()
 
-def row_vocab(pool, root='word'):
-    # the words of each row: (word, wire types) of every box of every parsed caption column, after text.root (a verb
-    # that is the root has other wires than inside a sentence, and in head mode the head is a word too)
+def row_vocab(pool):
+    # the words of each row, per text.root mode: (mode, word, wire types) of every box of every parsed caption column
+    # (a root word has other wires in word mode than in frobenius mode, and in head mode the head is a word too; the
+    # frobenius copy box has no parameters, so it is not vocabulary). Closing on every mode at once makes the split the
+    # same for every mode, so runs that differ in text.root are paired on the same splits and none meets an unseen word.
     cols = [c for c in pool.columns if c.endswith('_diagram')]
     if not cols:
         raise ValueError("closing the vocabulary needs the parsed pool (processed/all.pkl, *_diagram columns)")
-    return [{(box[0], tuple(box[2])) for diagram in row for box in apply_root(diagram, root)} for row in zip(*(pool[c] for c in cols))]
+    return [{(mode, box[0], tuple(box[2])) for diagram in row for mode in ROOT_MODES for box in _rooted(diagram, mode)
+             if box[0] != COPY_BOX} for row in zip(*(pool[c] for c in cols))]
 
-def close_vocabulary(pool, groups, labels, seed, root='word'):
+def _rooted(diagram, mode):
+    # a mode with no rule for this root type (frobenius beyond n and s) raises when it is used; no words here
+    try:
+        return apply_root(diagram, mode)
+    except ValueError:
+        return []
+
+def close_vocabulary(pool, groups, labels, seed):
     # move val/test groups holding a word no train row has to train, in a seeded order (a moved group only adds train
     # words, so one pass leaves every val/test word in train)
     labels = labels.copy()
-    vocab = row_vocab(pool, root)
+    vocab = row_vocab(pool)
     train_vocab = set().union(*(v for v, l in zip(vocab, labels) if l == 'train'))
     rows = pd.Series(range(len(pool))).groupby(np.asarray(groups)).apply(list)
     moved = 0
@@ -49,7 +59,7 @@ def close_vocabulary(pool, groups, labels, seed, root='word'):
             moved += 1
     return labels, moved
 
-def assign(pool, spec, root='word'):
+def assign(pool, spec):
     # split label of every row, and a record of the split: spec, sizes, groups moved for the vocabulary and a fingerprint
     # (sha256 of the sorted (group, split) pairs; legacy: of the row order and labels)
     if spec == 'legacy':
@@ -58,7 +68,7 @@ def assign(pool, spec, root='word'):
     else:
         groups = pool[spec['by']]
         labels = group_split(groups, spec['fractions'], spec['seed'])
-        labels, moved = close_vocabulary(pool, groups, labels, spec['seed'], root)
+        labels, moved = close_vocabulary(pool, groups, labels, spec['seed'])
         keys = groups.astype(str)
     pairs = sorted(set(zip(keys, labels)))
     fingerprint = hashlib.sha256('\n'.join(f"{k}\t{l}" for k, l in pairs).encode()).hexdigest()[:16]
