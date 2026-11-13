@@ -201,7 +201,8 @@ class MMEvaluator:
         results, details = {}, {}
         for split_name, split_info in test_sets.items():
             compiled_eval = data_engine.compile_text(split_name)
-            data_engine.describe_einsum(self.text_model, compiled_eval)
+            if data_engine.config['model_type'] == 'vqc':   # circuit size metrics (quantum text model only)
+                data_engine.describe_einsum(self.text_model, compiled_eval)
             eval_loader = data_engine.get_loader(compiled_eval, split=split_name)
             with torch.no_grad():
                 start_task = time.time()
