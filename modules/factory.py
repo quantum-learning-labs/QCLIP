@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
-from modules.compilation.quantum.ansatz import Ansatz
+from modules.compilation.quantum.ansatz import build_ansatz
 from modules.compilation.classical.tensor_network import TNCompiler
 from modules.compilation.classical.decompositions import MPS
 from modules.compilation.classical.neural import MLPCompiler
@@ -57,7 +57,7 @@ def build_experiment(config, device):
     elif model_type == "vqc":
         compiler = config['text']
         obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_qubits']}
-        ansatz = Ansatz(obmap=obmap, layers=compiler['layers'])
+        ansatz = build_ansatz(compiler.get('ansatz', 'custom_v5'), obmap=obmap, layers=compiler['layers'])
         
         if config['vision']['method'] == 'amp':
             image_model = FrozenCLIP(classical=False).to(device)
