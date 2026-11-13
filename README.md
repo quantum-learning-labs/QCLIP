@@ -187,7 +187,7 @@ The main keys:
 | `text.layers` | ansatz depth per word, the most important knob |
 | `text.curry` | curried ansatz (cups removed); `text.spider` must stay `false` |
 | `text.discard` | discard (partial trace) instead of post-selection |
-| `text.root` | `word` (default): the root word's open wires become the output, so a root word has its own parameters; `head`: one shared head box per root type maps the open wires to the output (needs data parsed since 2026-11-13) |
+| `text.root` | `word` (default): the root word's open wires become the output, so a root word has its own parameters; `head`: one shared head box per root type maps the open wires to the output |
 | `vision.method`, `vision.layers` | image map: `mlp`, `pca` or `amp` (amplitude encoding) |
 | `emulate.*` | settings of `emulate.py` (set, backend, noise, profile, `measurement_method`: `compute_uncompute` or `destructive_swap`, ...) |
 

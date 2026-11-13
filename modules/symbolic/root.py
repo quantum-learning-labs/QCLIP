@@ -1,6 +1,7 @@
 from collections import Counter
 
 # text.root: how a sentence's open wires become the output wire 'out' (index 0), applied when the data is compiled
+# on top of the parsed networks, which scripts/retrieve.py stores as parsed (unchanged by either method)
 #   word: the root word's open wires are replaced by 'out', so a word has another signature (and other parameters) as root
 #   head: the root word keeps its own type; a box ROOT_HEAD maps the open wires to 'out'. Its symbol depends only on the
 #         open wires' types, so one head is shared by every sentence with that root type (s, n, ...)
@@ -8,9 +9,6 @@ ROOT_HEAD = 'ROOT'
 
 def root_head(tn):
     word_arr, idx_arr, type_arr = zip(*tn)
-    if any('out' in types for types in type_arr):
-        raise ValueError("diagram already has an output wire (parsed before 2026-11-13 with the root merged): re-run "
-                         "scripts/retrieve.py to use text.root: head")
     count_dict = Counter(sum(idx_arr, []))
     open_idx = [key for key, val in count_dict.items() if val == 1]
     root = next(i for i, word_idx in enumerate(idx_arr) if set(open_idx).issubset(word_idx))
@@ -21,7 +19,7 @@ def root_head(tn):
     return list(zip(word_arr, idx_arr, type_arr)) + [(ROOT_HEAD, list(fresh.values()) + [0], open_types + ['out'])]
 
 def apply_root(tn, mode):
-    # copies: unify_codomain edits the diagram's lists in place (it is idempotent on diagrams already unified)
+    # copies: unify_codomain edits the diagram's lists in place
     tn = [(w, list(i), list(t)) for w, i, t in tn]
     if mode == 'word':
         return unify_codomain(tn)
