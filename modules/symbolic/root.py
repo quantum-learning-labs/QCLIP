@@ -8,14 +8,17 @@ ROOT_HEAD = 'ROOT'
 
 def root_head(tn):
     word_arr, idx_arr, type_arr = zip(*tn)
-    if 0 in sum(idx_arr, []):
+    if any('out' in types for types in type_arr):
         raise ValueError("diagram already has an output wire (parsed before 2026-11-13 with the root merged): re-run "
                          "scripts/retrieve.py to use text.root: head")
     count_dict = Counter(sum(idx_arr, []))
     open_idx = [key for key, val in count_dict.items() if val == 1]
     root = next(i for i, word_idx in enumerate(idx_arr) if set(open_idx).issubset(word_idx))
     open_types = [type_arr[root][idx_arr[root].index(k)] for k in open_idx]
-    return list(tn) + [(ROOT_HEAD, open_idx + [0], open_types + ['out'])]
+    # the root's open wires get fresh indices, joined to the head; the head's output takes index 0 (the output wire)
+    fresh = dict(zip(open_idx, range(max(count_dict) + 1, max(count_dict) + 1 + len(open_idx))))
+    idx_arr[root][:] = [fresh.get(k, k) for k in idx_arr[root]]
+    return list(zip(word_arr, idx_arr, type_arr)) + [(ROOT_HEAD, list(fresh.values()) + [0], open_types + ['out'])]
 
 def apply_root(tn, mode):
     # copies: unify_codomain edits the diagram's lists in place (it is idempotent on diagrams already unified)
