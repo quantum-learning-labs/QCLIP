@@ -3,6 +3,8 @@ mlflow.deb
 .vscode/
 images/
 data/
+# dataset configs (configs/data/<name>.yaml) are code, not data
+!configs/data/
 .data/
 data_compact/
 results/

@@ -1,0 +1,42 @@
+# SVO-Probes (Hendricks & Nematzadeh, 2021): released for evaluation only, without a split. scripts/retrieve.py builds
+# our curated pool (8,929 captions of DeepMind's CSV, rewritten as simple subject-verb-object sentences; rows whose image
+# links are dead are dropped) in processed/all.pkl. Train/val/test are computed from it when loaded (modules/data_pipeline/splits.py).
+name: "svo-probes"
+class: "modules.data_pipeline.datasets.SVODataset"
+collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
+eval_mapper: "modules.data_pipeline.datasets.svo_mapper"
+
+# every caption of a positive image in one split (its negative image may be another row's positive elsewhere); then
+# val/test groups with a word no training caption has move to train. Vary seed for results over several splits.
+# --set dataset.split=legacy: the split of all results before 2026-11-13 (row-level: captions and images shared across splits)
+split:
+  by: "pos_image_id"
+  fractions: [0.6, 0.2, 0.2]
+  seed: 0
+
+train:
+  text_path: "data/svo-probes/processed/all.pkl"
+  img_path: "data/svo-probes/processed/image_embeddings.pt"
+val:
+  text_path: "data/svo-probes/processed/all.pkl"
+  img_path: "data/svo-probes/processed/image_embeddings.pt"
+  diagnostics:
+    - "evaluate_image_choice"
+    - "diagnostic_image_choice"
+
+test:
+  std:   # choose the image (primary metric)
+    class: "modules.data_pipeline.datasets.SVODataset"
+    collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
+    split: test
+    text_path: "data/svo-probes/processed/all.pkl"
+    img_path: "data/svo-probes/processed/image_embeddings.pt"
+    task: "evaluate_image_choice"
+  swap_full:   # choose the caption: every test caption with two nouns, subject and object swapped (datasets.build_swap_set)
+    class: "modules.data_pipeline.datasets.SwapDataset"
+    collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+    split: test
+    derive: swap
+    text_path: "data/svo-probes/processed/all.pkl"
+    img_path: "data/svo-probes/processed/image_embeddings.pt"
+    task: "evaluate_text_choice"
