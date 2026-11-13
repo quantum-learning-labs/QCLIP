@@ -24,7 +24,7 @@ text:
   p: 1
   layers: 2
   curry: true
-  root: "word" # 'word' or 'head' (a shared head per root type; data parsed since 2026-11-13)
+  root: "word" # 'word' (root word's open wires become the output) or 'head' (one shared head per sentence output type)
   spider: false
   discard: false
 
