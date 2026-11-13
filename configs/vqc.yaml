@@ -11,6 +11,7 @@ out_dim: 512
 emulate:
   set: "swap"
   noise: false
+  provider: "ibm" # 'ibm' or 'iqm': local calibration snapshots, emulate.profile picks the device (default miami / garnet)
   optimization_level: 1 # 0, 1, 2, 3
   resolution: 10000
   num_runs: 10

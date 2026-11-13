@@ -148,13 +148,18 @@ PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.set=std 
 PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std \
     --set emulate.noise=true --set emulate.profile=fake_kingston --set emulate.backend=statevector \
     --set emulate.aer_options.batched_shots_gpu=false --set emulate.aer_options.shot_branching_enable=false
+# the same with an IQM device (Garnet, 20 qubits, native r and cz gates)
+PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std \
+    --set emulate.noise=true --set emulate.provider=iqm --set emulate.profile=garnet
 ```
 
 Emulation settings are `emulate.*` config keys, changed with `--set` as in `train.py`:
 - `shots`: shot budget(s) per circuit (circuits are compiled once and run at each); by default it follows
   `resolution`. `limit: N` emulates only the first N pairs.
-- `profile`: any `qiskit_ibm_runtime` fake backend (a calibration snapshot); the default is `fake_miami`.
-- `noise_profile: honest` adds scheduled idle decoherence and coherent ZZ to the backend noise model; its
+- `provider` and `profile`: the device whose calibration snapshot is emulated, locally on Aer (no account or token,
+  never hardware). `ibm` (default): any `qiskit_ibm_runtime` fake backend, default `fake_miami`. `iqm`: an IQM fake
+  backend from `iqm-client[qiskit]` (`garnet` (default), `apollo`, `aphrodite`, `adonis`), whose noise model is IQM's own.
+- `noise_profile: honest` (IBM profiles only) adds scheduled idle decoherence and coherent ZZ to the backend noise model; its
   knobs are `emulate.honest.<knob>`. The default, `backend`, is Aer's `NoiseModel.from_backend`.
 - `backend` is the Aer method. Density matrix is faster for small circuits. `dm_max_qubits: N` runs circuits
   with at most N active qubits as density matrices and the rest with `backend`.

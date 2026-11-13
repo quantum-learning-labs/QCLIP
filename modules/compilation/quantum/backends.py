@@ -20,10 +20,31 @@ HONEST_DEFAULTS = {
     "idle": True,        # ALAP scheduling + thermal relaxation on idle delays (absent from from_backend)
 }
 
-def fake_backend(name):
-    # device calibration snapshot by name, e.g. 'miami', 'fake_kingston' or 'FakeTorino'
-    classes = {c.lower(): c for c in dir(fake_provider) if c.startswith('Fake')}
-    return getattr(fake_provider, classes['fake' + name.lower().replace('fake_', '').replace('fake', '')])()
+# emulate.provider -> its default emulate.profile. Every profile is a local calibration snapshot of a real device,
+# simulated with Aer: no account, no token, never hardware
+DEFAULT_PROFILE = {'ibm': 'miami', 'iqm': 'garnet'}
+
+def fake_backend(name, provider='ibm'):
+    # device calibration snapshot by name, e.g. ('kingston', 'ibm') or ('garnet', 'iqm')
+    if provider == 'ibm':
+        classes = {c.lower(): c for c in dir(fake_provider) if c.startswith('Fake')}
+        return getattr(fake_provider, classes['fake' + name.lower().replace('fake_', '').replace('fake', '')])()
+    if provider == 'iqm':
+        return iqm_fake_backend(name)
+    raise ValueError(f"emulate.provider {provider!r}: choose from {list(DEFAULT_PROFILE)}")
+
+def iqm_fake_backend(name):
+    # IQM's own snapshots (qiskit extra of iqm-client): native gates r (prx) and cz, noise model built from the error profile
+    import importlib
+    name = name.lower().replace('iqm', '').replace('fake', '').strip('_')
+    devices = ['adonis', 'aphrodite', 'apollo', 'garnet']   # deneb routes through a resonator (move gates): not supported
+    if name not in devices:
+        raise ValueError(f"IQM profile {name!r}: choose from {devices}")
+    module = importlib.import_module(f'iqm.qiskit_iqm.fake_backends.fake_{name}')
+    return getattr(module, f'IQMFake{name.capitalize()}')()
+
+def noise_model(backend, provider):
+    return backend.noise_model if provider == 'iqm' else NoiseModel.from_backend(backend)
 
 def honest_backend(backend, knobs):
     # a copy of the fake backend whose target carries the scaled error rates and coherence times
@@ -56,8 +77,13 @@ class BackendManager:
         self._backend = None
         self.coupling_map = None
         self.basis_gates = None
-        # emulate.profile: device calibration snapshot (FakeMiami = the 120-qubit Nighthawk by default)
-        self.hardware_profile = hardware_profile or fake_backend(config['emulate'].get('profile', 'miami'))
+        # emulate.provider (ibm, iqm) and emulate.profile: device calibration snapshot (ibm default FakeMiami = the
+        # 120-qubit Nighthawk, iqm default Garnet)
+        self.provider = config['emulate'].get('provider', 'ibm')
+        if self.provider not in DEFAULT_PROFILE:
+            raise ValueError(f"emulate.provider {self.provider!r}: choose from {list(DEFAULT_PROFILE)}")
+        self.hardware_profile = hardware_profile or fake_backend(config['emulate'].get('profile', DEFAULT_PROFILE[self.provider]),
+                                                                 self.provider)
         self._setup_backend()
 
     def _setup_backend(self):
@@ -81,24 +107,30 @@ class BackendManager:
         if self.qlimit is not None:
             filtered_edges = [edge for edge in edges if edge[0] < self.qlimit and edge[1] < self.qlimit]
             self.coupling_map = CouplingMap(filtered_edges)
+            if not self.coupling_map.is_connected():
+                print(f" [Warning] the first {self.qlimit} qubits of {self.hardware_profile.name} are not connected")
         else:
             self.coupling_map = self.hardware_profile.coupling_map
-        self.basis_gates = self.hardware_profile.basis_gates
+        # IBM fake backends list their basis gates; IQM's (BackendV2 only) carry them in the target
+        self.basis_gates = getattr(self.hardware_profile, 'basis_gates', None) or list(self.hardware_profile.target.operation_names)
 
         self.noise_profile = self.config['emulate'].get('noise_profile', 'backend')
         self.honest = {**HONEST_DEFAULTS, **(self.config['emulate'].get('honest') or {})}
         if self.config['emulate'].get('noise') and self.noise_profile == 'honest':
+            if self.provider != 'ibm':
+                raise ValueError("emulate.noise_profile honest is calibrated on IBM snapshots (target error rates, T1/T2, gate "
+                                 "durations): use noise_profile backend with other providers")
             self.hardware_profile = honest_backend(self.hardware_profile, self.honest)
         if self.config['emulate'].get('noise'):
-            noise_model = NoiseModel.from_backend(self.hardware_profile)
+            noise = noise_model(self.hardware_profile, self.provider)
             if self.noise_profile == 'honest' and self.honest['zz_rad']:
                 # coherent ZZ over-rotation composed onto every 2q gate's local error
                 zz = coherent_unitary_error(RZZGate(self.honest['zz_rad']).to_matrix())
-                for gate, errs in noise_model._local_quantum_errors.items():
+                for gate, errs in noise._local_quantum_errors.items():
                     for qubits, err in list(errs.items()):
                         if len(qubits) == 2:
                             errs[qubits] = err.compose(zz)
-            backend_options["noise_model"] = noise_model 
+            backend_options["noise_model"] = noise
             backend_options["seed_simulator"] = 42
             backend_options['shot_branching_enable'] = True
             backend_options["statevector_parallel_threshold"] = 0
@@ -116,7 +148,7 @@ class BackendManager:
             backend_options["matrix_product_state_truncation_threshold"] = 1e-8
             backend_options["matrix_product_state_parallel_swap"] = True
 
-        print(f" Simulation: Profile {self.hardware_profile.name} ({self.qlimit} qubits), Device {qdev}, Method {method}, Noise {'Enabled' if self.config['emulate'].get('noise') else 'Disabled'}"
+        print(f" Simulation: {self.provider} profile {self.hardware_profile.name} ({self.qlimit} qubits), Device {qdev}, Method {method}, Noise {'Enabled' if self.config['emulate'].get('noise') else 'Disabled'}"
               + (f" | noise profile {self.noise_profile} {self.honest if self.noise_profile == 'honest' else ''}" if self.config['emulate'].get('noise') else ''))
         backend_options.update(self.config['emulate'].get('aer_options') or {})   # e.g. --set emulate.aer_options.batched_shots_gpu=false
         custatevec = backend_options.pop('cuStateVec_enable', True)

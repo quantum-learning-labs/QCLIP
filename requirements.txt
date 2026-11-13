@@ -16,4 +16,5 @@ lambeq==0.5.0
 qiskit==2.4.2
 qiskit-aer==0.17.2          # qiskit-aer-gpu on CUDA machines
 qiskit-ibm-runtime==0.47.0
+iqm-client[qiskit]==35.0.1   # IQM device snapshots (emulate.provider: iqm)
 clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6
