@@ -1,10 +1,12 @@
 from itertools import count
 from collections import Counter
+from abc import ABC, abstractmethod
 from tqdm import tqdm
 from modules.compilation.einsum import interleaved2einsum, sort_tn
 
-class Ansatz:
-    # the circuit ansatz of every word box: H on each wire, then per layer Rz-Ry-Rz on each wire and a ring of CX
+class BaseAnsatz(ABC):
+    # Tensor network -> circuit compilation shared by every ansatz (wires, currying, discard, einsum strings).
+    # A subclass defines only ansatz(): the gates of one word box. Register it in ANSATZE to select it with text.ansatz.
     def __init__(self, obmap=set(), layers=1):
         self.obmap = obmap
         self.layers = layers
@@ -37,6 +39,12 @@ class Ansatz:
                 if idx not in ccg_map:
                     ccg_map[idx] = [self.get_char() for _ in range(self.obmap.get(typ, 1))]
         return ccg_map
+
+    @abstractmethod
+    def ansatz(self, current_wires, base_symbol):
+        # Append the gates of one word box acting on current_wires (list of index chars, updated in place).
+        # Parameterised gates are named f"{base_symbol}..."; return (current_wires, new_indices, new_tensors).
+        pass
 
 
     def gen_einsum_expr(self, input_indices, ccg_map):
@@ -227,6 +235,9 @@ class Ansatz:
             df[symbols_col] = symbols_arr
         return df
 
+
+class CustomV5Ansatz(BaseAnsatz):
+    # H on each wire, then per layer Rz-Ry-Rz on each wire and a ring of CX
     def ansatz(self, current_wires, base_symbol):
         new_indices, new_tensors = [], []
         N = len(current_wires)
@@ -255,3 +266,11 @@ class Ansatz:
                     current_wires[c_idx], current_wires[t_idx] = c_out, t_out
                     op_idx += 1
         return current_wires, new_indices, new_tensors
+
+
+ANSATZE = {'custom_v5': CustomV5Ansatz}
+
+def build_ansatz(name, obmap, layers=1):
+    if name not in ANSATZE:
+        raise ValueError(f"unknown ansatz {name!r}; registered: {sorted(ANSATZE)}")
+    return ANSATZE[name](obmap=obmap, layers=layers)

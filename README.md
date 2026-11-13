@@ -184,6 +184,7 @@ The main keys:
 | `purity_weight` | purity regulariser of `pauli` (default 0.1; every final recipe uses 0) |
 | `swap_negatives` | add subject/object-swapped captions to the training set as text negatives |
 | `distill_from`, `distill_kd_weight`, `distill_tau` | distil from a frozen post-selected teacher checkpoint |
+| `text.ansatz` | word-box circuit (default `custom_v5`); add one by subclassing `BaseAnsatz` (define `ansatz()`) and registering it in `ANSATZE` |
 | `text.layers` | ansatz depth per word, the most important knob |
 | `text.curry` | curried ansatz (cups removed); `text.spider` must stay `false` |
 | `text.discard` | discard (partial trace) instead of post-selection |
