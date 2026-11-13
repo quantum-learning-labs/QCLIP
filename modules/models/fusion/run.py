@@ -72,8 +72,8 @@ class RunManager:
             mlflow.log_params({
                 "epochs": self.config['epochs'],
                 "batch_size": self.config['batch_size'],
-                "learning_rate_quantum": self.config['qlr'],
-                "learning_rate_classical": self.config['clr'],
+                "learning_rate_quantum": self.config.get('qlr'),
+                "learning_rate_classical": self.config.get('clr', self.config.get('lr')),
                 "embedding_qubits": self.config.get('embedding_qubits', 0),
                 "temperature_parameter": self.trainer.loss_fn.temperature,
                 "device_target": str(self.device),
@@ -84,15 +84,15 @@ class RunManager:
                 "model_path": str(self.checkpoint_path),
                 "early_stopping_patience": patience,
                 "early_stopping_min_delta": min_delta,
-                "discard": self.config['text'].get('discard', False),
+                "discard": self.config.get('text', {}).get('discard', False),
                 "loss": type(self.trainer.loss_fn).__name__,
                 "git_commit": self.config['git_commit'],
                 "label_smoothing": getattr(self.trainer.loss_fn, 'label_smoothing', None),
                 "weight_decay": self.config.get('weight_decay', 1e-4),
                 "warmup_epochs": self.config.get('warmup_epochs', 5),
                 "purity_weight": getattr(self.trainer.loss_fn, 'purity_weight', None),
-                "text_layers": self.config['text']['layers'],
-                "vision_layers": self.config['vision']['layers'],
+                "text_layers": self.config.get('text', {}).get('layers'),
+                "vision_layers": self.config.get('vision', {}).get('layers'),
                 "overrides": " ".join(self.config.get('overrides', [])) or "none",
                 "init_from": self.config.get('init_from') or "none",
                 "swap_negatives": bool(self.config.get('swap_negatives', False)),
@@ -105,7 +105,7 @@ class RunManager:
             if checkpoint_every:
                 self._save_snapshot("epoch_init.pt", -1, None, {})
             epoch_pbar = tqdm(range(self.config['epochs']), desc="Training Pipeline", unit="epoch")
-            current_lr = self.config.get('qlr', 1e-3)
+            current_lr = self.config.get('qlr', self.config.get('lr', 1e-3))
             
             for epoch in epoch_pbar:
                 start_time = time.time()

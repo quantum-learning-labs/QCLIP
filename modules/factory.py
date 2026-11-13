@@ -107,7 +107,11 @@ def load_experiment(config, device, checkpoint=None):
                            data=data, train=train, val=val, state=state)
 
 def build_optimizer(config, text_model, image_model):
-    # Adam (circuit angles at qlr, classical image projector at clr), linear warm-up then cosine decay
+    # VQC: Adam (circuit angles at qlr, classical image projector at clr), linear warm-up then cosine decay.
+    # Classical models (tn, mlp): Adam on every parameter at lr, no schedule (as in notebooks/train_tn.ipynb)
+    if config['model_type'] != 'vqc':
+        params = list(text_model.parameters()) + list(image_model.parameters())
+        return torch.optim.Adam(params, lr=config['lr'], weight_decay=config.get('weight_decay', 0.0)), None
     quantum_params = list(text_model.parameters()) + list(image_model.params)
     classical_params = list(image_model.projector.parameters()) if config['vision']['method'] == 'mlp' else []
     optimizer = torch.optim.Adam(
