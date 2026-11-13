@@ -1,15 +1,13 @@
 from itertools import count
 from collections import Counter
-from abc import ABC, abstractmethod
 from tqdm import tqdm
 from modules.compilation.einsum import interleaved2einsum, sort_tn
 
-class BaseAnsatz(ABC):
+class Ansatz:
+    # the circuit ansatz of every word box: H on each wire, then per layer Rz-Ry-Rz on each wire and a ring of CX
     def __init__(self, obmap=set(), layers=1):
-        super().__init__()
         self.obmap = obmap
         self.layers = layers
-        self.id = type(self).__name__ + '_' + str(obmap['n']) + '_' + str(obmap['s']) + '_' + str(obmap['p']) + '_' + str(obmap['out'])
         self.char_idx = count(0)
 
     def __call__(self, tn, curry=False, discard=False, spider=False):
@@ -40,9 +38,6 @@ class BaseAnsatz(ABC):
                     ccg_map[idx] = [self.get_char() for _ in range(self.obmap.get(typ, 1))]
         return ccg_map
 
-    @abstractmethod
-    def ansatz(self, current_wires, base_symbol):
-        pass
 
     def gen_einsum_expr(self, input_indices, ccg_map):
         all_idx = [i for sub in input_indices for i in sub]
@@ -120,7 +115,8 @@ class BaseAnsatz(ABC):
             # (an intransitive verb maps n (1 qubit) -> out (embedding_qubits), so it must not)
             same_widths = all(self.obmap.get(t_in, 1) == self.obmap.get(t_out, 1)
                               for t_in, t_out in zip(input_types, output_types))
-            if len(input_wires) == len(output_wires) and same_widths:
+            passthrough = len(input_wires) == len(output_wires) and same_widths
+            if passthrough:
                 for in_idx, out_idx in zip(input_wires, output_wires):
                     current_wires.extend(ccg_map[in_idx])
                     ccg_map[out_idx] = ccg_map[in_idx]
@@ -141,6 +137,13 @@ class BaseAnsatz(ABC):
             input_indices.extend([[idx for idx in ten] for ten in new_indices])
             tensor_arr.extend(new_tensors)
             
+            if passthrough:   # the outputs carry the box's wires on; the inputs are used up
+                i = 0
+                for idx, typ in zip(output_wires, output_types):
+                    n = self.obmap.get(typ, 1)
+                    ccg_map[idx] = current_wires[i:i+n]
+                    i += n
+                continue
             i = 0
             for idx, typ in zip(idx_arr, type_arr):
                 n = self.obmap.get(typ, 1)
@@ -223,10 +226,6 @@ class BaseAnsatz(ABC):
             df[einsum_col] = einsum_arr
             df[symbols_col] = symbols_arr
         return df
-                        
-class CustomV5Ansatz(BaseAnsatz):
-    def __init__(self, obmap=set(), layers=1):
-        super().__init__(obmap, layers)
 
     def ansatz(self, current_wires, base_symbol):
         new_indices, new_tensors = [], []
@@ -235,7 +234,6 @@ class CustomV5Ansatz(BaseAnsatz):
         for i in range(N):
             nxt = self.get_char()
             new_indices.append(current_wires[i] + nxt)
-            # new_tensors.append((None, 'H'))
             new_tensors.append({'name': None, 'op_type': 'H'})
             current_wires[i] = nxt
 
@@ -245,7 +243,6 @@ class CustomV5Ansatz(BaseAnsatz):
                 for g in ['Rz', 'Ry', 'Rz']:
                     nxt = self.get_char()
                     new_indices.append(current_wires[i] + nxt)
-                    # new_tensors.append((f"{base_symbol}_l{l}_{op_idx}", g))
                     new_tensors.append({'name': f"{base_symbol}_l{l}_{op_idx}", 'op_type': g})
                     current_wires[i] = nxt
                     op_idx += 1
@@ -254,7 +251,6 @@ class CustomV5Ansatz(BaseAnsatz):
                     c_idx, t_idx = i, (i + 1) % N
                     c_out, t_out = self.get_char(), self.get_char()
                     new_indices.append(current_wires[c_idx] + current_wires[t_idx] + c_out + t_out)
-                    # new_tensors.append((None, 'CX'))
                     new_tensors.append({'name': None, 'op_type': 'CX'})
                     current_wires[c_idx], current_wires[t_idx] = c_out, t_out
                     op_idx += 1

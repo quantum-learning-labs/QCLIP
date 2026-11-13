@@ -22,7 +22,6 @@ emulate:
   measurement_method: 'destructive_swap' # 'compute_uncompute', 'destructive_swap', or 'classical_shadows'
 
 text:
-  # ansatz: "custom_v6"
   n: 1
   s: 1
   p: 1

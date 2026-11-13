@@ -19,12 +19,12 @@ emulate:
   measurement_method: 'destructive_swap' # 'compute_uncompute', 'destructive_swap', or 'classical_shadows'
 
 text:
-  # ansatz: "custom_v6"
   n: 1
   s: 1
   p: 1
   layers: 2
   curry: true
+  root: "word" # 'word' or 'head' (a shared head per root type; data parsed since 2026-11-13)
   spider: false
   discard: false
 
