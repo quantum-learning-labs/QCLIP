@@ -203,6 +203,10 @@ class MMEvaluator:
             compiled_eval = data_engine.compile_text(split_name)
             if data_engine.config['model_type'] == 'vqc':   # circuit size metrics (quantum text model only)
                 data_engine.describe_einsum(self.text_model, compiled_eval)
+            if hasattr(self.text_model, 'extend_symbols'):   # TN: tensors for words unseen in training (VQC: shared unknown)
+                symbols = [v for c in compiled_eval.columns if c.endswith('_symbols') for v in compiled_eval[c] if not isinstance(v, float)]
+                oov = self.text_model.extend_symbols(symbols, seed=data_engine.config.get('seed', 0))
+                results.update({f"{split_name}_{k}": v for k, v in oov.items()})
             eval_loader = data_engine.get_loader(compiled_eval, split=split_name)
             with torch.no_grad():
                 start_task = time.time()
