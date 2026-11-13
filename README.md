@@ -62,7 +62,6 @@ modules/
   data_pipeline/     dataset retrieval (+ manifests/ of our splits), image embedding, datasets and swap sets, DataEngine
 scripts/             train.py, benchmark.py, emulate.py, retrieve.py
 configs/             vqc.yaml, tn.yaml, mlp.yaml (templates); baseline/ (sweep bases); final/ (recommended configs)
-analysis/            discard_gap/: discard vs post-selection gap reports v1, v2
 notebooks/           train_vqc.ipynb, train_tn.ipynb: minimal training runs
 assets/              figures
 ```
