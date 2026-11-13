@@ -1,3 +1,4 @@
+import json
 import torch, yaml, mlflow, time, socket
 from pathlib import Path
 from tqdm import tqdm
@@ -45,7 +46,8 @@ class RunManager:
             "text": self.trainer.text_model.state_dict(),
             "epoch": epoch,
             "train_loss": loss,
-            "val_metrics": metrics
+            "val_metrics": metrics,
+            "text_symbols": list(getattr(self.trainer.text_model, 'symbols', [])),   # names of params.<i> (VQC)
         }
         torch.save(payload, self.checkpoint_path)
         if is_best:
@@ -53,7 +55,8 @@ class RunManager:
 
     def _save_snapshot(self, name, epoch, loss, metrics):
         torch.save({"image": self.trainer.image_model.state_dict(), "text": self.trainer.text_model.state_dict(),
-                    "epoch": epoch, "train_loss": loss, "val_metrics": metrics}, self.checkpoint_dir / name)
+                    "epoch": epoch, "train_loss": loss, "val_metrics": metrics,
+                    "text_symbols": list(getattr(self.trainer.text_model, 'symbols', []))}, self.checkpoint_dir / name)
 
     def fit(self, train_loader, val_loader, eval_mapper):
         self._setup_environment()
@@ -168,6 +171,18 @@ class CheckpointManager:
                 new_state_dict[key] = value
         return new_state_dict
 
+    @staticmethod
+    def params_by_name(text_params, names, text_model, checkpoint_path):
+        if set(names) != set(text_model.symbols):
+            raise RuntimeError(f"{checkpoint_path}: its words differ from the model's: {len(set(text_model.symbols) - set(names))} "
+                               f"missing, {len(set(names) - set(text_model.symbols))} extra (e.g. {sorted(set(names) ^ set(text_model.symbols))[:3]})")
+        old_index = {name: i for i, name in enumerate(names)}
+        remapped = {k: v for k, v in text_params.items() if not k.startswith('params.')}
+        for name, j in text_model.sym2param.items():
+            remapped[f"params.{j}"] = text_params[f"params.{old_index[name]}"]
+        remapped[f"params.{text_model.unk_param_index}"] = text_params[f"params.{len(names)}"]   # the fixed unknown-word angle
+        return remapped
+
     @classmethod
     def load_model(cls, checkpoint_path: Path, image_model, text_model, device):
         checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -179,6 +194,15 @@ class CheckpointManager:
             text_params = cls.upgrade_checkpoint(text_params)
         if "params" in image_params and not any("params." in k for k in image_params):
             image_params = cls.upgrade_checkpoint(image_params)
+        # VQC word parameters are params.<i> in order of first appearance in the training data: map them by name, so a
+        # checkpoint loads onto data whose words come in another order (checkpoints from before 2026-11-13 have no names
+        # stored; weights/ has them in symbols.json next to best.pt)
+        names = checkpoint.get("text_symbols")
+        names_file = Path(checkpoint_path).parent / "symbols.json"
+        if not names and names_file.exists():
+            names = json.load(open(names_file))
+        if names and hasattr(text_model, 'sym2param'):
+            text_params = cls.params_by_name(text_params, names, text_model, checkpoint_path)
 
         missing, unexpected = text_model.load_state_dict(text_params, strict=False)
         if missing or unexpected:
