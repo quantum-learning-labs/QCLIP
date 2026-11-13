@@ -4,6 +4,7 @@ from torchvision.transforms import v2
 from modules.common import load_pkl, load_obj
 from modules.compilation.einsum import tn_metadata, analyse_einsum
 from modules.data_pipeline.datasets import build_swap_set
+from modules.symbolic.root import apply_root
 
 class DataEngine:
     def __init__(self, config, ansatz, device):
@@ -43,7 +44,11 @@ class DataEngine:
             compile_kwargs["curry"] = self.config["text"].get("curry", False)
             compile_kwargs["discard"] = self.config["text"].get("discard", False)
             compile_kwargs["spider"] = self.config["text"].get("spider", False)
-        return self.ansatz.compile_dataset(self.load_text(split), **compile_kwargs)
+        data = self.load_text(split)
+        root = self.config.get('text', {}).get('root', 'word')   # functor.apply_root
+        for col in [c for c in data.columns if c.endswith('_diagram')]:
+            data[col] = [[apply_root(t, root) for t in d] if d and isinstance(d[0], list) else apply_root(d, root) for d in data[col]]
+        return self.ansatz.compile_dataset(data, **compile_kwargs)
 
     def text_init(self, text_model, compiled_data):
         if hasattr(text_model, "from_symbols"):

@@ -1,6 +1,5 @@
 from lambeq.text2diagram import CCGRule 
 from itertools import count 
-from collections import Counter
 from modules.symbolic.grammar import get_type
 
 def tree2einsum(root_node, simplify=True):
@@ -136,25 +135,3 @@ def tree2einsum(root_node, simplify=True):
                 stack.append((node.right, shared_idx[::-1] + idx_X))
     
     return tn
-
-def unify_codomain(tn):
-    word_arr, idx_arr, type_arr = zip(*tn)
-
-    # Get output indices of tensor network
-    flat_idx_arr = sum(idx_arr, [])
-    count_dict = Counter(flat_idx_arr)
-    output_idx = [key for key, val in count_dict.items() if val == 1]
-
-    # Find indices of word containing output indices (root word)
-    for i, word_idx in enumerate(idx_arr):
-        if set(output_idx).issubset(word_idx):
-            break 
-    
-    # Compute location of output indices inside root word indices
-    start_idx = word_idx.index(output_idx[0])
-    end_idx = start_idx + len(output_idx) 
-    
-    # Replace root word output indices and type with single unique output index and type
-    idx_arr[i][start_idx:end_idx] = [0]
-    type_arr[i][start_idx:end_idx] = ['out']
-    return list(zip(word_arr, idx_arr, type_arr))
