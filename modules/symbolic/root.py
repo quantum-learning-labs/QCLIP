@@ -9,6 +9,7 @@ from collections import Counter
 #              retyped: an s root is read out as it is; an n root (a noun-phrase caption) is mapped into S by the Frobenius
 #              copy N -> N^(x)m (COPY_BOX, parameter-free: |i> -> |i...i>, the diagonal of S). Other root types raise.
 #              Unified sentence space via Frobenius copying: Kartsaklis, Sadrzadeh & Pulman, COLING 2012.
+ROOT_MODES = ('word', 'head', 'frobenius')
 ROOT_HEAD = 'ROOT'
 COPY_BOX = 'COPY'   # structural box: compiled to fixed gates, no parameters
 
@@ -47,7 +48,7 @@ def apply_root(tn, mode):
         return root_head(tn)
     if mode == 'frobenius':
         return root_frobenius(tn)
-    raise ValueError(f"text.root {mode!r}: choose word, head or frobenius")
+    raise ValueError(f"text.root {mode!r}: choose one of {ROOT_MODES}")
 
 def unify_codomain(tn):
     word_arr, idx_arr, type_arr = zip(*tn)
