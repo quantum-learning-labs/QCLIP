@@ -27,4 +27,5 @@ if __name__ == "__main__":
 
     write_results(out_path, {"checkpoint": str(checkpoint_path), "config": config_path, "epoch": exp.state.get('epoch'),
                              "seed": SEED, "discard": config['text'].get('discard', False), "git_commit": git_state(),
-                             "train_git_commit": config.get('git_commit'), "results": results, "details": details})
+                             "train_git_commit": config.get('git_commit'), "split": config['dataset'].get('split_record'),
+                             "results": results, "details": details})

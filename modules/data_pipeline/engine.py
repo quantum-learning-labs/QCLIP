@@ -4,7 +4,7 @@ from torchvision.transforms import v2
 from modules.common import load_pkl, load_obj
 from modules.compilation.einsum import tn_metadata, analyse_einsum
 from modules.data_pipeline.datasets import build_swap_set
-from modules.data_pipeline.splits import select
+from modules.data_pipeline.splits import assign, select
 
 class DataEngine:
     def __init__(self, config, ansatz, device):
@@ -24,6 +24,7 @@ class DataEngine:
             ])
         else:
             self.img_transform = None
+        self.splits = {}   # pool path -> (split label per row, split record)
 
     def split_config(self, split):
         return self.config['dataset'][split] if split in ('train', 'val') else self.config['dataset']['test'][split]
@@ -37,12 +38,22 @@ class DataEngine:
         data = load_pkl(entry["text_path"])
         spec = self.config['dataset'].get('split')
         if spec is not None:
-            data = select(data, spec, entry.get('split', split), entry.get('subset'))
+            which = entry.get('split', split)
+            if which != 'all' and entry["text_path"] not in self.splits:
+                self.splits[entry["text_path"]] = assign(data, spec)
+                print(f" Split of {entry['text_path']}: {self.splits[entry['text_path']][1]}")
+            labels = self.splits[entry["text_path"]][0] if which != 'all' else None
+            data = select(data, labels, which, entry.get('subset'))
         if entry.get('derive') == 'swap':
             data = build_swap_set(data)
         if split == 'train' and self.config.get('swap_negatives', False):
             data = build_swap_set(data, keep_all=True)
         return data
+
+    def split_record(self):
+        # the record (spec, sizes, fingerprint id) of the training pool's split, None for per-split files
+        entry = self.splits.get(self.config['dataset']['train']['text_path'])
+        return entry[1] if entry else None
 
     def compile_text(self, split):
         compile_kwargs = {}

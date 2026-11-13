@@ -60,7 +60,7 @@ modules/
     vision/          CLIP features and their map to quantum states (quantum_map.py)
     fusion/          criteria.py (losses), trainer.py (trainer, distillation teacher), evaluator.py, run.py (runs, checkpoints)
   data_pipeline/     dataset retrieval (+ manifests/ of our curation), splits.py, image embedding, datasets and swap sets, DataEngine
-scripts/             train.py, benchmark.py, emulate.py, retrieve.py
+scripts/             train.py, benchmark.py, emulate.py, retrieve.py, compare.py (paired comparison over splits)
 configs/             vqc.yaml, tn.yaml, mlp.yaml (templates); data/ (one file per dataset); baseline/ (sweep bases); final/ (recommended configs)
 notebooks/           train_vqc.ipynb, train_tn.ipynb: minimal training runs
 assets/              figures
@@ -102,11 +102,16 @@ data/svo-probes/processed/
   keep and their captions rewritten as simple subject-verb-object sentences). ARO comes from the authors' release, with
   every image cropped to its row's box as in their evaluation.
 - Splits are computed when the data is loaded, from the dataset's `split` setting (`modules/data_pipeline/splits.py`).
-  Neither SVO-Probes nor ARO has an official training split, so both are stored whole and split by a seeded function
-  that keeps groups together: every caption of a positive image (SVO-Probes, 60/20/20) or every row of a Visual Genome
-  image (ARO, 70/15/15) lands in one split. A group's split is a hash of (seed, group), so it does not depend on row
-  order or on which captions parse. Change it with `--set dataset.split.seed=1`. Datasets with an official split (MSCOCO)
-  keep it.
+  Neither SVO-Probes nor ARO has an official training split, so both are stored whole (parsed once) and split by a
+  seeded function that keeps groups together: every caption of a positive image (SVO-Probes, 60/20/20) or every row of a
+  Visual Genome image (ARO, 70/15/15) lands in one split, chosen by a hash of (seed, group). The vocabulary is then
+  closed: a val/test group with a word (word and wire types, one text-model tensor) that no training caption has moves
+  to train, so every val/test word is trained. Datasets with an official split (MSCOCO) keep it.
+- Every run records its split (`dataset.split_record` in the checkpoint's `config.yaml`, `split` in benchmark and
+  emulation results): the spec, the sizes and a fingerprint `id`. Evaluating a checkpoint on a different split raises.
+  For results over several splits, train each model on the same split seeds (`--set dataset.split.seed=k`) and compare
+  with `scripts/compare.py <glob a> <glob b>`, which pairs runs by (split id, training seed) and refuses sets that
+  differ.
 - `--set dataset.split=legacy` gives the SVO-Probes split of all results before 2026-11-13 (`weights/` and the numbers
   in `configs/final/`). It was made by row, so captions and images are shared between its train, val and test sets.
 - Subject/object-swap sets are derived when they are loaded: a test entry with `derive: swap` (`swap_full`, 1777

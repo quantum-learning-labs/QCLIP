@@ -95,6 +95,13 @@ def load_experiment(config, device, checkpoint=None):
     train, val = data.compile_text('train'), data.compile_text('val')
     data.text_init(text_model, pd.concat([train, val], ignore_index=True))
     data.image_init(image_model)
+    # the split a checkpoint was trained on travels in its config; evaluating it on another split is an error
+    record = data.split_record()
+    if record is not None:
+        saved = config['dataset'].get('split_record')
+        if saved is not None and saved['id'] != record['id']:
+            raise ValueError(f"data split {record['id']} differs from the one this config was trained on ({saved['id']})")
+        config['dataset']['split_record'] = record
     state = CheckpointManager.load_model(checkpoint, image_model, text_model, device) if checkpoint else {}
     return SimpleNamespace(ansatz=ansatz, image_model=image_model, text_model=text_model, loss_fn=loss_fn,
                            data=data, train=train, val=val, state=state)
