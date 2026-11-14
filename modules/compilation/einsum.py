@@ -1,23 +1,58 @@
-from collections import defaultdict
-
+from collections import Counter, defaultdict
 import torch
 import numpy as np
-from collections import defaultdict
 from tqdm import tqdm
 from opt_einsum import contract_path
-import cotengra as ctg
 
-from modules.utils.tensor_ops import einsum2interleaved, interleaved2einsum
+def einsum2interleaved(expr):
+    if isinstance(expr, str):
+        if '->' not in expr:
+            raise ValueError("Invalid einsum string format. Missing '->' operator.")
+            
+        lhs, rhs = expr.split('->')
+        input_indices = [list(tok.strip()) for tok in lhs.split(',') if tok.strip()]
+        out_list = list(rhs.strip())
+        
+        return [input_indices, out_list]
+    
+def interleaved2einsum(input_indices, out_list):
+    lhs = ",".join("".join(tensor) for tensor in input_indices)
+    rhs = "".join(out_list)
+    
+    return f"{lhs}->{rhs}"
+
+def sort_tn(tn):
+    remaining = list(tn)
+    sorted_tn = []
+
+    counts = Counter(sum([tensor[1] for tensor in tn], []))
+    boundary_indices = {k for k, v in counts.items() if v == 1}
+
+    for tensor in list(remaining):
+        if any(idx in boundary_indices for idx in tensor[1]):
+            sorted_tn.append(tensor)
+            remaining.remove(tensor)
+    
+    current_indices = set()
+    for tensor in sorted_tn:
+        current_indices.update(tensor[1])
+
+    while remaining:
+        for tensor in list(remaining):
+            if any(idx in current_indices for idx in tensor[1]):
+                sorted_tn.append(tensor)
+                remaining.remove(tensor)
+                current_indices.update(tensor[1])
+                break
+
+    return list(reversed(sorted_tn))
 
 def tn_metadata(data_arr):
     max_nq = max_gates = max_width = max_cdepth = max_2q_gates = 0
     avg_nq = avg_gates = avg_width = avg_cdepth = avg_2q_gates = 0
     N = len(data_arr)
     path_cache = {}
-    i = 0
     for einsum_expr, tarr in tqdm(data_arr):
-        i += 1
-        # try:
         nq, ngates, cdepth, width, twoq_gates = analyse_einsum(einsum_expr, tarr, cache=path_cache)
         max_nq = max(max_nq, nq)
         max_gates = max(max_gates, ngates)
@@ -29,9 +64,6 @@ def tn_metadata(data_arr):
         avg_cdepth += cdepth
         avg_width += width
         avg_2q_gates += twoq_gates
-        # except Exception as e:
-        #     print(f"Error analyzing einsum: {i} with error: {e}")
-        #     continue
     avg_width /= N
     avg_nq /= N
     avg_cdepth /= N
@@ -44,7 +76,7 @@ def analyse_einsum(einsum_expr, tarr, cache={}):
     op_types = tuple(op['op_type'] for op in tarr)
     cache_key = (einsum_expr, op_types)
     if cache_key in cache:
-            return cache[cache_key]
+        return cache[cache_key]
 
     qubit_depths = defaultdict(int)
     shapes = []
@@ -54,32 +86,13 @@ def analyse_einsum(einsum_expr, tarr, cache={}):
     input_subs = einsum_expr.split('->')[0].split(',')
             
     for subscript, gate in zip(input_subs, tarr):
-        symbol, op_type = gate['name'], gate['op_type']
+        op_type = gate['op_type']
 
         data_shape = torch.Size([2] * len(subscript))
         shapes.append(data_shape)
 
         if op_type == '0': nq += 1
         elif len(subscript) == 4: twoq_gates += 1
-
-        # if symbol is None:
-        #     if op_type == '0':
-        #         data_shape = torch.Size([2])
-        #         nq += 1
-        #     elif op_type == '0_dag':
-        #         data_shape = torch.Size([2])
-        #     elif op_type == 'H': 
-        #         data_shape = torch.Size([2, 2])
-        #     elif op_type == 'CX': 
-        #         data_shape = torch.Size([2, 2, 2, 2])
-        #         twoq_gates += 1
-        # else:
-        #     if op_type in ['Rz', 'Rx', 'Ry']: 
-        #         data_shape = torch.Size([2, 2])
-        #     elif op_type in ['CRz', 'CRx', 'CRy']: 
-        #         data_shape = torch.Size([2, 2, 2, 2])
-        #         twoq_gates += 1
-        # shapes.append(data_shape)
 
         if op_type not in ['0']:
             current_gate_max = 0

@@ -1,32 +1,24 @@
-from modules.symbolic import text_processor
-from modules.utils.general import get_device
+from pathlib import Path
+from modules.config import parse_args, setup_exp
 from modules.data_pipeline.embeddings import ImgStream, embed_images
 from modules.data_pipeline.retrieval import BaseDatasetRetriever
-from pathlib import Path
-import os, sys
+from modules.symbolic.text_processor import TextProcessor
 
+# python scripts/retrieve.py -cfg configs/vqc.yaml: download the config's dataset, parse its captions into diagrams
+# (Bobcat model directory from $BOBCAT_PATH, default ./bobcat) and embed its images, under data/<dataset>/
 if __name__ == '__main__':
-    DATASET = sys.argv[1] if len(sys.argv) > 1 else 'aro'     # e.g. `python scripts/retrieve.py svo-probes`
-    PARSER_PATH = os.environ.get('BOBCAT_PATH', '/cs/research/pplv/comp_bridge/bobcat')   # Bobcat parser model dir
-    ROOT_PATH = os.getcwd()
-    OUT_DIR = ROOT_PATH + '/data/' + DATASET + '/processed'
-    IMG_PATH = ROOT_PATH + '/data/' + DATASET + '/raw/images.zip'
-    DEV = get_device()
+    args = parse_args("Download and process the dataset of a config")
+    if args.config is None:
+        raise ValueError("retrieve.py needs a config (-cfg)")
+    config, DEV, _ = setup_exp(args.config, seed=args.seed, overrides=args.set)
+    dataset = config['dataset']['name']
+    data_root = Path.cwd() / 'data'
+    out_dir = data_root / dataset / 'processed'
 
-    print(f"Retrieving {DATASET} dataset from {ROOT_PATH}/data...")
-    retriever = BaseDatasetRetriever(dataset_name=DATASET, data_root=ROOT_PATH+'/data')
+    print(f"Retrieving {dataset} into {data_root}...")
+    retriever = BaseDatasetRetriever(dataset_name=dataset, data_root=data_root)
     retriever.retrieve()
 
-    print(f"Processing columns: {', '.join(retriever.text_labels)}...")
-    print(f"Backend: {DEV}, Batch size: {64}, Output Directory: {PARSER_PATH}")
-    functor = text_processor.TextProcessor(PARSER_PATH, 64, DEV)
-    functor.text2diagram(path=OUT_DIR, dataset=retriever.data, text_labels=retriever.text_labels)
-
-    #fname = os.path.basename(f)
-    generator = ImgStream(IMG_PATH, file_type='zip')
-    embed_images(generator, f'{OUT_DIR}/image_embeddings.pt', device=DEV)
-    # for f in os.listdir(IMG_PATH):
-    #     if f.endswith('.zip'):
-    #         fname = os.path.basename(f)
-    #         generator = ImgStream(IMG_PATH, file_type='zip')
-    #         embed_images(generator, f'{OUT_DIR}/images/{fname}_embeddings.pt', device=DEV)
+    print(f"Processing columns: {', '.join(retriever.text_labels)} | Backend: {DEV}")
+    TextProcessor(batch_size=64, device=DEV).text2diagram(path=out_dir, dataset=retriever.data, text_labels=retriever.text_labels)
+    embed_images(ImgStream(data_root / dataset / 'raw' / 'images.zip', file_type='zip'), f'{out_dir}/image_embeddings.pt', device=DEV)

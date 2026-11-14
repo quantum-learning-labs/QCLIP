@@ -1,9 +1,10 @@
 import torch
 from torch.utils.data import DataLoader
-from modules.utils.general import load_pkl
-from modules.utils.analysis import tn_metadata, analyse_einsum
 from torchvision.transforms import v2
-from modules.utils.factory import build_dataset, load_obj
+from modules.common import load_pkl, load_obj
+from modules.compilation.einsum import tn_metadata, analyse_einsum
+from modules.data_pipeline.datasets import build_swap_set
+from modules.symbolic.root import apply_root
 
 class DataEngine:
     def __init__(self, config, ansatz, device):
@@ -11,7 +12,10 @@ class DataEngine:
         self.ansatz = ansatz
         self.device = device
         
-        self.DatasetClass, self.collate_fn, self.eval_mapper = build_dataset(config)
+        ds_config = config['dataset']
+        self.DatasetClass = load_obj(ds_config['class'])
+        self.collate_fn = load_obj(ds_config['collate_fn'])
+        self.eval_mapper = load_obj(ds_config['eval_mapper'])
         if config['vision']['method'] == 'amp':
             self.img_transform = v2.Compose([
                 v2.ToImage(),               
@@ -21,32 +25,30 @@ class DataEngine:
         else:
             self.img_transform = None
 
+    def split_config(self, split):
+        return self.config['dataset'][split] if split in ('train', 'val') else self.config['dataset']['test'][split]
+
+    def load_text(self, split):
+        # derive: swap builds the subject/object swap set of the split; swap_negatives adds swapped captions to train
+        entry = self.split_config(split)
+        data = load_pkl(entry["text_path"])
+        if entry.get('derive') == 'swap':
+            data = build_swap_set(data)
+        if split == 'train' and self.config.get('swap_negatives', False):
+            data = build_swap_set(data, keep_all=True)
+        return data
+
     def compile_text(self, split):
         compile_kwargs = {}
         if self.config["model_type"] == "vqc":
             compile_kwargs["curry"] = self.config["text"].get("curry", False)
             compile_kwargs["discard"] = self.config["text"].get("discard", False)
             compile_kwargs["spider"] = self.config["text"].get("spider", False)
-            postselect = tuple(self.config["text"].get("postselect_types") or ())
-            if postselect and not compile_kwargs["discard"]:
-                raise ValueError("text.postselect_types only applies with text.discard: true")
-            compile_kwargs["postselect"] = postselect
-            compile_kwargs["mixer"] = int(self.config["text"].get("mixer_layers", 0) or 0)
-            compile_kwargs["sinks"] = int(self.config["text"].get("sinks", 0) or 0)
-            self.ansatz.mixer_type = self.config["text"].get("mixer_ansatz", "default")   # 'cr': identity-initialisable mixer
-            self.ansatz.phi_block = bool(self.config["text"].get("phi_block", False))   # Theorem A's Phi as a fixed discard block
-            if compile_kwargs["sinks"] and not compile_kwargs["mixer"]:
-                raise ValueError("text.sinks needs text.mixer_layers >= 1 (the sinks are coupled in by the mixer)")
-            
-        if split == 'train' or split == 'val':
-            data = load_pkl(self.config["dataset"][split]["text_path"])
-            return self.ansatz.compile_dataset(data, **compile_kwargs)
-        elif split not in ['train', 'val']:
-            data = load_pkl(self.config["dataset"]["test"][split]["text_path"])
-            compiled_data = self.ansatz.compile_dataset(data, **compile_kwargs)
-            return compiled_data
-        else:
-            raise ValueError(f"Unsupported split '{split}' for text compilation. Must be 'train' or 'val'.")
+        data = self.load_text(split)
+        root = self.config.get('text', {}).get('root', 'word')   # functor.apply_root
+        for col in [c for c in data.columns if c.endswith('_diagram')]:
+            data[col] = [[apply_root(t, root) for t in d] if d and isinstance(d[0], list) else apply_root(d, root) for d in data[col]]
+        return self.ansatz.compile_dataset(data, **compile_kwargs)
 
     def text_init(self, text_model, compiled_data):
         if hasattr(text_model, "from_symbols"):
@@ -95,49 +97,12 @@ class DataEngine:
             return metrics
 
     def get_dataset(self, compiled_data, split='train'):
-        if split == 'train' or split == 'val':
-            return self.DatasetClass(
-                compiled_data, 
-                self.config['dataset'][split]['img_path'], 
-                image_transform=self.img_transform, 
-                mode=split
-            )
-        elif split not in ['train', 'val']:
-            BenchDatasetClass = load_obj(self.config['dataset']['test'][split].get('class', None))
-            if BenchDatasetClass is None:
-                raise ValueError(f"No dataset class specified for test split '{split}' in config.")
-            return BenchDatasetClass(
-                compiled_data, 
-                self.config['dataset']['test'][split]['img_path'], 
-                image_transform=self.img_transform, 
-                mode='test'
-            )
-        else:
-            raise ValueError(f"Unsupported split '{split}' for loader. Must be 'train', 'val', or a test split name.")
-        
+        DatasetClass = self.DatasetClass if split in ('train', 'val') else load_obj(self.split_config(split)['class'])
+        return DatasetClass(compiled_data, self.split_config(split)['img_path'], image_transform=self.img_transform,
+                            mode=split if split in ('train', 'val') else 'test')
+
     def get_loader(self, compiled_data, split='train'):
-        if split == 'train' or split == 'val':
-            dataset = self.get_dataset(compiled_data, split=split)
-            loader = DataLoader(
-                dataset, 
-                batch_size=self.config['batch_size'], 
-                collate_fn=self.collate_fn, 
-                shuffle=(split=='train'), 
-                num_workers=self.config.get("num_workers", 0),  # workers deadlocked runs at start (2026-10-17); data is in memory
-                pin_memory=True
-            )
-            return loader
-        elif split not in ['train', 'val']:
-            dataset = self.get_dataset(compiled_data, split=split)
-            collate_fn = load_obj(self.config['dataset']['test'][split]['collate_fn'])
-            loader = DataLoader(
-                dataset, 
-                batch_size=self.config['batch_size'], 
-                collate_fn=collate_fn, 
-                shuffle=False, 
-                num_workers=self.config.get("num_workers", 0),  # workers deadlocked runs at start (2026-10-17); data is in memory
-                pin_memory=True
-            )
-            return loader
-        else:
-            raise ValueError(f"Unsupported split '{split}' for loader. Must be 'train', 'val', or a test split name.")
+        collate_fn = self.collate_fn if split in ('train', 'val') else load_obj(self.split_config(split)['collate_fn'])
+        return DataLoader(self.get_dataset(compiled_data, split=split), batch_size=self.config['batch_size'],
+                          collate_fn=collate_fn, shuffle=(split == 'train'), num_workers=self.config.get("num_workers", 0),
+                          pin_memory=True)

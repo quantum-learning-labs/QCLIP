@@ -45,21 +45,24 @@ of traced qubits grows. Much of the recent work in this repo makes discard (CPTP
 
 ```
 modules/
+  config.py          config loading, --set overrides, run ids, the command line shared by the scripts
+  factory.py         builds an experiment from a config: models, loss, optimiser, data (load_experiment)
+  common.py          device, seeding, pickle loading, import-by-path
   symbolic/          CCG parsing (Bobcat via lambeq), grammar types, the diagram -> tensor-network functor
   compilation/
-    quantum/         ansatz.py: tensor network -> circuit (curried ansatz, discard, sinks, mixers, Phi block)
-                     gates.py: batched gates; emul.py: Qiskit/Aer circuit export and emulation
+    einsum.py        einsum string helpers, circuit size metrics
+    quantum/         ansatz.py: tensor network -> circuit (curried ansatz, post-selection or discard); gates.py
+                     circuits.py: Qiskit export and readout circuits; backends.py: device and noise models;
+                     emul.py: shot-based emulation (Aer)
     classical/       tensor-network and neural compilers (classical baselines)
   models/
     text/            einsum_quantum.py (VQC text model), einsum_classical.py (TN), neural_model.py (MLP)
     vision/          CLIP features and their map to quantum states (quantum_map.py)
-    fusion/          criteria.py (losses), engine.py (trainer, evaluator, run manager), distill.py (teacher)
-  data_pipeline/     dataset retrieval, image embedding, datasets and collate functions, DataEngine
-  utils/             factory (builds an experiment from a config), quantum/tensor ops, visualisation
-scripts/             train.py, benchmark.py, emulate.py, retrieve.py, make_swap.py, run_hp.sh, run_baseline.sh
+    fusion/          criteria.py (losses), trainer.py (trainer, distillation teacher), evaluator.py, run.py (runs, checkpoints)
+  data_pipeline/     dataset retrieval (+ manifests/ of our splits), image embedding, datasets and swap sets, DataEngine
+scripts/             train.py, benchmark.py, emulate.py, retrieve.py
 configs/             vqc.yaml, tn.yaml, mlp.yaml (templates); baseline/ (sweep bases); final/ (recommended configs)
-analysis/            analysis scripts: cptp/ (discard vs post-selection), discard_gap/ (gap reports v1, v2)
-notebooks/           train_{vqc,tn,mlp}.ipynb
+notebooks/           train_vqc.ipynb, train_tn.ipynb: minimal training runs
 assets/              figures
 ```
 
@@ -74,8 +77,8 @@ uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -r requirements.txt      # pinned environment, includes CLIP (from git), lambeq, qiskit-aer
 ```
 
-Parsing uses the Bobcat CCG parser through lambeq. lambeq downloads the model to the directory you give it
-(`PARSER_PATH` in `scripts/retrieve.py`). You only need the parser to preprocess a dataset. Training reads the
+Parsing uses the Bobcat CCG parser through lambeq. lambeq downloads the model to the directory in `BOBCAT_PATH`
+(default `./bobcat`). You only need the parser to preprocess a dataset. Training reads the
 parsed diagrams from disk.
 
 Run every script from the repository root with the root on the path: `PYTHONPATH=. python scripts/<x>.py ...`
@@ -90,15 +93,16 @@ dataset lives under `data/<name>/`:
 data/svo-probes/processed/
   train.pkl  val.pkl  test.pkl     parsed captions with positive and negative images
   swap.pkl                         95 subject/object-swap pairs (text choice)
-  swap_full.pkl  swap_animate.pkl  larger swap sets built with make_swap.py
   image_embeddings.pt              CLIP image features
 ```
 
-- `scripts/retrieve.py` downloads a dataset, parses its captions and embeds its images with CLIP. Set
-  `DATASET` and `PARSER_PATH` at the bottom of the script.
-- `scripts/make_swap.py <in.pkl> <out.pkl> [--keep_all]` builds a subject/object-swap set from any split. It drops
-  symmetric verbs and swaps that leave the sentence unchanged, and it never overwrites a file. With `--keep_all` it
-  keeps every row and marks the real swaps, which is the input format for training with `swap_negatives`.
+- `python scripts/retrieve.py -cfg <config>` downloads the config's dataset, parses its captions and embeds its
+  images with CLIP. Datasets and their sources are listed in `modules/data_pipeline/retrieval.py` (`DATASET_SOURCES`).
+  SVO-Probes comes from DeepMind's CSV and image URLs plus our split manifest in `modules/data_pipeline/manifests/svo-probes/`.
+- Larger subject/object-swap sets are derived when they are loaded: a test entry with `derive: swap` (as `swap_full`
+  in the SVO-Probes configs, 1777 pairs from `test.pkl`) swaps the two nouns of every caption that has two, dropping
+  symmetric verbs and swaps that leave the sentence unchanged. `swap_negatives: true` adds the swapped captions to
+  the training set as extra negatives.
 
 Set the dataset in the config's `dataset:` block. `configs/vqc.yaml` has SVO-Probes active and ARO parked as `_dataset`.
 
@@ -107,16 +111,16 @@ Set the dataset in the config's `dataset:` block. `configs/vqc.yaml` has SVO-Pro
 ### Train
 
 ```bash
-PYTHONPATH=. python scripts/train.py --config configs/final/vqc_nodiscard.yaml --seed 0 --run_name nodiscard_s0
-PYTHONPATH=. python scripts/train.py --config configs/vqc.yaml --seed 0 --run_name my_run \
+PYTHONPATH=. python scripts/train.py -cfg configs/final/vqc_nodiscard.yaml --seed 0 --set run_name=nodiscard_s0
+PYTHONPATH=. python scripts/train.py -cfg configs/vqc.yaml --seed 0 --set run_name=my_run \
     --set text.discard=true --set text.layers=3 --set qlr=0.003
 ```
 
-- `--set key=value` overrides any config value (dotted keys for nested ones) and can be repeated.
-  Values are parsed as YAML 1.1, so write `qlr=0.003`: `3e-3` parses as a string.
-- `--init_from <ckpt.pt>` warm-starts the text and image weights from another checkpoint, for example a discard
-  model from a post-selected one.
-- `--epochs N` overrides the epoch count (for smoke tests).
+All scripts take the same arguments: `-cfg` (config), `-cp` (checkpoint), `-o` (output), `--seed` and `--set`.
+- `--set key=value` overrides any config value (dotted keys for nested ones) and can be repeated, e.g.
+  `--set epochs=2` for a smoke test. Values are parsed as YAML 1.1, so write `qlr=0.003`: `3e-3` parses as a string.
+- `-cp <ckpt.pt>` warm-starts the text and image weights from another checkpoint (config key `init_from`), for
+  example a discard model from a post-selected one.
 - Checkpoints go to `checkpoints/<dataset>/<model_type>/<run_name>/`, with `best.pt` chosen on validation
   `hard_neg_acc` and the resolved `config.yaml`. Use a new `run_name` for every run: run directories are never reused.
 - Every run is seeded with deterministic kernels and records its git commit. Metrics go to MLflow (a sqlite file,
@@ -129,7 +133,7 @@ PYTHONPATH=. python scripts/benchmark.py -cp checkpoints/svo-probes/vqc/nodiscar
 ```
 
 This evaluates on every `dataset.test` entry with the config saved next to the checkpoint. On SVO-Probes that
-means `std` (image choice, ~1.8k pairs, the primary metric) and `swap` (text choice). It writes a JSON next to
+means `std` (image choice, ~1.8k pairs, the primary metric), `swap` (text choice, 95 pairs) and `swap_full` (1777). It writes a JSON next to
 the checkpoint (`-o` sets another path) and never overwrites.
 
 ### Emulate on a simulated quantum device
@@ -139,31 +143,25 @@ optionally, hardware noise:
 
 ```bash
 # noiseless shot sweep on the std set
-PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --eval_set std --shots 64,256,1024
+PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.set=std --set "emulate.shots=[64,256,1024]"
 # noisy, using the calibration of a real IBM device
-PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --eval_set std --shots 1024 --noise \
-    --profile fake_kingston --method statevector \
-    --aer batched_shots_gpu=false --aer shot_branching_enable=false
+PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std \
+    --set emulate.noise=true --set emulate.profile=fake_kingston --set emulate.backend=statevector \
+    --set emulate.aer_options.batched_shots_gpu=false --set emulate.aer_options.shot_branching_enable=false
 ```
 
-- `--profile` picks any `qiskit_ibm_runtime` fake backend (a calibration snapshot); the default is `fake_miami`.
-- `--noise_profile honest` adds scheduled idle decoherence and coherent ZZ to the backend noise model, and its
-  knobs can be changed with `--honest k=v`. The default, `backend`, is Aer's `NoiseModel.from_backend`.
-- `--method` sets the Aer method. Density matrix is faster for small circuits. `--dm_max_qubits N` runs circuits
-  with at most N active qubits as density matrices and the rest with `--method`.
-- For noisy statevector runs, keep the two `--aer` flags shown above, or GPU memory grows until the job dies.
-- `--num_runs` repeats the shot sampling only (shot noise), not training variance.
-
-### Hyperparameter sweeps
-
-```bash
-bash scripts/run_hp.sh <tag> <method> <variant> [--emulate] <seed>... -- --set k=v ...
-```
-
-This trains `configs/baseline/vqc_<method>.yaml` (`nodiscard`, `discard`, `discard_hs`, `discard_uj`) with the
-overrides after `--`, for each seed, then benchmarks `best.pt`. Checkpoints go to
-`checkpoints/svo-probes/vqc/hp_<tag>_<method>_<variant>_s<seed>/` and results to `results/hpsearch/<tag>/`.
-Select variants on validation `hard_neg_acc`, not on test.
+Emulation settings are `emulate.*` config keys, changed with `--set` as in `train.py`:
+- `shots`: shot budget(s) per circuit (circuits are compiled once and run at each); by default it follows
+  `resolution`. `limit: N` emulates only the first N pairs.
+- `profile`: any `qiskit_ibm_runtime` fake backend (a calibration snapshot); the default is `fake_miami`.
+- `noise_profile: honest` adds scheduled idle decoherence and coherent ZZ to the backend noise model; its
+  knobs are `emulate.honest.<knob>`. The default, `backend`, is Aer's `NoiseModel.from_backend`.
+- `backend` is the Aer method. Density matrix is faster for small circuits. `dm_max_qubits: N` runs circuits
+  with at most N active qubits as density matrices and the rest with `backend`.
+- `aer_options.<option>` sets any Aer option. For noisy statevector runs keep the two shown above, or GPU memory
+  grows until the job dies.
+- `num_runs` repeats the shot sampling only (shot noise), not training variance; `circuit_batch` circuits go to Aer
+  per call; `save_counts: true` stores every circuit's counts.
 
 ## Configuration reference
 
@@ -171,7 +169,7 @@ The configs to start from are in `configs/final/`:
 
 | config | model |
 |---|---|
-| `vqc_nodiscard.yaml` | post-selection, 3 text layers, qlr 3e-3 (best overall) |
+| `vqc_nodiscard.yaml` | post-selection, 3 text layers, qlr 0.003 (best overall) |
 | `vqc_discard.yaml` | discard from scratch, 3 text layers, Pauli loss |
 | `vqc_discard_distill.yaml` | discard, warm-started from the post-selected model of the same seed and distilled from it (best discard); the run recipe is in the file header |
 
@@ -182,23 +180,17 @@ The main keys:
 | `model_type` | `vqc` (quantum), `tn` (classical tensor network), `mlp` |
 | `qlr`, `clr` | base learning rates for the circuit and the classical parameters |
 | `embedding_qubits` | qubits of the sentence (output) wire and of the image state |
-| `loss` | `fs` (Fubini-Study, post-selection), `pauli`, `uj`, `hs`, `bures` (discard); default by `text.discard` |
-| `learn_temperature` | learnable logit scale |
-| `purity_weight`, `spread_weight` | loss regularisers (purity: `pauli`; spread: `pauli`, `hs`, `fs`) |
-| `hard_negatives` | add each caption's negative image to the softmax |
-| `swap_negatives` | add subject/object-swapped captions as text negatives (train split from `make_swap.py --keep_all`) |
-| `distill_from`, `distill_kd_weight`, `distill_tau`, `distill_state_weight` | distil from a frozen post-selected teacher checkpoint |
-| `init_by_symbol` | warm start by symbol name (when the two circuits differ, e.g. extra mixer gates) |
+| `loss` | `fs` (Fubini-Study, post-selection), `pauli`, `uj`, `hs` (discard); default by `text.discard` |
+| `purity_weight` | purity regulariser of `pauli` (default 0.1; every final recipe uses 0) |
+| `swap_negatives` | add subject/object-swapped captions to the training set as text negatives |
+| `distill_from`, `distill_kd_weight`, `distill_tau` | distil from a frozen post-selected teacher checkpoint |
+| `text.ansatz` | word-box circuit (default `custom_v5`); add one by subclassing `BaseAnsatz` (define `ansatz()`) and registering it in `ANSATZE` |
 | `text.layers` | ansatz depth per word, the most important knob |
 | `text.curry` | curried ansatz (cups removed); `text.spider` must stay `false` |
 | `text.discard` | discard (partial trace) instead of post-selection |
-| `text.postselect_types` | with discard: still post-select wires of these atomic types (hybrid) |
-| `text.mixer_layers`, `text.mixer_ansatz` | entangling layers on the sentence wires before the trace; `cr` is identity at angle 0 (safe for warm starts) |
-| `text.sinks` | extra traced qubits coupled in by the mixer (needs `mixer_layers >= 1`) |
-| `text.phi_block` | a fixed, parameter-free discard block whose channel reproduces post-selection's decisions (research use) |
+| `text.root` | `word` (default): the root word's open wires become the output, so a root word has its own parameters; `head`: one shared head box per root type maps the open wires to the output; `frobenius`: the output is the sentence space S = N^⊗m (needs `text.s` = `embedding_qubits`, a multiple of `text.n`); an `s` root is read out as it is, an `n` root (noun-phrase caption) is copied into the diagonal of S by the parameter-free Frobenius copy, other root types raise (vqc only) |
 | `vision.method`, `vision.layers` | image map: `mlp`, `pca` or `amp` (amplitude encoding) |
-| `vision.env_qubits` | traced environment qubits, giving mixed image states (discard only) |
-| `emulate.*` | defaults for `emulate.py` (set, shots, backend, `measurement_method`: `compute_uncompute` or `destructive_swap`) |
+| `emulate.*` | settings of `emulate.py` (set, backend, noise, profile, `measurement_method`: `compute_uncompute` or `destructive_swap`, ...) |
 
 ## Results
 
@@ -219,25 +211,19 @@ Test `std` hard-negative accuracy (image choice, ~1.8k pairs), mean ± std over 
 |---|---|---|
 | post-selection, 3 text layers | 0.874 ± 0.011 | `configs/final/vqc_nodiscard.yaml` |
 | discard, warm start + distillation | 0.850 ± 0.011 | `configs/final/vqc_discard_distill.yaml` |
-| discard, warm start | 0.843 ± 0.010 | `vqc_discard.yaml` + `--init_from` |
+| discard, warm start | 0.843 ± 0.010 | `vqc_discard.yaml` + `-cp` (post-selected checkpoint) |
 | discard, from scratch | 0.813 ± 0.013 | `configs/final/vqc_discard.yaml` |
 
 Findings so far:
 - Text depth is the most important setting for both readouts (3 layers >> 2 >> 1).
 - The discard gap sits on subject negatives; on verb and object negatives the two readouts are within 2 points.
-  Other losses (Bures, exact fidelity, purity schedules) did not close it.
+  Other losses (Bures angle, exact fidelity, purity schedules), extra traced qubits and mixers did not close it
+  (that code was removed; it is on the research branches).
 - Warm-starting from a post-selected model and distilling its scores closes most of the gap (10/10 paired wins
   over the warm start alone).
 - In noisy emulation with realistic device calibrations, post-selection still wins at m=4 traced qubits.
   At m=8 the order reverses and plain discard is best: noise shrinks the margins and post-selection also
   loses most of its shots.
-
-## Analysis scripts
-
-`analysis/` holds the scripts behind the discard vs post-selection study: readout swaps (the same weights read by
-both methods), gradient probes, margin bounds, noise and shot-cost summaries, branch decomposition and loss
-checks. See [analysis/cptp/README.md](analysis/cptp/README.md) and
-[analysis/discard_gap/README.md](analysis/discard_gap/README.md).
 
 ## Citation
 

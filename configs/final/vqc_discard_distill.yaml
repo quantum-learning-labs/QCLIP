@@ -1,6 +1,6 @@
 # Best pure-discard recipe (2026-10-18, 10 seeds: test std 0.850+-0.011): 3 text layers, purity_weight 0,
 # warm start + score distillation from the post-selected final model of the SAME seed. Per seed run:
-#   train.py --config configs/final/vqc_discard_distill.yaml --seed S --init_from T --set distill_from=T
+#   train.py -cfg configs/final/vqc_discard_distill.yaml --seed S -cp T --set distill_from=T
 #   with T = checkpoints/svo-probes/vqc/hp_hp2_nodiscard_tl3_qlr3e-3_sS/best.pt (configs/final/vqc_nodiscard.yaml)
 model_type: "vqc"
 mlflow_db: "mlf_dbs/svo-probes_final.db"
@@ -13,7 +13,6 @@ epochs: 100
 purity_weight: 0.0
 distill_kd_weight: 1.0
 distill_tau: 1.0
-distill_state_weight: 0.0
 embedding_qubits: 3
 out_dim: 512
 
@@ -27,7 +26,6 @@ emulate:
   measurement_method: 'destructive_swap' # 'compute_uncompute', 'destructive_swap', or 'classical_shadows'
 
 text:
-  # ansatz: "custom_v6"
   n: 1
   s: 1
   p: 1
@@ -44,7 +42,7 @@ dataset:
   name: "svo-probes"
   class: "modules.data_pipeline.datasets.SVODataset"
   collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
-  eval_mapper: "modules.models.fusion.engine.svo_mapper"
+  eval_mapper: "modules.data_pipeline.datasets.svo_mapper"
 
   train:
     text_path: "data/svo-probes/processed/train.pkl"
@@ -55,7 +53,6 @@ dataset:
     diagnostics:
       - "evaluate_image_choice"
       - "diagnostic_image_choice"
-        # - "cptp_diagnostic_image_choice"
 
   test:
     std:
@@ -67,17 +64,25 @@ dataset:
       task: "evaluate_image_choice"
     swap:
       class: "modules.data_pipeline.datasets.SwapDataset"
-      collate_fn: "modules.data_pipeline.datasets.swap_collate_fn"
+      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
 
       text_path: "data/svo-probes/processed/swap.pkl"
+      img_path: "data/svo-probes/processed/image_embeddings.pt"
+      task: "evaluate_text_choice"
+    swap_full:   # every test caption with two nouns, subject and object swapped (datasets.build_swap_set)
+      class: "modules.data_pipeline.datasets.SwapDataset"
+      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+
+      text_path: "data/svo-probes/processed/test.pkl"
+      derive: swap
       img_path: "data/svo-probes/processed/image_embeddings.pt"
       task: "evaluate_text_choice"
 
 _dataset:
   name: "aro"
   class: "modules.data_pipeline.datasets.ARODataset"
-  collate_fn: "modules.data_pipeline.datasets.aro_collate_fn"
-  eval_mapper: "modules.models.fusion.engine.aro_mapper"
+  collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+  eval_mapper: "modules.data_pipeline.datasets.aro_mapper"
 
   train:
     text_path: "data/aro/processed/train.pkl"
@@ -92,14 +97,14 @@ _dataset:
   test:
     att:
       class: "modules.data_pipeline.datasets.ARODataset"
-      collate_fn: "modules.data_pipeline.datasets.aro_collate_fn"
+      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
 
       text_path: "data/aro/processed/test_att.pkl"
       img_path: "data/aro/processed/image_embeddings.pt"
       task: "evaluate_text_choice"
     rel:
       class: "modules.data_pipeline.datasets.ARODataset"
-      collate_fn: "modules.data_pipeline.datasets.aro_collate_fn"
+      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
 
       text_path: "data/aro/processed/test_rel.pkl"
       img_path: "data/aro/processed/image_embeddings.pt"

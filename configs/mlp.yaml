@@ -16,7 +16,7 @@ dataset:
   name: "mscoco"
   class: "modules.data_pipeline.datasets.CocoDataset"
   collate_fn: "modules.data_pipeline.datasets.coco_collate_fn"
-  eval_mapper: "modules.models.fusion.engine.mscoco_mapper"
+  eval_mapper: "modules.data_pipeline.datasets.mscoco_mapper"
 
 splits:
   train:

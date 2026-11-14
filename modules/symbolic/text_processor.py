@@ -5,34 +5,13 @@ import pandas as pd
 from pathlib import Path
 
 from modules.symbolic.grammar import strip_sent
-from modules.symbolic.functor import tree2einsum, unify_codomain
+from modules.symbolic.functor import tree2einsum
+from modules.symbolic.root import apply_root
 
 class TextProcessor:
     def __init__(self, parser_path: str | None = None, batch_size: int = 32, device = 'cpu'):
-        # parser_path = '/Users/tls/Desktop/Work/COMP0267/assignment_5/COMP0267_CW/bobcat'
-        # parser_path = '/cs/research/pplv/comp_bridge/bobcat'
-        # os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        self.parser_path = parser_path or os.getenv("BOBCAT_PARSER_PATH", "./bobcat")
+        self.parser_path = parser_path or os.getenv("BOBCAT_PATH", "./bobcat")   # Bobcat parser model directory
         self.parser = BobcatParser(model_name_or_path=self.parser_path, cache_dir=self.parser_path, device=device, batch_size=batch_size)
-
-    def _text2diagram(self, sentence_arr, idx=False):
-        if isinstance(sentence_arr, str):
-            sentence_arr = [sentence_arr]
-        tree_arr = self.parser.sentences2trees(sentence_arr, suppress_exceptions=True)
-        processed_tns = []
-        idx_arr = []
-        for flat_idx, tree in enumerate(tree_arr):
-            if tree is not None:
-                try:
-                    tn = unify_codomain(tree2einsum(tree, simplify=True))
-                    processed_tns.append(tn)
-                    idx_arr.append(flat_idx)
-                except Exception as e:
-                    print(f"Error normalizing tree at flat index {flat_idx}: {e}")
-        if idx:
-            return processed_tns, idx_arr
-        else:
-            return processed_tns
 
     def text2diagram(self, path, dataset, text_labels: list[str]):
         # path should be data_root / dataset_name / 'processed'
@@ -69,8 +48,9 @@ class TextProcessor:
                     if tree is not None:
                         try:
                             processed_tree = tree._resolved().collapse_noun_phrases()
-                            tn = unify_codomain(tree2einsum(processed_tree, simplify=False))
-                            processed_tns_nested[row_idx].append(tn)
+                            tn = tree2einsum(processed_tree, simplify=False)
+                            apply_root(tn, 'word')   # rows whose root cannot be resolved are dropped, as before
+                            processed_tns_nested[row_idx].append(tn)   # stored unrooted: text.root is applied when compiled
                         except Exception as e:
                             miss_count += 1
                             print(f"Error normalizing tree at flat index {flat_idx}: {e}")

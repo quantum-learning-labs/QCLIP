@@ -1,19 +1,15 @@
 import torch.nn as nn
 from itertools import count
-import torch, math
+import torch
 import numpy as np
-from sklearn.decomposition import PCA, IncrementalPCA
+from sklearn.decomposition import IncrementalPCA
 from opt_einsum import contract_expression
 from modules.compilation.quantum.gates import *
 
 class QuantumFeatureMap(nn.Module):
-    def __init__(self, k: int, layers: int, batch_size: int, out_dim: int = None, id_init=False, method='mlp', discard=False, env_qubits=0):
+    def __init__(self, k: int, layers: int, batch_size: int, out_dim: int = None, id_init=False, method='mlp', discard=False):
         super().__init__()
-        if env_qubits and not discard:
-            raise ValueError("vision.env_qubits needs text.discard: true (they are traced out)")
         self.k = k
-        self.env_qubits = env_qubits
-        self.n_wires = k + env_qubits  # the last env_qubits wires are traced out -> mixed image states
         self.out_dim = 2 ** k if out_dim is None else out_dim
         self.layers = layers
         self.batch_size = batch_size
@@ -27,12 +23,12 @@ class QuantumFeatureMap(nn.Module):
                 nn.Linear(self.out_dim, self.out_dim // 2),
                 nn.LayerNorm(self.out_dim // 2),
                 nn.SiLU(),
-                nn.Linear(self.out_dim // 2, 3 * self.n_wires * layers),
+                nn.Linear(self.out_dim // 2, 3 * k * layers),
             )
             nn.init.uniform_(self.projector[3].weight, a=-1e-4, b=1e-4)
             nn.init.zeros_(self.projector[3].bias)
         if self.method == 'pca':
-            self.pca = IncrementalPCA(n_components= 3 * self.n_wires * layers)
+            self.pca = IncrementalPCA(n_components= 3 * k * layers)
 
         self.compile_fmap()
         self.init_params(id_init)
@@ -66,16 +62,16 @@ class QuantumFeatureMap(nn.Module):
         gate_arr = []
         shape_arr = []
 
-        current_wires = [self.get_char() for _ in range(self.n_wires)]
+        current_wires = [self.get_char() for _ in range(self.k)]
         input_indices.extend([w for w in current_wires])
-        gate_arr.extend({'name': None, 'op_type': '0'} for _ in range(self.n_wires))
-        shape_arr.extend([[2]] * self.n_wires)
+        gate_arr.extend({'name': None, 'op_type': '0'} for _ in range(self.k))
+        shape_arr.extend([[2]] * self.k)
 
         symbol_idx = 0
         for l in range(self.layers):
             op_idx = 0
 
-            for i in range(self.n_wires):
+            for i in range(self.k):
                 for rotation in ['Rx', 'Ry', 'Rz']:
                     nxt = self.get_char()
                     input_indices.append('b' + current_wires[i] + nxt)
@@ -84,7 +80,7 @@ class QuantumFeatureMap(nn.Module):
                     shape_arr.append([self.batch_size, 2, 2])
                     current_wires[i] = nxt
 
-            for i in range(self.n_wires):
+            for i in range(self.k):
                 nxt = self.get_char()
                 input_indices.append(current_wires[i] + nxt)
                 symbol = f"img_Ry_l{l}_{op_idx}"
@@ -95,9 +91,9 @@ class QuantumFeatureMap(nn.Module):
                 current_wires[i] = nxt
                 op_idx += 1
 
-            if self.n_wires > 1:
-                for i in range(self.n_wires):
-                    c_idx, t_idx = i, (i + 1) % self.n_wires
+            if self.k > 1:
+                for i in range(self.k):
+                    c_idx, t_idx = i, (i + 1) % self.k
                     c_out, t_out = self.get_char(), self.get_char()
                     input_indices.append(current_wires[c_idx] + current_wires[t_idx] + c_out + t_out)
                     symbol = f"img_CRz_l{l}_{op_idx}"
@@ -156,7 +152,7 @@ class QuantumFeatureMap(nn.Module):
                 layer_idx = int(parts[2][1:])
                 qubit_idx = int(parts[3])
                 axis_offset = axis_map[gate]
-                flat_idx = (layer_idx * self.n_wires * 3) + (qubit_idx * 3) + axis_offset 
+                flat_idx = (layer_idx * self.k * 3) + (qubit_idx * 3) + axis_offset 
 
                 feature_tensor = features[flat_idx]
                 sym2ftr[symbol] = feature_tensor
@@ -180,7 +176,7 @@ class QuantumFeatureMap(nn.Module):
                 layer_idx = int(parts[2][1:])
                 qubit_idx = int(parts[3])
                 axis_offset = axis_map[gate]
-                flat_idx = (layer_idx * self.n_wires * 3) + (qubit_idx * 3) + axis_offset 
+                flat_idx = (layer_idx * self.k * 3) + (qubit_idx * 3) + axis_offset 
 
                 feature_tensor = features[:, flat_idx]
                 if gate == 'Rx': tensor_arr.append(Rx(feature_tensor))
@@ -203,61 +199,4 @@ class QuantumFeatureMap(nn.Module):
             rho = torch.matmul(psi, psi.conj().transpose(1, 2))
             return rho
         else:
-            return self.contraction_path(*tensor_arr)   
-
-
-class QFMap_CPTP(nn.Module):
-    def __init__(self, base_image_model: nn.Module, gamma: float = 0.3):
-        super().__init__()
-        self.image_model = base_image_model
-        out_dim = base_image_model.out_dim
-        self.gamma_head = nn.Sequential(
-            nn.Linear(out_dim, 1),
-            nn.Sigmoid()
-        )
-
-    # --- Delegate Einsum Attributes & Methods to Base Feature Map ---
-    @property
-    def einsum_expr(self):
-        return getattr(self.image_model, 'einsum_expr', None)
-
-    @property
-    def gate_arr(self):
-        return getattr(self.image_model, 'gate_arr', None)
-
-    def describe_einsum(self, *args, **kwargs):
-        if hasattr(self.image_model, 'describe_einsum'):
-            return self.image_model.describe_einsum(*args, **kwargs)
-        raise AttributeError(f"Base model {self.image_model.__class__.__name__} does not implement describe_einsum.")
-
-    def __getattr__(self, name: str):
-        # Fallback to base_image_model for any unhandled attributes (e.g., sym2param, fit_image_pca)
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            return getattr(self.image_model, name)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        img_emb = self.image_model(x)
-        
-        orig_shape = img_emb.shape
-        B = img_emb.size(0)
-        
-        if img_emb.dim() == 2:
-            D = int(math.sqrt(img_emb.size(1)))
-            rho = img_emb.view(B, D, D).to(torch.complex64)
-        else:
-            D = img_emb.size(-1)
-            rho = img_emb.to(torch.complex64)
-
-        gamma_x = (self.gamma_head(x.view(B, -1)) * 0.5).unsqueeze(-1).to(torch.complex64)
-        # Construct maximally mixed identity matrix 1/d * I_d
-        I_d = torch.eye(D, dtype=torch.complex64, device=img_emb.device).unsqueeze(0).expand(B, D, D)
-        rho_mixed = (1.0 / D) * I_d
-
-        # Apply Depolarizing Channel: (1 - gamma) * rho + gamma * (1/d * I)
-        rho_out = (1.0 - gamma_x) * rho + gamma_x * rho_mixed
-
-        if len(orig_shape) == 2:
-            return rho_out.view(B, D * D)
-        return rho_out
+            return self.contraction_path(*tensor_arr)

@@ -1,16 +1,9 @@
 from __future__ import annotations
-import zipfile, io, torch, random
+import zipfile, io, torch, random, re
 from pathlib import Path
 import pandas as pd
 from PIL import Image
-from torch.utils.data import Dataset, Subset
-
-def subsample_data(dataset, nsamp=0):
-    # Using this function without specifying nsamp is equivalent to a random shuffle of the data
-    if nsamp == 0: 
-        nsamp = len(dataset)
-    idx_arr = random.sample(range(0, len(dataset)), nsamp)
-    return Subset(dataset, idx_arr)
+from torch.utils.data import Dataset
 
 class BaseDataset(Dataset):
     def __init__(self, compiled_df: pd.DataFrame, img_path: str | None, image_transform=None, mode: str = "train"):
@@ -91,36 +84,6 @@ def coco_collate_fn(batch):
         "caption": captions
     }
 
-class ARODataset(BaseDataset):
-    def __getitem__(self, idx):
-        row_compiled = self.compiled_df.iloc[idx]
-        
-        # Load image
-        image = self._load_image(row_compiled['image_id'])
-        
-        # Extract both expressions side-by-side for comparison scoring
-        pos_einsum = row_compiled['true_caption_einsum']
-        pos_symbols = row_compiled['true_caption_symbols']
-        
-        neg_einsum = row_compiled['false_caption_einsum']
-        neg_symbols = row_compiled['false_caption_symbols']
-        
-        return {"image": image,
-                "pos_caption": (pos_einsum, pos_symbols),
-                "neg_caption": (neg_einsum, neg_symbols)
-                }
-    
-def aro_collate_fn(batch):
-    images = torch.stack([item['image'] for item in batch])
-    pos_captions = [item['pos_caption'] for item in batch] 
-    neg_captions = [item['neg_caption'] for item in batch]
-    
-    return {
-        "image": images,
-        "pos_caption": pos_captions,
-        "neg_caption": neg_captions
-    }
-    
 class SVODataset(BaseDataset):
     def __getitem__(self, idx):
         row_compiled = self.compiled_df.iloc[idx]
@@ -138,7 +101,7 @@ class SVODataset(BaseDataset):
                 "neg_image": neg_image,
                 "idx": idx,   # row index (distillation looks up the teacher's embeddings by it)
                 }
-        if 'swapped_sentence_einsum' in row_compiled.index:   # training with swapped-caption negatives (scripts/make_swap.py --keep_all)
+        if 'swapped_sentence_einsum' in row_compiled.index:   # training with swapped-caption negatives (swap_negatives)
             item["swap_caption"] = (row_compiled['swapped_sentence_einsum'], row_compiled['swapped_sentence_symbols'])
             item["swap_valid"] = bool(row_compiled.get('swap_valid', True))
         return item
@@ -157,100 +120,79 @@ def svo_collate_fn(batch):
             "swap_valid": torch.tensor([item['swap_valid'] for item in batch])} if 'swap_caption' in batch[0] else {}),
     }
 
-class SwapDataset(BaseDataset):
+class TextChoiceDataset(BaseDataset):
+    # one image and two captions, the true one first (SVO swap sets: subject and object swapped; ARO: attributes swapped)
+    image_col, pos_col, neg_col = 'pos_image_id', 'corrected_sentence', 'swapped_sentence'
+
     def __getitem__(self, idx):
         row_compiled = self.compiled_df.iloc[idx]
-        
-        # Load image
-        image = self._load_image(row_compiled['pos_image_id'])
-        
-        # Extract both expressions side-by-side for comparison scoring
-        pos_einsum = row_compiled['corrected_sentence_einsum']
-        pos_symbols = row_compiled['corrected_sentence_symbols']
+        return {"image": self._load_image(row_compiled[self.image_col]),
+                "pos_caption": (row_compiled[f'{self.pos_col}_einsum'], row_compiled[f'{self.pos_col}_symbols']),
+                "neg_caption": (row_compiled[f'{self.neg_col}_einsum'], row_compiled[f'{self.neg_col}_symbols'])}
 
-        neg_einsum = row_compiled['swapped_sentence_einsum']
-        neg_symbols = row_compiled['swapped_sentence_symbols']
-        
-        return {"image": image,
-                "pos_caption": (pos_einsum, pos_symbols),
-                "neg_caption": (neg_einsum, neg_symbols)
-                }
-    
-def swap_collate_fn(batch):
-    images = torch.stack([item['image'] for item in batch])
-    pos_captions = [item['pos_caption'] for item in batch] 
-    neg_captions = [item['neg_caption'] for item in batch]
-    
+class SwapDataset(TextChoiceDataset):
+    pass
+
+class ARODataset(TextChoiceDataset):
+    image_col, pos_col, neg_col = 'image_id', 'true_caption', 'false_caption'
+
+def text_choice_collate_fn(batch):
     return {
-        "image": images,
-        "pos_caption": pos_captions,
-        "neg_caption": neg_captions
+        "image": torch.stack([item['image'] for item in batch]),
+        "pos_caption": [item['pos_caption'] for item in batch],
+        "neg_caption": [item['neg_caption'] for item in batch]
     }
 
-class SugarCrepePPDataset(BaseDataset):
-    """Handles SugarCrepe / ARO layout: 1 Image -> (Positive Caption vs Negative Caption)."""
-    def __getitem__(self, idx):
-        row_compiled = self.compiled_df.iloc[idx]
-        
-        # Load image
-        image_ref = row_compiled.get('filename')
-        image = self._load_image(image_ref)
-        
-        # Extract both expressions side-by-side for comparison scoring
-        pos1 = (row_compiled['caption_einsum'], row_compiled['caption_symbols'])
-        pos2 = (row_compiled['caption2_einsum'], row_compiled['caption2_symbols'])
-        neg = (row_compiled['negative_caption_einsum'], row_compiled['negative_caption_symbols'])
-        
-        return {"image": image,
-                "pos_caption1": pos1,
-                "pos_caption2": pos2,
-                "neg_caption": neg
-                }
+# verbs whose subject/object swap usually still describes the image: their swapped captions are not negatives
+SYMMETRIC_VERBS = {'meet', 'hug', 'kiss', 'marry', 'touch', 'fight', 'play', 'talk', 'dance', 'race', 'wrestle', 'greet',
+                   'shake', 'face', 'resemble', 'join', 'accompany', 'chat', 'argue', 'embrace', 'cuddle', 'date'}
 
-def sugarcrepe_collate_fn(batch):
-    images = torch.stack([item['image'] for item in batch])
-    pos1_captions = [item['pos_caption1'] for item in batch] 
-    pos2_captions = [item['pos_caption2'] for item in batch]
-    neg_captions = [item['neg_caption'] for item in batch]
-    
-    return {
-        "image": images,
-        "pos_caption1": pos1_captions,
-        "pos_caption2": pos2_captions,
-        "neg_caption": neg_captions
-    }
+def build_swap_set(df, keep_all=False):
+    # SwapDataset layout from a processed SVO split: for each caption whose diagram has exactly two noun boxes (type ['n']),
+    # swap the two nouns (same grammar and vocabulary, so no new symbols). Rows without a real swap (not two nouns, the
+    # same noun twice, a symmetric verb) are dropped, or with keep_all kept with swap_valid False (swapped-caption
+    # negatives for training: the training set itself is unchanged)
+    rows = []
+    stats = {'total': len(df), 'not_two_nouns': 0, 'same_noun': 0, 'symmetric': 0}
+    for _, row in df.iterrows():
+        diagram = row['corrected_sentence_diagram']
+        nouns = [i for i, box in enumerate(diagram) if list(box[2]) == ['n']]
+        if len(nouns) != 2:
+            reason = 'not_two_nouns'
+        elif diagram[nouns[0]][0].lower() == diagram[nouns[1]][0].lower():
+            reason = 'same_noun'
+        elif str(row['verb']).lower() in SYMMETRIC_VERBS:
+            reason = 'symmetric'
+        else:
+            reason = None
 
-class WinoGroundDataset(BaseDataset):
-    """Handles Winoground layout: 2 Images and 2 Captions per test group."""
-    def __getitem__(self, idx):
-        row_compiled = self.compiled_df.iloc[idx]
-        
-        # Winoground contains 2 separate image columns per row
-        img_0 = self._load_image(row_compiled['image_0'])
-        img_1 = self._load_image(row_compiled['image_1'])
-        
-        # Extract both distinct compiled caption blueprints
-        c0_einsum = row_compiled['caption_0_einsum']
-        c0_symbols = row_compiled['caption_0_symbols']
-        
-        c1_einsum = row_compiled['caption_1_einsum']
-        c1_symbols = row_compiled['caption_1_symbols']
-        
-        return {'image_0': img_0,
-                'image_1': img_1,
-                'caption_0': (c0_einsum, c0_symbols),
-                'caption_1': (c1_einsum, c1_symbols)
-            }
-    
-def winoground_collate_fn(batch):
-    img_0 = torch.stack([item['image_0'] for item in batch])
-    img_1 = torch.stack([item['image_1'] for item in batch])
-    caption_0 = [item['caption_0'] for item in batch] 
-    caption_1 = [item['caption_1'] for item in batch]
-    
-    return {
-        'image_0': img_0,
-        'image_1': img_1,
-        'caption_0': caption_0,
-        'caption_1': caption_1
-    }
+        new_row = row.to_dict()
+        if reason is not None:
+            stats[reason] += 1
+            if not keep_all:
+                continue
+            new_row['swapped_sentence'] = row['corrected_sentence']
+            new_row['swapped_sentence_diagram'] = diagram
+            new_row['swap_valid'] = False
+        else:
+            a, b = nouns
+            word_a, word_b = diagram[a][0], diagram[b][0]
+            swapped = [list(box) for box in diagram]
+            swapped[a][0], swapped[b][0] = word_b, word_a
+            swapped = [type(box)(new) if isinstance(box, tuple) else new for box, new in zip(diagram, swapped)]   # keep the box type
+            sentence = re.sub(rf'\b{re.escape(word_a)}\b', '\0', row['corrected_sentence'], count=1)
+            sentence = re.sub(rf'\b{re.escape(word_b)}\b', word_a, sentence, count=1).replace('\0', word_b)
+            new_row['swapped_sentence'] = sentence
+            new_row['swapped_sentence_diagram'] = swapped
+            new_row['swap_valid'] = True
+        rows.append(new_row)
+
+    swap_df = pd.DataFrame(rows)
+    cols = [c for c in swap_df.columns if not c.endswith('_diagram')] + ['corrected_sentence_diagram', 'swapped_sentence_diagram']
+    print(f"Swap set: {stats} -> kept {len(swap_df)}")
+    return swap_df[cols]
+
+# (images, captions) of a training batch, for the losses and global retrieval
+mscoco_mapper = lambda batch: (batch["image"], batch["caption"])
+aro_mapper = lambda batch: (batch["image"], batch["pos_caption"])
+svo_mapper = lambda batch: (batch["pos_image"], batch["caption"])
