@@ -16,6 +16,10 @@ class Emulator:
         # (cost independent of shots), the rest on the main backend (statevector trajectories)
         self.dm_max_qubits = config['emulate'].get('dm_max_qubits', 0)
         self.dm_backend = None
+        # seed option of the backend: Aer's seed_simulator, or the IonQ simulator's sampler_seed
+        self.seed_option = 'sampler_seed' if config['emulate'].get('provider') == 'ionq' else 'seed_simulator'
+        if self.dm_max_qubits and config['emulate'].get('provider') == 'ionq':
+            raise ValueError("emulate.dm_max_qubits is an Aer option: not available with the IonQ simulator")
         if self.dm_max_qubits:
             options = backend.options
             self.dm_backend = AerSimulator(method='density_matrix', device=options.device, precision=options.precision,
@@ -150,7 +154,7 @@ class Emulator:
         self.counts_log = []
         for run_idx in range(num_runs):
             self._run_idx = run_idx
-            self.backend.set_options(seed_simulator=base_seed + run_idx) 
+            self.backend.set_options(**{self.seed_option: base_seed + run_idx})
             if self.dm_backend is not None:
                 self.dm_backend.set_options(seed_simulator=base_seed + run_idx)
 

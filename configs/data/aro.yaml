@@ -1,0 +1,43 @@
+# ARO VG-Attribution + VG-Relation (Yuksekgonul et al., ICLR 2023), the authors' release: a test-only benchmark, so the
+# split is ours. scripts/retrieve.py builds one pool (28,748 att + 23,937 rel rows) in processed/all.pkl, with every image
+# cropped to its row's box as in the official evaluation. Train/val/test are computed when loaded (splits.py).
+name: "aro"
+class: "modules.data_pipeline.datasets.ARODataset"
+collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+eval_mapper: "modules.data_pipeline.datasets.aro_mapper"
+
+# whole Visual Genome images per split (att and rel rows of one image stay together): no test image is seen in training;
+# val/test images with a word no training caption has move to train
+split:
+  by: "vg_image_id"
+  fractions: [0.7, 0.15, 0.15]
+  seed: 0
+
+train:
+  text_path: "data/aro/processed/all.pkl"
+  img_path: "data/aro/processed/crop_embeddings.pt"
+val:
+  text_path: "data/aro/processed/all.pkl"
+  img_path: "data/aro/processed/crop_embeddings.pt"
+  diagnostics:
+    - "evaluate_text_choice"
+    - "diagnostic_text_choice"
+
+test:
+  att:
+    class: "modules.data_pipeline.datasets.ARODataset"
+    collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+    split: test
+    subset: att
+    text_path: "data/aro/processed/all.pkl"
+    img_path: "data/aro/processed/crop_embeddings.pt"
+    task: "evaluate_text_choice"
+  rel:
+    class: "modules.data_pipeline.datasets.ARODataset"
+    collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+    split: test
+    subset: rel
+    text_path: "data/aro/processed/all.pkl"
+    img_path: "data/aro/processed/crop_embeddings.pt"
+    task: "evaluate_text_choice"
+  # a model trained on another dataset can be scored on the whole benchmark with split: all (and subset att / rel)

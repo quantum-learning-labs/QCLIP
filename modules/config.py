@@ -72,6 +72,8 @@ def apply_overrides(config, overrides):
         config['overrides'] = list(overrides)
     return config
 
+DATA_CONFIGS = Path(__file__).resolve().parents[1] / 'configs' / 'data'
+
 def setup_exp(config_path: str, seed=None, overrides=None):
     # must be set before cuBLAS initialises for deterministic GPU matmuls
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -80,7 +82,15 @@ def setup_exp(config_path: str, seed=None, overrides=None):
 
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
-    apply_overrides(config, overrides)
+    # dataset: <name> reads configs/data/<name>.yaml (also when set by --set dataset=<name>); dataset.* overrides apply after
+    overrides = overrides or []
+    apply_overrides(config, [o for o in overrides if not o.startswith('dataset.')])
+    if isinstance(config.get('dataset'), str):
+        with open(DATA_CONFIGS / f"{config['dataset']}.yaml") as file:
+            config['dataset'] = yaml.safe_load(file)
+    apply_overrides(config, [o for o in overrides if o.startswith('dataset.')])
+    if overrides:
+        config['overrides'] = list(overrides)
 
     # the readout is text.discard; a top-level discard key is not read
     if 'discard' in config:

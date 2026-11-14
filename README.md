@@ -59,9 +59,9 @@ modules/
     text/            einsum_quantum.py (VQC text model), einsum_classical.py (TN), neural_model.py (MLP)
     vision/          CLIP features and their map to quantum states (quantum_map.py)
     fusion/          criteria.py (losses), trainer.py (trainer, distillation teacher), evaluator.py, run.py (runs, checkpoints)
-  data_pipeline/     dataset retrieval (+ manifests/ of our splits), image embedding, datasets and swap sets, DataEngine
-scripts/             train.py, benchmark.py, emulate.py, retrieve.py
-configs/             vqc.yaml, tn.yaml, mlp.yaml (templates); baseline/ (sweep bases); final/ (recommended configs)
+  data_pipeline/     dataset retrieval (+ manifests/ of our curation), splits.py, image embedding, datasets and swap sets, DataEngine
+scripts/             train.py, benchmark.py, emulate.py, retrieve.py, compare.py (paired comparison over splits)
+configs/             vqc.yaml, tn.yaml, mlp.yaml (templates); data/ (one file per dataset); baseline/ (sweep bases); final/ (recommended configs)
 notebooks/           train_vqc.ipynb, train_tn.ipynb: minimal training runs
 assets/              figures
 ```
@@ -86,25 +86,38 @@ Run every script from the repository root with the root on the path: `PYTHONPATH
 
 ## Data
 
-The supported datasets are SVO-Probes (the main benchmark), ARO (attribution and relation) and MSCOCO. Each
-dataset lives under `data/<name>/`:
+The supported datasets are SVO-Probes (the main benchmark), ARO (VG-Attribution and VG-Relation) and MSCOCO. A config
+names its dataset (`dataset: "svo-probes"`), whose settings are in `configs/data/<name>.yaml`. Each dataset lives
+under `data/<name>/`:
 
 ```
 data/svo-probes/processed/
-  train.pkl  val.pkl  test.pkl     parsed captions with positive and negative images
-  swap.pkl                         95 subject/object-swap pairs (text choice)
-  image_embeddings.pt              CLIP image features
+  all.pkl                the whole curated dataset: parsed captions with positive and negative images
+  image_embeddings.pt    CLIP image features
 ```
 
 - `python scripts/retrieve.py -cfg <config>` downloads the config's dataset, parses its captions and embeds its
-  images with CLIP. Datasets and their sources are listed in `modules/data_pipeline/retrieval.py` (`DATASET_SOURCES`).
-  SVO-Probes comes from DeepMind's CSV and image URLs plus our split manifest in `modules/data_pipeline/manifests/svo-probes/`.
-- Larger subject/object-swap sets are derived when they are loaded: a test entry with `derive: swap` (as `swap_full`
-  in the SVO-Probes configs, 1777 pairs from `test.pkl`) swaps the two nouns of every caption that has two, dropping
-  symmetric verbs and swaps that leave the sentence unchanged. `swap_negatives: true` adds the swapped captions to
-  the training set as extra negatives.
-
-Set the dataset in the config's `dataset:` block. `configs/vqc.yaml` has SVO-Probes active and ARO parked as `_dataset`.
+  images with CLIP. Sources are listed in `modules/data_pipeline/retrieval.py` (`DATASET_SOURCES`). SVO-Probes comes
+  from DeepMind's CSV and image URLs plus our curation in `modules/data_pipeline/manifests/svo-probes/` (the rows we
+  keep and their captions rewritten as simple subject-verb-object sentences). ARO comes from the authors' release, with
+  every image cropped to its row's box as in their evaluation.
+- Splits are computed when the data is loaded, from the dataset's `split` setting (`modules/data_pipeline/splits.py`).
+  Neither SVO-Probes nor ARO has an official training split, so both are stored whole (parsed once) and split by a
+  seeded function that keeps groups together: every caption of a positive image (SVO-Probes, 60/20/20) or every row of a
+  Visual Genome image (ARO, 70/15/15) lands in one split, chosen by a hash of (seed, group). The vocabulary is then
+  closed: a val/test group with a word (word and wire types, one text-model tensor) that no training caption has moves
+  to train, so every val/test word is trained. Datasets with an official split (MSCOCO) keep it.
+- Every run records its split (`dataset.split_record` in the checkpoint's `config.yaml`, `split` in benchmark and
+  emulation results): the spec, the sizes and a fingerprint `id`. Evaluating a checkpoint on a different split raises.
+  For results over several splits, train each model on the same split seeds (`--set dataset.split.seed=k`) and compare
+  with `scripts/compare.py <glob a> <glob b>`, which pairs runs by (split id, training seed) and refuses sets that
+  differ.
+- `--set dataset.split=legacy` gives the SVO-Probes split of all results before 2026-11-13 (`weights/` and the numbers
+  in `configs/final/`). It was made by row, so captions and images are shared between its train, val and test sets.
+- Subject/object-swap sets are derived when they are loaded: a test entry with `derive: swap` (`swap_full`, 1777
+  pairs on the legacy test split) swaps the two nouns of every caption that has two, dropping symmetric verbs and swaps
+  that leave the sentence unchanged. `swap_negatives: true` adds the swapped captions to the training set as extra
+  negatives.
 
 ## Usage
 
@@ -133,7 +146,7 @@ PYTHONPATH=. python scripts/benchmark.py -cp checkpoints/svo-probes/vqc/nodiscar
 ```
 
 This evaluates on every `dataset.test` entry with the config saved next to the checkpoint. On SVO-Probes that
-means `std` (image choice, ~1.8k pairs, the primary metric), `swap` (text choice, 95 pairs) and `swap_full` (1777). It writes a JSON next to
+means `std` (image choice, the primary metric) and `swap_full` (text choice). It writes a JSON next to
 the checkpoint (`-o` sets another path) and never overwrites.
 
 ### Emulate on a simulated quantum device
@@ -148,13 +161,24 @@ PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.set=std 
 PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std \
     --set emulate.noise=true --set emulate.profile=fake_kingston --set emulate.backend=statevector \
     --set emulate.aer_options.batched_shots_gpu=false --set emulate.aer_options.shot_branching_enable=false
+# IonQ's cloud simulator with the Forte noise model (API key from $IONQ_API_KEY or ~/.ionq_key; never a QPU)
+PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std --set emulate.limit=40 \
+    --set emulate.noise=true --set emulate.provider=ionq --set emulate.profile=forte-1 --set emulate.circuit_batch=40
+# the same with an IQM device (Garnet, 20 qubits, native r and cz gates)
+PYTHONPATH=. python scripts/emulate.py -cp <ckpt>/best.pt --set emulate.shots=1024 --set emulate.set=std \
+    --set emulate.noise=true --set emulate.provider=iqm --set emulate.profile=garnet
 ```
 
 Emulation settings are `emulate.*` config keys, changed with `--set` as in `train.py`:
 - `shots`: shot budget(s) per circuit (circuits are compiled once and run at each); by default it follows
   `resolution`. `limit: N` emulates only the first N pairs.
-- `profile`: any `qiskit_ibm_runtime` fake backend (a calibration snapshot); the default is `fake_miami`.
-- `noise_profile: honest` adds scheduled idle decoherence and coherent ZZ to the backend noise model; its
+- `provider` and `profile`: the device to emulate; never hardware. `ibm` (default): any `qiskit_ibm_runtime` fake
+  backend (a calibration snapshot, run locally on Aer), default `fake_miami`. `iqm`: an IQM fake backend from
+  `iqm-client[qiskit]` (`garnet` (default), `apollo`, `aphrodite`, `adonis`) with IQM's own noise model, on Aer.
+  `ionq`: IonQ's cloud simulator with one of IonQ's noise models (`forte-1` (default), `aria-1`, ...; `noise: false` is
+  the ideal simulator). It needs an IonQ API key in `$IONQ_API_KEY` or in the file `emulate.ionq_key_file` (default
+  `~/.ionq_key`, keep it `chmod 600`). The code only ever opens IonQ's simulator; seeds go to its `sampler_seed`.
+- `noise_profile: honest` (IBM profiles only) adds scheduled idle decoherence and coherent ZZ to the backend noise model; its
   knobs are `emulate.honest.<knob>`. The default, `backend`, is Aer's `NoiseModel.from_backend`.
 - `backend` is the Aer method. Density matrix is faster for small circuits. `dm_max_qubits: N` runs circuits
   with at most N active qubits as density matrices and the rest with `backend`.

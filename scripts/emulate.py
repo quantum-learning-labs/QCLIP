@@ -75,4 +75,5 @@ if __name__ == "__main__":
         write_results(out_path, {"checkpoint": str(checkpoint_path), "config": config_path, "epoch": exp.state.get('epoch'),
                                  "seed": SEED, "discard": config['text'].get('discard', False), "git_commit": git_state(),
                                  "train_git_commit": config.get('git_commit'), "pairs": len(pos_circs), "shots": emulator.shots,
-                                 "limit": em.get('limit'), "emulate": em, "results": data})
+                                 "limit": em.get('limit'), "split": config['dataset'].get('split_record'), "emulate": em,
+                                 "results": data})

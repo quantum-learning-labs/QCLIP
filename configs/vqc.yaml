@@ -9,8 +9,9 @@ embedding_qubits: 3
 out_dim: 512
 
 emulate:
-  set: "swap"
+  set: "swap_full"
   noise: false
+  provider: "ibm" # 'ibm', 'iqm' (local calibration snapshots on Aer) or 'ionq' (IonQ cloud simulator); emulate.profile picks the device / noise model (default miami / garnet / forte-1)
   optimization_level: 1 # 0, 1, 2, 3
   resolution: 10000
   num_runs: 10
@@ -32,75 +33,4 @@ vision:
   layers: 2
   method: 'mlp' # 'amp' or 'pca' or 'mlp'
 
-dataset:
-  name: "svo-probes"
-  class: "modules.data_pipeline.datasets.SVODataset"
-  collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
-  eval_mapper: "modules.data_pipeline.datasets.svo_mapper"
-
-  train:
-    text_path: "data/svo-probes/processed/train.pkl"
-    img_path: "data/svo-probes/processed/image_embeddings.pt"
-  val:
-    text_path: "data/svo-probes/processed/val.pkl"
-    img_path: "data/svo-probes/processed/image_embeddings.pt"
-    diagnostics:
-      - "evaluate_image_choice"
-      - "diagnostic_image_choice"
-
-  test:
-    std:
-      class: "modules.data_pipeline.datasets.SVODataset"
-      collate_fn: "modules.data_pipeline.datasets.svo_collate_fn"
-
-      text_path: "data/svo-probes/processed/test.pkl"
-      img_path: "data/svo-probes/processed/image_embeddings.pt"
-      task: "evaluate_image_choice"
-    swap:
-      class: "modules.data_pipeline.datasets.SwapDataset"
-      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
-
-      text_path: "data/svo-probes/processed/swap.pkl"
-      img_path: "data/svo-probes/processed/image_embeddings.pt"
-      task: "evaluate_text_choice"
-    swap_full:   # every test caption with two nouns, subject and object swapped (datasets.build_swap_set)
-      class: "modules.data_pipeline.datasets.SwapDataset"
-      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
-
-      text_path: "data/svo-probes/processed/test.pkl"
-      derive: swap
-      img_path: "data/svo-probes/processed/image_embeddings.pt"
-      task: "evaluate_text_choice"
-
-_dataset:
-  name: "aro"
-  class: "modules.data_pipeline.datasets.ARODataset"
-  collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
-  eval_mapper: "modules.data_pipeline.datasets.aro_mapper"
-
-  train:
-    text_path: "data/aro/processed/train.pkl"
-    img_path: "data/aro/processed/image_embeddings.pt"
-  val:
-    text_path: "data/aro/processed/val.pkl"
-    img_path: "data/aro/processed/image_embeddings.pt"
-    diagnostics:
-      - "evaluate_text_choice"
-      - "diagnostic_text_choice"
-
-  test:
-    att:
-      class: "modules.data_pipeline.datasets.ARODataset"
-      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
-
-      text_path: "data/aro/processed/test_att.pkl"
-      img_path: "data/aro/processed/image_embeddings.pt"
-      task: "evaluate_text_choice"
-    rel:
-      class: "modules.data_pipeline.datasets.ARODataset"
-      collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
-
-      text_path: "data/aro/processed/test_rel.pkl"
-      img_path: "data/aro/processed/image_embeddings.pt"
-      task: "evaluate_text_choice"
-
+dataset: "svo-probes" # configs/data/svo-probes.yaml; dataset.* keys can be changed with --set

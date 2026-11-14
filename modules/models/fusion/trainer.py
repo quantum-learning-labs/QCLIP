@@ -21,7 +21,9 @@ class ContrastiveTrainer:
         noun_grad_sq = 0.0
         other_grad_sq = 0.0
 
-        sym2param = getattr(self.text_model, 'sym2param', {})
+        if not hasattr(self.text_model, 'sym2param'):   # VQC symbol names only (word__type_...)
+            return {}
+        sym2param = self.text_model.sym2param
         param2sym = {idx: sym for sym, idx in sym2param.items()}
 
         for name, param in self.text_model.named_parameters():

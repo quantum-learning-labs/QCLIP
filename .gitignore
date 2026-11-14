@@ -3,6 +3,8 @@ mlflow.deb
 .vscode/
 images/
 data/
+# dataset configs (configs/data/<name>.yaml) are code, not data
+!configs/data/
 .data/
 data_compact/
 results/
@@ -233,3 +235,14 @@ jobs/
 mlruns/
 .DS_Store
 * copy.*
+
+# private agent notes and credentials: never committed (any branch)
+CLAUDE.md
+CLAUDE.md.*
+NOTES.md
+TN_BRIEF.md
+AGENTS.md
+memory/
+*.key
+*_key
+.env*
