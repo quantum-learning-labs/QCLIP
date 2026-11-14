@@ -24,7 +24,7 @@ def group_split(groups, fractions, seed):
 
 def row_vocab(pool):
     # the words of each row, per text.root mode: (mode, word, wire types) of every box of every parsed caption column
-    # (a root word has other wires in word mode than in frobenius mode, and in head mode the head is a word too; the
+    # (a root word has other wires in word mode than in frobenius mode; the
     # frobenius copy box has no parameters, so it is not vocabulary). Closing on every mode at once makes the split the
     # same for every mode, so runs that differ in text.root are paired on the same splits and none meets an unseen word.
     cols = [c for c in pool.columns if c.endswith('_diagram')]
