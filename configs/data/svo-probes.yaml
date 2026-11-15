@@ -40,3 +40,12 @@ test:
     text_path: "data/svo-probes/processed/all.pkl"
     img_path: "data/svo-probes/processed/image_embeddings.pt"
     task: "evaluate_text_choice"
+  swap100:   # 100 pairs of swap_full, chosen by the split seed (the same pairs for every model on a split; SE ~4-5 points)
+    class: "modules.data_pipeline.datasets.SwapDataset"
+    collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+    split: test
+    derive: swap
+    sample: 100
+    text_path: "data/svo-probes/processed/all.pkl"
+    img_path: "data/svo-probes/processed/image_embeddings.pt"
+    task: "evaluate_text_choice"

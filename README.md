@@ -212,6 +212,7 @@ The main keys:
 | `text.layers` | ansatz depth per word, the most important knob |
 | `text.curry` | curried ansatz (cups removed); `text.spider` must stay `false` |
 | `text.discard` | discard (partial trace) instead of post-selection |
+| `text.phi_block` | with `text.discard`: Theorem A's channel Φ as a fixed discard block (Bell pair + controlled swap per output wire), so ρ = ψψ† + (1−p0)I/d exactly; curried only |
 | `text.root` | `word` (default): the root word's open wires become the output, so a root word has its own parameters; `frobenius`: the output is the sentence space S = N^⊗m (needs `text.s` = `embedding_qubits`, a multiple of `text.n`); an `s` root is read out as it is, an `n` root (noun-phrase caption) is copied into the diagonal of S by the parameter-free Frobenius copy, other root types raise (vqc only) |
 | `vision.method`, `vision.layers` | image map: `mlp`, `pca` or `amp` (amplitude encoding) |
 | `emulate.*` | settings of `emulate.py` (set, backend, noise, profile, `measurement_method`: `compute_uncompute` or `destructive_swap`, ...) |

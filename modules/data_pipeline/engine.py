@@ -5,7 +5,7 @@ from modules.common import load_pkl, load_obj
 from modules.compilation.einsum import tn_metadata, analyse_einsum
 from modules.data_pipeline.datasets import build_swap_set
 from modules.symbolic.root import apply_root
-from modules.data_pipeline.splits import assign, select
+from modules.data_pipeline.splits import assign, select, sample_rows
 
 class DataEngine:
     def __init__(self, config, ansatz, device):
@@ -34,7 +34,8 @@ class DataEngine:
         # with dataset.split set, text_path is the dataset's pool and the entry's rows are computed (splits.py): the
         # entry's split (train/val/test/all; default its own name) and subset. Without it (configs from before
         # 2026-11-13), text_path is that split's own file.
-        # derive: swap builds the subject/object swap set of the rows; swap_negatives adds swapped captions to train
+        # derive: swap builds the subject/object swap set of the rows; swap_negatives adds swapped captions to train;
+        # sample: N keeps N rows chosen by the split seed (splits.sample_rows)
         entry = self.split_config(split)
         data = load_pkl(entry["text_path"])
         spec = self.config['dataset'].get('split')
@@ -47,6 +48,8 @@ class DataEngine:
             data = select(data, labels, which, entry.get('subset'))
         if entry.get('derive') == 'swap':
             data = build_swap_set(data)
+        if entry.get('sample'):   # a fixed-size test set: the same rows for every model trained on this split
+            data = sample_rows(data, int(entry['sample']), spec['seed'] if isinstance(spec, dict) else 0)
         if split == 'train' and self.config.get('swap_negatives', False):
             data = build_swap_set(data, keep_all=True)
         return data
@@ -62,6 +65,7 @@ class DataEngine:
             compile_kwargs["curry"] = self.config["text"].get("curry", False)
             compile_kwargs["discard"] = self.config["text"].get("discard", False)
             compile_kwargs["spider"] = self.config["text"].get("spider", False)
+            self.ansatz.phi_block = bool(self.config["text"].get("phi_block", False))   # Theorem A's Phi as a fixed discard block
         data = self.load_text(split)
         root = self.config.get('text', {}).get('root', 'word')   # functor.apply_root
         for col in [c for c in data.columns if c.endswith('_diagram')]:

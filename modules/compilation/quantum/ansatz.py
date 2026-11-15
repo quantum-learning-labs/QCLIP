@@ -77,6 +77,30 @@ class BaseAnsatz(ABC):
                 self._cx(wires, n + j, j, new_indices, new_tensors)
         return wires, new_indices, new_tensors
 
+    def phi_block_gates(self, ccg_map, input_indices, tensor_arr, discard):
+        # text.phi_block: Theorem A's channel as a fixed, parameter-free discard block (curried compiler only).
+        # Per output wire S_i a Bell pair (A_i, B_i); if any non-output wire is not |0>, swap S_i with A_i. Tracing all but
+        # S gives Phi(rho) = K0 rho K0^+ + (1 - p0) I/d exactly: the all-|0> branch keeps the post-selected state, every
+        # other branch leaves S holding halves of Bell pairs (I/d). So decisions equal post-selection's for every parameter
+        # value, with trace margins scaled by p0.
+        if not discard:
+            raise ValueError("text.phi_block needs text.discard: true")
+        others = [k for k in ccg_map if k != 0]
+        nw = [w for k in others for w in ccg_map[k]]; m = len(nw)
+        if m:
+            s = list(ccg_map[0])
+            for i in range(len(s)):
+                a, b = self.get_char(), self.get_char()
+                input_indices.append([a, b]); tensor_arr.append({'name': None, 'op_type': 'bell'})
+                nw_out = [self.get_char() for _ in nw]; s_out, a_out = self.get_char(), self.get_char()
+                input_indices.append(nw + [s[i], a] + nw_out + [s_out, a_out])
+                tensor_arr.append({'name': None, 'op_type': f'cswap{m}'})
+                nw, s[i] = nw_out, s_out
+            ccg_map[0] = s; pos = 0
+            for k in others:
+                n = len(ccg_map[k]); ccg_map[k] = nw[pos:pos + n]; pos += n
+        return input_indices, tensor_arr
+
     @abstractmethod
     def ansatz(self, current_wires, base_symbol):
         # Append the gates of one word box acting on current_wires (list of index chars, updated in place).
@@ -105,6 +129,8 @@ class BaseAnsatz(ABC):
         return interleaved2einsum(input_indices, out_list)
     
     def tn2ansatz(self, tn, discard=False):
+        if getattr(self, 'phi_block', False):
+            raise ValueError("text.phi_block needs text.curry: true")
         self.reset_char()
         ccg_map = {}
         input_indices, tensor_arr = [], []
@@ -194,6 +220,9 @@ class BaseAnsatz(ABC):
                 n = self.obmap.get(typ, 1)
                 ccg_map[idx] = current_wires[i:i+n]
                 i += n
+
+        if getattr(self, 'phi_block', False):
+            input_indices, tensor_arr = self.phi_block_gates(ccg_map, input_indices, tensor_arr, discard)
 
         if not discard:
             for virtual_idx, physical_wires in ccg_map.items():
