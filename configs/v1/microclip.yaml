@@ -1,0 +1,26 @@
+# qclip v1 baseline MicroCLIP: the CLIP text transformer shrunk to 2 layers, 2 heads, width 32 (modules/models/text/
+# micro_clip.py), trained from scratch on the same data against the same CLIP image vector (PCA to embedding_dim if
+# < 512), |cosine| InfoNCE (loss: hs). text.ff_dim matches its parameter count to the CCG-VQC's (REPRODUCE.md).
+model_type: "microclip"
+batch_size: 256
+lr: 0.001
+weight_decay: 0.0
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_dim: 8
+loss: "hs"
+temperature: 0.07
+label_smoothing: 0.1
+
+text:
+  width: 32
+  layers: 2
+  heads: 2
+  ff_dim: 128
+  max_len: 32
+
+vision:
+  method: "amp"
+
+dataset: "svo-probes"

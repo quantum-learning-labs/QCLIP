@@ -1,0 +1,27 @@
+# qclip v1 baseline: the CCG tensor network. The same CCG diagrams as the CCG-VQC, each word a classical tensor (MPS-
+# decomposed above max_order, bond_dim) with wire dimensions text.n/s/p = 2^(VQC qubits per type) and output
+# embedding_dim = 2^embedding_qubits, against the same CLIP image vector; |cosine| InfoNCE (loss: hs). bond_dim matches its
+# parameter count to the CCG-VQC's (REPRODUCE.md).
+model_type: "tn"
+batch_size: 256
+lr: 0.001
+weight_decay: 0.0
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_dim: 8
+loss: "hs"
+temperature: 0.07
+label_smoothing: 0.1
+
+text:
+  n: 2
+  s: 2
+  p: 2
+  bond_dim: 4
+  max_order: 3
+
+vision:
+  method: "amp"
+
+dataset: "svo-probes"

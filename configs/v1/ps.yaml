@@ -1,0 +1,30 @@
+# qclip v1 (LREC 2026 paper, reviewer release): the CCG-VQC with post-selection (QuLIP), 2 text layers, against the
+# CLIP image vector itself (no trained image parameters; PCA to 2^embedding_qubits dims if < 9, amplitude-encoded).
+# Qubits per type (text.n/s/p) and output qubits (embedding_qubits) are set per dataset by the v1 qubit search
+# (REPRODUCE.md); configs/v1/<dataset>/ps.yaml hold the chosen values. Five runs: split seed k, training seed k.
+model_type: "vqc"
+batch_size: 256
+qlr: 0.01
+clr: 0.0001
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_qubits: 3
+out_dim: 512
+
+text:
+  ansatz: "custom_v5"
+  n: 1
+  s: 1
+  p: 1
+  layers: 2
+  curry: true
+  root: "word"
+  spider: false
+  discard: false
+
+vision:
+  layers: 2
+  method: "amp"
+
+dataset: "svo-probes"
