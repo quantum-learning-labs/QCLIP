@@ -147,7 +147,7 @@ def text_choice_collate_fn(batch):
 SYMMETRIC_VERBS = {'meet', 'hug', 'kiss', 'marry', 'touch', 'fight', 'play', 'talk', 'dance', 'race', 'wrestle', 'greet',
                    'shake', 'face', 'resemble', 'join', 'accompany', 'chat', 'argue', 'embrace', 'cuddle', 'date'}
 
-def build_swap_set(df, keep_all=False):
+def build_swap_set(df, keep_all=False, drop_symmetric=True):
     # SwapDataset layout from a processed SVO split: for each caption whose diagram has exactly two noun boxes (type ['n']),
     # swap the two nouns (same grammar and vocabulary, so no new symbols). Rows without a real swap (not two nouns, the
     # same noun twice, a symmetric verb) are dropped, or with keep_all kept with swap_valid False (swapped-caption
@@ -161,7 +161,7 @@ def build_swap_set(df, keep_all=False):
             reason = 'not_two_nouns'
         elif diagram[nouns[0]][0].lower() == diagram[nouns[1]][0].lower():
             reason = 'same_noun'
-        elif str(row['verb']).lower() in SYMMETRIC_VERBS:
+        elif drop_symmetric and str(row['verb']).lower() in SYMMETRIC_VERBS:
             reason = 'symmetric'
         else:
             reason = None
@@ -191,6 +191,45 @@ def build_swap_set(df, keep_all=False):
     cols = [c for c in swap_df.columns if not c.endswith('_diagram')] + ['corrected_sentence_diagram', 'swapped_sentence_diagram']
     print(f"Swap set: {stats} -> kept {len(swap_df)}")
     return swap_df[cols]
+
+# SVO-Swap, the 95-pair benchmark of the LREC 2026 paper (from DisCoCLIP, Lo et al. 2025: "95 evaluation pairs created by
+# swapping subjects and objects (when both refer to humans or animals)"). Its generator was not released; select_swap95
+# rebuilds the same 95 rows from the pool: rows of the original (legacy) val and test splits whose caption has exactly two
+# nouns, both people or animals, which are the image triplet's subject and object in that order. That rule gives 99 rows,
+# 94 of them in the set; the set's two curation decisions are kept as they were: the five person-woman captions are
+# dropped (the two nouns can refer to one person) and "The person drives the man." (triplet man,drive,person) is kept.
+# build_swap_set then swaps the two nouns (no symmetric-verb filter: the set has five "plays with" pairs).
+PEOPLE_ANIMALS = {'man', 'woman', 'girl', 'boy', 'person', 'child', 'kid', 'baby', 'mother', 'father', 'parent', 'lady',
+                  'bride', 'businessman', 'player', 'friend', 'model', 'couple', 'dog', 'puppy', 'cat', 'animal'}
+SWAP95_DROP_NOUNS = {('person', 'woman')}
+SWAP95_KEEP = {('The person drives the man.', 'man,drive,person')}
+
+def _caption_nouns(row):
+    # the caption's noun boxes (type n) in sentence order
+    words = re.findall(r"[a-z']+", row['corrected_sentence'].lower())
+    nouns = [box[0].lower() for box in row['corrected_sentence_diagram'] if list(box[2]) == ['n']]
+    return sorted(nouns, key=lambda w: words.index(w) if w in words else len(words))
+
+def select_swap95(pool):
+    # the 95 rows of SVO-Swap (see above); needs the pool's legacy_split column
+    keep = []
+    for _, row in pool.iterrows():
+        if row['legacy_split'] not in ('val', 'test'):
+            keep.append(False); continue
+        nouns = _caption_nouns(row)
+        rule = (len(nouns) == 2 and nouns[0] != nouns[1] and all(n in PEOPLE_ANIMALS for n in nouns)
+                and nouns == [str(row['subj']).lower(), str(row['obj']).lower()] and tuple(nouns) not in SWAP95_DROP_NOUNS)
+        keep.append(rule or (row['corrected_sentence'], row['pos_triplet']) in SWAP95_KEEP)
+    rows = pool[keep]
+    if len(rows) != 95:
+        raise ValueError(f"select_swap95 found {len(rows)} rows, not 95: the pool differs from the curated SVO-Probes pool")
+    return rows
+
+def build_swap95(pool):
+    return build_swap_set(select_swap95(pool), drop_symmetric=False)
+
+from modules.data_pipeline.splits import FIXED_TEST_SETS   # noqa: E402 (splits pins these rows to test: test_always)
+FIXED_TEST_SETS['swap95'] = select_swap95
 
 # (images, captions) of a training batch, for the losses and global retrieval
 mscoco_mapper = lambda batch: (batch["image"], batch["caption"])

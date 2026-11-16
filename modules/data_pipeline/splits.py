@@ -9,6 +9,9 @@ from modules.symbolic.root import apply_root, COPY_BOX, ROOT_MODES
 #       go to one split, chosen by a hash of (seed, group). Then the vocabulary is closed: a val or test group with a
 #       word (word, wire types: one parameter tensor of the text model) that no train row has moves to train, so every
 #       val/test word is trained. A group's split depends only on the pool, never on row order.
+#   test_always: <set> (optional, e.g. swap95): the groups of that fixed evaluation set's rows always go to test and are
+#       never moved by the vocabulary closure (their words must then be in train, or assign raises), so the set is
+#       identical on every split seed and none of its images is trained on.
 #   legacy: the pool's legacy_split column (SVO-Probes: the split of all results before 2026-11-13; not closed).
 # split_record() fingerprints the assignment: compare models only over the same set of split ids.
 SPLITS = ('train', 'val', 'test')
@@ -40,9 +43,11 @@ def _rooted(diagram, mode):
     except ValueError:
         return []
 
-def close_vocabulary(pool, groups, labels, seed):
+FIXED_TEST_SETS = {}   # name -> function(pool) -> the set's rows (registered by datasets.py)
+
+def close_vocabulary(pool, groups, labels, seed, pinned=frozenset()):
     # move val/test groups holding a word no train row has to train, in a seeded order (a moved group only adds train
-    # words, so one pass leaves every val/test word in train)
+    # words, so one pass leaves every val/test word in train). Pinned groups (test_always) stay in test.
     labels = labels.copy()
     vocab = row_vocab(pool)
     train_vocab = set().union(*(v for v, l in zip(vocab, labels) if l == 'train'))
@@ -50,7 +55,7 @@ def close_vocabulary(pool, groups, labels, seed):
     moved = 0
     for key in sorted(rows.index, key=lambda k: _unit(f"close{seed}", k)):
         idx = rows[key]
-        if labels[idx[0]] == 'train':
+        if labels[idx[0]] == 'train' or key in pinned:
             continue
         words = set().union(*(vocab[i] for i in idx))
         if not words <= train_vocab:
@@ -68,7 +73,18 @@ def assign(pool, spec):
     else:
         groups = pool[spec['by']]
         labels = group_split(groups, spec['fractions'], spec['seed'])
-        labels, moved = close_vocabulary(pool, groups, labels, spec['seed'])
+        pinned = frozenset()
+        if spec.get('test_always'):
+            import modules.data_pipeline.datasets   # noqa: F401 (registers the fixed test sets)
+            pinned = frozenset(FIXED_TEST_SETS[spec['test_always']](pool)[spec['by']])
+            labels[groups.isin(pinned).to_numpy()] = 'test'
+        labels, moved = close_vocabulary(pool, groups, labels, spec['seed'], pinned)
+        if pinned:
+            vocab = row_vocab(pool)
+            train_vocab = set().union(*(v for v, l in zip(vocab, labels) if l == 'train'))
+            missing = set().union(*(v for v, g in zip(vocab, groups) if g in pinned)) - train_vocab
+            if missing:
+                raise ValueError(f"test_always {spec['test_always']}: words not in train {sorted(missing)[:10]}")
         keys = groups.astype(str)
     pairs = sorted(set(zip(keys, labels)))
     fingerprint = hashlib.sha256('\n'.join(f"{k}\t{l}" for k, l in pairs).encode()).hexdigest()[:16]

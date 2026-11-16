@@ -3,7 +3,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 from modules.common import load_pkl, load_obj
 from modules.compilation.einsum import tn_metadata, analyse_einsum
-from modules.data_pipeline.datasets import build_swap_set
+from modules.data_pipeline.datasets import build_swap_set, build_swap95
 from modules.symbolic.root import apply_root
 from modules.data_pipeline.splits import assign, select, sample_rows
 
@@ -48,6 +48,8 @@ class DataEngine:
             data = select(data, labels, which, entry.get('subset'))
         if entry.get('derive') == 'swap':
             data = build_swap_set(data)
+        elif entry.get('derive') == 'swap95':   # SVO-Swap, the paper's 95 pairs (datasets.select_swap95)
+            data = build_swap95(data)
         if entry.get('sample'):   # a fixed-size test set: the same rows for every model trained on this split
             data = sample_rows(data, int(entry['sample']), spec['seed'] if isinstance(spec, dict) else 0)
         if split == 'train' and self.config.get('swap_negatives', False):

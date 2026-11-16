@@ -8,11 +8,13 @@ eval_mapper: "modules.data_pipeline.datasets.svo_mapper"
 
 # every caption of a positive image in one split (its negative image may be another row's positive elsewhere); then
 # val/test groups with a word no training caption has move to train. Vary seed for results over several splits.
+# test_always: swap95 keeps the images of SVO-Swap's 95 pairs in test on every seed (never trained on).
 # --set dataset.split=legacy: the split of all results before 2026-11-13 (row-level: captions and images shared across splits)
 split:
   by: "pos_image_id"
   fractions: [0.6, 0.2, 0.2]
   seed: 0
+  test_always: "swap95"
 
 train:
   text_path: "data/svo-probes/processed/all.pkl"
@@ -37,6 +39,14 @@ test:
     collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
     split: test
     derive: swap
+    text_path: "data/svo-probes/processed/all.pkl"
+    img_path: "data/svo-probes/processed/image_embeddings.pt"
+    task: "evaluate_text_choice"
+  swap95:   # SVO-Swap, the LREC 2026 paper's 95 pairs (choose the caption; both nouns people or animals): datasets.select_swap95
+    class: "modules.data_pipeline.datasets.SwapDataset"
+    collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+    split: test
+    derive: swap95
     text_path: "data/svo-probes/processed/all.pkl"
     img_path: "data/svo-probes/processed/image_embeddings.pt"
     task: "evaluate_text_choice"
