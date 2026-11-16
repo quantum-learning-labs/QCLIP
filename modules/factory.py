@@ -53,21 +53,21 @@ def build_experiment(config, device):
         mps_proc = MPS(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'])
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc)
         
-        if config['vision']['method'] == 'amp':
-            image_model = FrozenCLIP().to(device)
+        if config['vision']['method'] == 'amp':   # the CLIP vector itself (PCA to embedding_dim if < 512)
+            image_model = FrozenCLIP(pca_dim=config['embedding_dim']).to(device)
         else:
             image_model = TTNImageModel(embedding_dim=config['embedding_dim']).to(device)
 
         text_model = TNModel(out_dim=config['embedding_dim']).to(device)
-        loss_fn = InfoNCE()
+        loss_fn = build_loss(config) if 'loss' in config else InfoNCE()   # loss: hs = |cosine|
         
     elif model_type == "vqc":
         compiler = config['text']
         obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_qubits']}
         ansatz = build_ansatz(compiler.get('ansatz', 'custom_v5'), obmap=obmap, layers=compiler['layers'])
         
-        if config['vision']['method'] == 'amp':
-            image_model = FrozenCLIP(classical=False).to(device)
+        if config['vision']['method'] == 'amp':   # the CLIP vector amplitude-encoded (PCA to 2^embedding_qubits if < 512)
+            image_model = FrozenCLIP(classical=False, pca_dim=2 ** config['embedding_qubits']).to(device)
         else:
             image_model = QuantumFeatureMap(k=config['embedding_qubits'], 
                                             layers=config['vision']['layers'], 

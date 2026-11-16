@@ -89,6 +89,15 @@ class DataEngine:
             text_model.from_plans(list(plan_stream))
         
     def image_init(self, image_model):
+        if getattr(image_model, 'pca_dim', None) is not None:   # FrozenCLIP + PCA: fit on the training split's images only
+            train = self.load_text('train')
+            ids = sorted({int(v) for c in ('pos_image_id', 'neg_image_id', 'image_id') if c in train.columns
+                          for v in train[c].dropna()})
+            embeddings = torch.load(self.config["dataset"]["train"]["img_path"])
+            explained = image_model.fit_pca(torch.stack([embeddings[i] for i in ids]).float())
+            self.config.setdefault('vision', {})['pca'] = {'dim': image_model.pca_dim, 'train_images': len(ids),
+                                                          'explained_variance': round(explained, 6)}
+            print(f"image PCA: {len(ids)} training images -> {image_model.pca_dim} dims ({explained:.3f} of the variance)")
         if self.config['vision']['method'] == 'pca':
             train_embeddings = torch.load(self.config["dataset"]["train"]["img_path"])
             val_embeddings = torch.load(self.config["dataset"]["val"]["img_path"])
