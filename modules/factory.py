@@ -7,10 +7,12 @@ from modules.compilation.quantum.ansatz import build_ansatz
 from modules.compilation.classical.tensor_network import TNCompiler
 from modules.compilation.classical.decompositions import MPS
 from modules.compilation.classical.neural import MLPCompiler
+from modules.compilation.classical.tokens import TokenCompiler
 
 from modules.models.text.einsum_quantum import VQCModel
 from modules.models.text.einsum_classical import TNModel
 from modules.models.text.neural_model import MLPModel
+from modules.models.text.micro_clip import MicroCLIPModel
 
 from modules.models.vision.quantum_map import QuantumFeatureMap
 from modules.models.vision.clip import FrozenCLIP
@@ -80,6 +82,16 @@ def build_experiment(config, device):
         text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['text'].get('discard', False)).to(device)
         loss_fn = build_loss(config)
         
+    elif model_type == "microclip":   # MicroCLIP baseline: shrunk CLIP text transformer on the CLIP image vector
+        ansatz = TokenCompiler()
+        if config['vision']['method'] != 'amp':
+            raise ValueError("microclip uses the CLIP image vector itself: set vision.method: amp")
+        image_model = FrozenCLIP(pca_dim=config['embedding_dim']).to(device)
+        t = config['text']
+        text_model = MicroCLIPModel(out_dim=config['embedding_dim'], width=t.get('width', 32), layers=t.get('layers', 2),
+                                    heads=t.get('heads', 2), ff_dim=t.get('ff_dim'), max_len=t.get('max_len', 32)).to(device)
+        loss_fn = build_loss(config) if 'loss' in config else InfoNCE()
+
     elif model_type == "mlp":
         ansatz = MLPCompiler()
         if config['vision']['method'] == 'amp':
