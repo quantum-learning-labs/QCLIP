@@ -138,14 +138,16 @@ class MMEvaluator:
         margin = pos_sim - neg_sim
         correct = (margin > 0).float()
         correct_n = (pos_n > neg_n).float()
-        # tie_half: a tie (equal scores, e.g. word-order-blind models on swapped captions) counts 1/2 instead of wrong
-        tie_half = correct + 0.5 * (margin == 0).float()
-        tie_half_n = correct_n + 0.5 * (pos_n == neg_n).float()
+        # tie_half: a tie counts 1/2 instead of right or wrong. Ties are equal up to float rounding (rtol 1e-5): a
+        # word-order-blind model (QBoW) gives swapped captions the same state, but contracted in another order
+        tie, tie_n = torch.isclose(pos_sim, neg_sim, rtol=1e-5, atol=1e-8), torch.isclose(pos_n, neg_n, rtol=1e-5, atol=1e-8)
+        tie_half = correct * ~tie + 0.5 * tie.float()
+        tie_half_n = correct_n * ~tie_n + 0.5 * tie_n.float()
         return ({"hard_neg_acc": correct.sum().item() / len(correct),
                  "hard_neg_acc_norm": correct_n.sum().item() / len(correct_n),
                  "hard_neg_acc_tie_half": tie_half.sum().item() / len(tie_half),
                  "hard_neg_acc_norm_tie_half": tie_half_n.sum().item() / len(tie_half_n),
-                 "ties": int((margin == 0).sum().item())},
+                 "ties": int(tie.sum().item())},
                 {"pos_scores": list(pos_sim.numpy()), "neg_scores": list(neg_sim.numpy()),
                  "margins": list(margin.numpy()), "correct": list(correct.numpy()), "correct_norm": list(correct_n.numpy())})
             
