@@ -13,7 +13,7 @@ from modules.models.vision.quantum_map import QuantumFeatureMap, QFMap_CPTP
 from modules.models.vision.clip import FrozenCLIP
 from modules.models.vision.image_model import TTNImageModel
 
-from modules.models.fusion.criteria import FS_InfoNCE, InfoNCE, UJ_InfoNCE, Pauli_InfoNCE, HS_InfoNCE, Bures_InfoNCE
+from modules.models.fusion.criteria import FS_InfoNCE, InfoNCE, UJ_InfoNCE, Pauli_InfoNCE, HS_InfoNCE, Bures_InfoNCE, SigLIP
 import math, torch
 import torch.nn as nn
 import importlib
@@ -68,7 +68,10 @@ def build_experiment(config, device):
                              centre=config['text'].get('centre', False), mix_fixed=config['text'].get('mix_fixed'),
                              eval_chunk=config['text'].get('eval_chunk'),
                              word_dropout=config['text'].get('word_dropout', 0.0)).to(device)
-        loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
+        if config.get('loss', 'infonce') == 'siglip':   # step 5c: pairwise sigmoid loss
+            loss_fn = SigLIP(t_init=config.get('siglip_t', 10.0), b_init=config.get('siglip_b', -10.0))
+        else:
+            loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
         
     elif model_type == "vqc":
         compiler = config['text']

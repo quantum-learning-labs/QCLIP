@@ -243,7 +243,8 @@ class InfoNCE(nn.Module):
         self.label_smoothing = label_smoothing
         self.cross_entropy = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
-    def forward(self, text_emb: torch.Tensor, image_emb: torch.Tensor) -> torch.Tensor:
+    def forward(self, text_emb: torch.Tensor, image_emb: torch.Tensor, neg_image_emb: torch.Tensor = None,
+                neg_text_emb: torch.Tensor = None, neg_text_valid: torch.Tensor = None) -> torch.Tensor:
         B = text_emb.size(0)
         labels = torch.arange(B, device=text_emb.device)
         text_emb = text_emb.flatten(start_dim=1)
@@ -252,12 +253,43 @@ class InfoNCE(nn.Module):
         logits = (text_emb @ image_emb.T) / self.temperature   # classical embeddings: cosine logits (unit-norm inputs)
 
         loss_t2i = self.cross_entropy(logits, labels)
-        loss_i2t = self.cross_entropy(logits.T, labels)
+        logits_i2t = logits.T
+        if neg_text_emb is not None:   # step 5c: every image also scores the batch's hard-negative captions (invalid ones dropped)
+            sim_neg = (neg_text_emb.flatten(start_dim=1) @ image_emb.T).T / self.temperature   # [images, negative captions]
+            if neg_text_valid is not None:
+                sim_neg = sim_neg[:, neg_text_valid.to(sim_neg.device).bool()]
+            logits_i2t = torch.cat([logits_i2t, sim_neg], dim=1)
+        loss_i2t = self.cross_entropy(logits_i2t, labels)
         
         return 0.5 * (loss_t2i + loss_i2t)
 
     def describe(self) -> None:
         print(f"{self.__class__.__name__} temperature: {self.temperature} | label_smoothing: {self.label_smoothing}")
+
+class SigLIP(nn.Module):
+    """Pairwise sigmoid loss (Zhai et al. 2023): -1/B sum_ij log sigmoid(z_ij (t <x_i, y_j> + b)), z = +1 on the diagonal, -1 off it;
+    t = exp(t') and b learnable (init t = 10, b = -10). Hard-negative captions enter as extra -1 pairs with every image."""
+    def __init__(self, t_init: float = 10.0, b_init: float = -10.0):
+        super().__init__()
+        self.t_prime = nn.Parameter(torch.tensor(math.log(t_init)))
+        self.bias = nn.Parameter(torch.tensor(float(b_init)))
+        self.temperature, self.label_smoothing = None, None   # read by the run logger
+
+    def forward(self, text_emb, image_emb, neg_image_emb=None, neg_text_emb=None, neg_text_valid=None):
+        B = text_emb.size(0)
+        t = self.t_prime.exp()
+        logits = (text_emb.flatten(start_dim=1) @ image_emb.flatten(start_dim=1).T) * t + self.bias
+        z = 2 * torch.eye(B, device=logits.device, dtype=logits.dtype) - 1
+        loss = -F.logsigmoid(z * logits).sum()
+        if neg_text_emb is not None:
+            neg = (neg_text_emb.flatten(start_dim=1) @ image_emb.flatten(start_dim=1).T) * t + self.bias   # [neg captions, images]
+            if neg_text_valid is not None:
+                neg = neg[neg_text_valid.to(neg.device).bool()]
+            loss = loss - F.logsigmoid(-neg).sum()
+        return loss / B
+
+    def describe(self) -> None:
+        print(f"{self.__class__.__name__} t: {self.t_prime.exp().item():.3f} | b: {self.bias.item():.3f}")
 
 class HS_InfoNCE(BaseInfoNCELoss):
     # similarity = Tr(rho sigma) / sqrt(P_rho P_sigma): Hilbert-Schmidt cosine *including* the identity component

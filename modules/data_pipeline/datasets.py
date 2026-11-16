@@ -65,6 +65,9 @@ class CocoDataset(BaseDataset):
             df = self.compiled_df
             self._cols = (df['file_name'].tolist() if 'file_name' in df.columns else [None] * len(df),
                           df['captions_einsum'].tolist(), df['captions_symbols'].tolist())
+            df = self.compiled_df   # step 5c: per-caption hard negatives (tools/tn/s5_make_negs.py), same order as the captions
+            self._negs = (df['captions_neg_einsum'].tolist(), df['captions_neg_symbols'].tolist(), df['captions_neg_valid'].tolist()) \
+                if 'captions_neg_einsum' in df.columns else None
         image_ref, einsums, symbols = (c[idx] for c in self._cols)
 
         # Load the single image reference
@@ -74,9 +77,13 @@ class CocoDataset(BaseDataset):
         if self.mode == "train":
             caption_idx = random.randint(0, len(einsums) - 1)
         
-            return {"image": image,
+            item = {"image": image,
                     "caption": (einsums[caption_idx], symbols[caption_idx])
                     }
+            if self._negs is not None:
+                ne, ns, nv = (c[idx] for c in self._negs)
+                item["swap_caption"], item["swap_valid"] = (ne[caption_idx], ns[caption_idx]), bool(nv[caption_idx])
+            return item
         else:
             return {"image": image,
                     "caption": list(zip(einsums, symbols))
@@ -88,7 +95,9 @@ def coco_collate_fn(batch):
     
     return {
         "image": images,
-        "caption": captions
+        "caption": captions,
+        **({"swap_caption": [item['swap_caption'] for item in batch],
+            "swap_valid": torch.tensor([item['swap_valid'] for item in batch])} if 'swap_caption' in batch[0] else {}),
     }
 
 class ARODataset(BaseDataset):
