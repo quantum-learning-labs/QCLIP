@@ -237,11 +237,16 @@ class BaseInfoNCELoss(nn.Module):
         return sym_loss + reg_loss
 
 class InfoNCE(nn.Module):
-    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0):
+    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, learn_temperature: bool = False):
         super().__init__()
         self.temperature = temperature
         self.label_smoothing = label_smoothing
         self.cross_entropy = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+        # step 5c: CLIP-style learnable logit scale exp(s), s init log(1/temperature), clamped at 100; off = the fixed temperature
+        self.logit_scale = nn.Parameter(torch.tensor(math.log(1.0 / temperature))) if learn_temperature else None
+
+    def _div(self, x: torch.Tensor) -> torch.Tensor:
+        return x / self.temperature if self.logit_scale is None else x * self.logit_scale.exp().clamp(max=100.0)
 
     def forward(self, text_emb: torch.Tensor, image_emb: torch.Tensor, neg_image_emb: torch.Tensor = None,
                 neg_text_emb: torch.Tensor = None, neg_text_valid: torch.Tensor = None) -> torch.Tensor:
@@ -250,12 +255,12 @@ class InfoNCE(nn.Module):
         text_emb = text_emb.flatten(start_dim=1)
         image_emb = image_emb.flatten(start_dim=1)
 
-        logits = (text_emb @ image_emb.T) / self.temperature   # classical embeddings: cosine logits (unit-norm inputs)
+        logits = self._div(text_emb @ image_emb.T)   # classical embeddings: cosine logits (unit-norm inputs)
 
         loss_t2i = self.cross_entropy(logits, labels)
         logits_i2t = logits.T
         if neg_text_emb is not None:   # step 5c: every image also scores the batch's hard-negative captions (invalid ones dropped)
-            sim_neg = (neg_text_emb.flatten(start_dim=1) @ image_emb.T).T / self.temperature   # [images, negative captions]
+            sim_neg = self._div((neg_text_emb.flatten(start_dim=1) @ image_emb.T).T)   # [images, negative captions]
             if neg_text_valid is not None:
                 sim_neg = sim_neg[:, neg_text_valid.to(sim_neg.device).bool()]
             logits_i2t = torch.cat([logits_i2t, sim_neg], dim=1)

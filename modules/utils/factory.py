@@ -71,7 +71,8 @@ def build_experiment(config, device):
         if config.get('loss', 'infonce') == 'siglip':   # step 5c: pairwise sigmoid loss
             loss_fn = SigLIP(t_init=config.get('siglip_t', 10.0), b_init=config.get('siglip_b', -10.0))
         else:
-            loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0))
+            loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0),
+                              learn_temperature=bool(config.get('learn_temperature', False)))
         
     elif model_type == "vqc":
         compiler = config['text']
