@@ -83,3 +83,16 @@ def select(pool, labels, split, subset=None):
     if subset is not None:
         pool = pool[pool['subset'] == subset]
     return pool.reset_index(drop=True)
+
+def sample_rows(df, n, seed, key_cols=('corrected_sentence', 'pos_image_id', 'neg_image_id')):
+    # n rows of df chosen by seed: the n smallest hashes of (seed, row key), so the choice depends only on the rows (not
+    # their order) and is the same for every model on the same split. Identical rows are told apart by their occurrence.
+    if len(df) <= n:
+        return df.reset_index(drop=True)
+    cols = [c for c in key_cols if c in df.columns]
+    if not cols:
+        raise ValueError(f"sample needs one of the columns {key_cols}")
+    keys = df[cols].astype(str).agg('|'.join, axis=1)
+    keys = keys + '#' + keys.groupby(keys).cumcount().astype(str)
+    order = np.argsort([_unit(f"sample{seed}", k) for k in keys], kind='stable')
+    return df.iloc[np.sort(order[:n])].reset_index(drop=True)
