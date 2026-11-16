@@ -14,9 +14,11 @@ class BaseAnsatz(ABC):
         self.char_idx = count(0)
 
     def __call__(self, tn, curry=False, discard=False, spider=False):
-        # spider() is placeholder code and not implemented properly yet
+        # spider (text.spider: true): the quantum bag-of-words baseline QBoW, see spider()
         if spider:
-            raise NotImplementedError("spider ansatz is not implemented yet; set text.spider: false")
+            if discard:
+                raise NotImplementedError("text.spider (QBoW) is a post-selected model; set text.discard: false")
+            return self.spider(tn)
         if curry:
             return self.tn2ansatz_curried(tn,  discard=discard)
         else:
@@ -206,6 +208,11 @@ class BaseAnsatz(ABC):
         return einsum_expr, tensor_arr
     
     def spider(self, tn):
+        # QBoW, the quantum bag-of-words baseline: every word is its own ansatz box on 'out' (embedding_qubits) qubits,
+        # started in |0>, and all word states are merged by the Frobenius multiplication (a spider): their output wires
+        # become one index, so the sentence state is the pointwise product of the word states (as a circuit: a CX from
+        # each word's qubit to the next word's and a post-selection of the target on |0>). The product commutes, so word
+        # order and grammar are ignored; a word's parameters depend on the word and its CCG type only.
         self.reset_char()
         ccg_map = {}
         input_indices, tensor_arr = [], []
