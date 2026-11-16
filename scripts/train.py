@@ -31,7 +31,8 @@ if __name__ == "__main__":
     print(f"Datasets compiled: Train={len(exp.train)} | Val={len(exp.val)}")
     if vqc:   # circuit size metrics
         exp.data.describe_einsum(text_model, pd.concat([exp.train, exp.val], ignore_index=True))
-        exp.data.describe_einsum(image_model)
+        if hasattr(image_model, "einsum_expr"):   # the quantum feature map (amp: no image circuit)
+            exp.data.describe_einsum(image_model)
     if config.get('init_from'):
         print(f"Initialised weights from {config['init_from']} (epoch {exp.state.get('epoch')})")
     print(f"Model Parameter Counts: Image={sum(p.numel() for p in image_model.parameters()):,} | Text={sum(p.numel() for p in text_model.parameters()):,}")
