@@ -84,7 +84,7 @@ class VQCModel(nn.Module):
         # per-sentence records of the fused forward, built the first time a sentence is seen and kept in RAM for the run:
         # rec_cache[id(tensors)] = (tensors, (box instance ids, angle indices of the unfused gates)); box_inst[key] maps a
         # box's symbol names to its instance id, box_rows[key][id] holds that instance's angle indices
-        self.rec_cache, self.box_inst, self.box_rows, self.box_arr = {}, defaultdict(dict), defaultdict(list), {}
+        self.rec_cache, self.box_inst, self.box_rows = {}, defaultdict(dict), defaultdict(list)
 
     def _record(self, plan, tensors):
         # the tensors list of a sentence is the same object every epoch (a cell of the compiled frame); holding it in
@@ -106,13 +106,10 @@ class VQCModel(nn.Module):
         self.rec_cache[id(tensors)] = (tensors, rec)
         return rec
 
-    def _rows(self, key, n_params):
-        # angle indices of every instance of a box structure, as an array (rebuilt only when new instances appeared)
+    def _rows(self, key, n_params, uniq):
+        # angle indices of the given instances of a box structure, [len(uniq), n_params]
         rows = self.box_rows[key]
-        arr = self.box_arr.get(key)
-        if arr is None or len(arr) != len(rows):
-            arr = self.box_arr[key] = np.asarray(rows, dtype=np.int64).reshape(len(rows), n_params)
-        return arr
+        return np.asarray([rows[u] for u in uniq], dtype=np.int64).reshape(len(uniq), n_params)
 
     @staticmethod
     def _from_param_list(state_dict, prefix, *args):
@@ -339,7 +336,7 @@ class VQCModel(nn.Module):
             n_inst[key] = len(uniq)
             struct = self.struct_cache[key]
             if struct['param_pos']:
-                put(('rows', key), self._rows(key, len(struct['param_pos']))[uniq])
+                put(('rows', key), self._rows(key, len(struct['param_pos']), uniq))
             start = 0
             for g, j, r in refs:
                 put(('ref', g, j), inv[start:start + len(r)])
