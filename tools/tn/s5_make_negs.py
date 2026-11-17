@@ -6,7 +6,8 @@ For every caption one negative with the same wiring and types and a different wo
             different nouns.
 The kind is drawn uniformly among the kinds available for the caption (seeded by the caption's position); captions with no
 available kind keep their own diagram and captions_neg_valid = False (dropped from the loss). Writes a NEW pickle.
-  PYTHONPATH=. python tools/tn/s5_make_negs.py <in.pkl> <out.pkl> [seed=0]"""
+Step 5d: policy prefer_rel takes the first available kind in the order relation > modifier > noun (binding over nouns).
+  PYTHONPATH=. python tools/tn/s5_make_negs.py <in.pkl> <out.pkl> [seed=0] [policy=uniform|prefer_rel]"""
 import sys, os, random, collections
 import pandas as pd
 REL = {'on': 'under', 'under': 'on', 'above': 'below', 'below': 'above', 'over': 'under', 'in': 'on', 'inside': 'outside',
@@ -25,7 +26,7 @@ def noun_of(d, i):   # follow a modifier's input wire down to the bare noun it m
         i = j
     return i if list(d[i][2]) == ['n'] else None
 
-def negative(d, rng):
+def negative(d, rng, policy='uniform'):
     words = [b[0].lower() for b in d]
     opts = []
     rel = [i for i, b in enumerate(d) if words[i] in REL and len(b[2]) >= 3]
@@ -38,7 +39,8 @@ def negative(d, rng):
               if words[i] != words[j] and ni is not None and nj is not None and ni != nj]
     if mpairs: opts.append('modifier')
     if not opts: return d, False, 'none'
-    kind = rng.choice(opts); d2 = [list(b) for b in d]
+    kind = rng.choice(opts) if policy == 'uniform' else next(k for k in ('relation', 'modifier', 'noun') if k in opts)
+    d2 = [list(b) for b in d]
     if kind == 'relation':
         i = rng.choice(rel); d2[i][0] = REL[words[i]]
     else:
@@ -47,6 +49,7 @@ def negative(d, rng):
 
 if __name__ == '__main__':
     src, out = sys.argv[1], sys.argv[2]; seed = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+    policy = sys.argv[4] if len(sys.argv) > 4 else 'uniform'; assert policy in ('uniform', 'prefer_rel')
     if os.path.exists(out): sys.exit(f'{out} exists; refusing to overwrite')
     df = pd.read_pickle(src)
     negs, valid, kinds, cnt, k = [], [], [], collections.Counter(), 0
@@ -55,7 +58,7 @@ if __name__ == '__main__':
         rn, rv, rk = [], [], []
         for d in caps:
             rng = random.Random(seed * 10_000_019 + k); k += 1
-            n, v, kind = negative(d, rng); rn.append(n); rv.append(v); rk.append(kind); cnt[kind] += 1
+            n, v, kind = negative(d, rng, policy); rn.append(n); rv.append(v); rk.append(kind); cnt[kind] += 1
             if v and len(ex[kind]) < 4: ex[kind].append((' '.join(b[0] for b in d), ' '.join(b[0] for b in n)))
         negs.append(rn); valid.append(rv); kinds.append(rk)
     df = df.copy(); df['captions_neg_diagram'] = negs; df['captions_neg_valid'] = valid; df['captions_neg_kind'] = kinds

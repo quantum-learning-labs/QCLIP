@@ -32,6 +32,14 @@ def build_dataset(config: dict):
     
     return dataset_class, collate_fn, eval_mapper
 
+def classical_loss(config):
+    # step 5c/5d: loss for classical text models (TN, MLP control); defaults = fixed-temperature InfoNCE
+    w = float(config.get('neg_weight', 1.0))
+    if config.get('loss', 'infonce') == 'siglip':   # pairwise sigmoid loss
+        return SigLIP(t_init=config.get('siglip_t', 10.0), b_init=config.get('siglip_b', -10.0), neg_weight=w)
+    return InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0),
+                   learn_temperature=bool(config.get('learn_temperature', False)), neg_weight=w)
+
 def build_experiment(config, device):
     model_type = config['model_type']
     
@@ -68,11 +76,7 @@ def build_experiment(config, device):
                              centre=config['text'].get('centre', False), mix_fixed=config['text'].get('mix_fixed'),
                              eval_chunk=config['text'].get('eval_chunk'),
                              word_dropout=config['text'].get('word_dropout', 0.0)).to(device)
-        if config.get('loss', 'infonce') == 'siglip':   # step 5c: pairwise sigmoid loss
-            loss_fn = SigLIP(t_init=config.get('siglip_t', 10.0), b_init=config.get('siglip_b', -10.0))
-        else:
-            loss_fn = InfoNCE(temperature=config.get('temperature', 0.07), label_smoothing=config.get('label_smoothing', 0.0),
-                              learn_temperature=bool(config.get('learn_temperature', False)))
+        loss_fn = classical_loss(config)
         
     elif model_type == "vqc":
         compiler = config['text']
@@ -121,12 +125,14 @@ def build_experiment(config, device):
         
     elif model_type == "mlp":
         ansatz = MLPCompiler()
-        if config['vision']['method'] == 'amp':
+        if config['vision']['method'] == 'clip':   # step 5d control: the same frozen, L2-normalised CLIP vectors as the TN
+            image_model = FrozenCLIP(normalize=True).to(device)
+        elif config['vision']['method'] == 'amp':
             image_model = FrozenCLIP().to(device)
         else:
             image_model = TTNImageModel(embedding_dim=config['embedding_dim']).to(device)
         text_model = MLPModel(hdim=config['text']['hidden_dim'], out_dim=config['embedding_dim']).to(device)
-        loss_fn = InfoNCE()
+        loss_fn = classical_loss(config) if config['vision']['method'] == 'clip' else InfoNCE()
         
     else:
         raise ValueError(f"Unknown model_type: {model_type}")

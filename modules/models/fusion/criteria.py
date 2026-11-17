@@ -158,9 +158,11 @@ def complex_nan_to_num(z: torch.Tensor, nan: float = 0.0, posinf: float = 1.0, n
 
 
 class BaseInfoNCELoss(nn.Module):
-    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, learn_temperature: bool = False):
+    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, learn_temperature: bool = False,
+                 neg_weight: float = 1.0):
         super().__init__()
         self.temperature = temperature
+        self.neg_weight = float(neg_weight)   # step 5d: hard negatives count as w copies in the i->t softmax (log w on their logits)
         self.label_smoothing = label_smoothing
         self.cross_entropy = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         # CLIP-style learnable logit scale exp(s), s initialised at log(1/temperature), clamped at 100
@@ -263,6 +265,8 @@ class InfoNCE(nn.Module):
             sim_neg = self._div((neg_text_emb.flatten(start_dim=1) @ image_emb.T).T)   # [images, negative captions]
             if neg_text_valid is not None:
                 sim_neg = sim_neg[:, neg_text_valid.to(sim_neg.device).bool()]
+            if self.neg_weight != 1.0:
+                sim_neg = sim_neg + math.log(self.neg_weight)
             logits_i2t = torch.cat([logits_i2t, sim_neg], dim=1)
         loss_i2t = self.cross_entropy(logits_i2t, labels)
         
@@ -274,8 +278,9 @@ class InfoNCE(nn.Module):
 class SigLIP(nn.Module):
     """Pairwise sigmoid loss (Zhai et al. 2023): -1/B sum_ij log sigmoid(z_ij (t <x_i, y_j> + b)), z = +1 on the diagonal, -1 off it;
     t = exp(t') and b learnable (init t = 10, b = -10). Hard-negative captions enter as extra -1 pairs with every image."""
-    def __init__(self, t_init: float = 10.0, b_init: float = -10.0):
+    def __init__(self, t_init: float = 10.0, b_init: float = -10.0, neg_weight: float = 1.0):
         super().__init__()
+        self.neg_weight = float(neg_weight)   # step 5d: weight of the hard-negative -1 pair terms
         self.t_prime = nn.Parameter(torch.tensor(math.log(t_init)))
         self.bias = nn.Parameter(torch.tensor(float(b_init)))
         self.temperature, self.label_smoothing = None, None   # read by the run logger
@@ -290,7 +295,8 @@ class SigLIP(nn.Module):
             neg = (neg_text_emb.flatten(start_dim=1) @ image_emb.flatten(start_dim=1).T) * t + self.bias   # [neg captions, images]
             if neg_text_valid is not None:
                 neg = neg[neg_text_valid.to(neg.device).bool()]
-            loss = loss - F.logsigmoid(-neg).sum()
+            neg_loss = -F.logsigmoid(-neg).sum()
+            loss = loss + (neg_loss if self.neg_weight == 1.0 else self.neg_weight * neg_loss)
         return loss / B
 
     def describe(self) -> None:
