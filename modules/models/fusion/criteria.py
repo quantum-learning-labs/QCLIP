@@ -158,11 +158,9 @@ def complex_nan_to_num(z: torch.Tensor, nan: float = 0.0, posinf: float = 1.0, n
 
 
 class BaseInfoNCELoss(nn.Module):
-    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, learn_temperature: bool = False,
-                 neg_weight: float = 1.0):
+    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, learn_temperature: bool = False):
         super().__init__()
         self.temperature = temperature
-        self.neg_weight = float(neg_weight)   # step 5d: hard negatives count as w copies in the i->t softmax (log w on their logits)
         self.label_smoothing = label_smoothing
         self.cross_entropy = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         # CLIP-style learnable logit scale exp(s), s initialised at log(1/temperature), clamped at 100
@@ -239,9 +237,11 @@ class BaseInfoNCELoss(nn.Module):
         return sym_loss + reg_loss
 
 class InfoNCE(nn.Module):
-    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, learn_temperature: bool = False):
+    def __init__(self, temperature: float = 0.07, label_smoothing: float = 0.0, learn_temperature: bool = False,
+                 neg_weight: float = 1.0):
         super().__init__()
         self.temperature = temperature
+        self.neg_weight = float(neg_weight)   # step 5d: hard negatives count as w copies in the i->t softmax (log w on their logits)
         self.label_smoothing = label_smoothing
         self.cross_entropy = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         # step 5c: CLIP-style learnable logit scale exp(s), s init log(1/temperature), clamped at 100; off = the fixed temperature
