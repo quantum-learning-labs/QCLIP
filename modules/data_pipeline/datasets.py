@@ -6,11 +6,11 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 class BaseDataset(Dataset):
-    def __init__(self, compiled_df: pd.DataFrame, img_path: str | None, image_transform=None, mode: str = "train"):
+    def __init__(self, compiled_df: pd.DataFrame, img_path: str | Path | None, image_transform=None, mode: str = "train"):
         self.compiled_df = compiled_df
         self.image_transform = image_transform
         self.img_path = img_path
-        self.img_store = img_path.split('.')[-1].lower() if img_path is not None else 'df'
+        self.img_store = Path(img_path).suffix.removeprefix('.').lower() if img_path is not None else 'df'
         self.mode = mode.lower()
 
         if self.img_store == 'zip':
@@ -50,39 +50,6 @@ class BaseDataset(Dataset):
         if self.image_transform:
             img = self.image_transform(img)
         return img
-
-class CocoDataset(BaseDataset):
-    def __getitem__(self, idx):
-        row_compiled = self.compiled_df.iloc[idx]
-        
-        # Load the single image reference
-        image_ref = row_compiled.get('file_name')
-        image = self._load_image(image_ref)
-        
-        # Compiled data contains lists for columns with multiple captions
-        einsums = row_compiled['captions_einsum']
-        symbols = row_compiled['captions_symbols']
-        
-        # During contrastive training, pick one caption variation randomly per sample
-        if self.mode == "train":
-            caption_idx = random.randint(0, len(einsums) - 1)
-        
-            return {"image": image,
-                    "caption": (einsums[caption_idx], symbols[caption_idx])
-                    }
-        else:
-            return {"image": image,
-                    "caption": list(zip(einsums, symbols))
-                    }
-
-def coco_collate_fn(batch):
-    images = torch.stack([item['image'] for item in batch])
-    captions = [item['caption'] for item in batch] 
-    
-    return {
-        "image": images,
-        "caption": captions
-    }
 
 class SVODataset(BaseDataset):
     def __getitem__(self, idx):
@@ -192,7 +159,5 @@ def build_swap_set(df, keep_all=False):
     print(f"Swap set: {stats} -> kept {len(swap_df)}")
     return swap_df[cols]
 
-# (images, captions) of a training batch, for the losses and global retrieval
-mscoco_mapper = lambda batch: (batch["image"], batch["caption"])
 aro_mapper = lambda batch: (batch["image"], batch["pos_caption"])
 svo_mapper = lambda batch: (batch["pos_image"], batch["caption"])

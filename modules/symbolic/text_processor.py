@@ -6,7 +6,6 @@ from pathlib import Path
 
 from modules.symbolic.grammar import strip_sent
 from modules.symbolic.functor import tree2einsum
-from modules.symbolic.root import apply_root
 
 class TextProcessor:
     def __init__(self, parser_path: str | None = None, batch_size: int = 32, device = 'cpu'):
@@ -49,7 +48,6 @@ class TextProcessor:
                         try:
                             processed_tree = tree._resolved().collapse_noun_phrases()
                             tn = tree2einsum(processed_tree, simplify=False)
-                            apply_root(tn, 'word')   # rows whose root cannot be resolved are dropped, as before
                             processed_tns_nested[row_idx].append(tn)   # stored unrooted: text.root is applied when compiled
                         except Exception as e:
                             miss_count += 1

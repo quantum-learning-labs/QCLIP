@@ -37,18 +37,6 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def log_phase(name: str):
-    print(f"\n[{name.upper()}] " + "—" * (60 - len(name)))
-
-# import paths of objects that moved, as saved in the configs of older checkpoints
-MOVED = {
-    'modules.models.fusion.engine.svo_mapper': 'modules.data_pipeline.datasets.svo_mapper',
-    'modules.models.fusion.engine.aro_mapper': 'modules.data_pipeline.datasets.aro_mapper',
-    'modules.models.fusion.engine.mscoco_mapper': 'modules.data_pipeline.datasets.mscoco_mapper',
-    'modules.data_pipeline.datasets.swap_collate_fn': 'modules.data_pipeline.datasets.text_choice_collate_fn',
-    'modules.data_pipeline.datasets.aro_collate_fn': 'modules.data_pipeline.datasets.text_choice_collate_fn',
-}
-
 def load_obj(import_str: str):
     module_path, attr_name = MOVED.get(import_str, import_str).rsplit('.', 1)
     module = importlib.import_module(module_path)
