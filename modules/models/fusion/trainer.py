@@ -26,8 +26,20 @@ class ContrastiveTrainer:
         sym2param = self.text_model.sym2param
         param2sym = {idx: sym for sym, idx in sym2param.items()}
 
+        theta = getattr(self.text_model, 'theta', None)
+        if theta is not None and theta.grad is not None:   # single-tensor angles: squared gradient per symbol, summed by type
+            sq = (theta.grad.detach() ** 2).cpu().tolist()
+            for sym_name, g_norm_sq in zip(self.text_model.symbols, sq):
+                arity = len(sym_name.split('__')[1].split('_')[0].split('@'))
+                kind = ''.join(sym_name.split('__')[1].split('_')[0].split('@'))
+                if kind == 'n':
+                    noun_grad_sq += g_norm_sq
+                elif arity == 3:
+                    verb_grad_sq += g_norm_sq
+                else:
+                    other_grad_sq += g_norm_sq
         for name, param in self.text_model.named_parameters():
-            if param.grad is None:
+            if param.grad is None or name == 'theta':
                 continue
 
             g_norm_sq = param.grad.data.norm(2).item() ** 2

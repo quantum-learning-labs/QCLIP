@@ -177,6 +177,9 @@ class CheckpointManager:
             raise RuntimeError(f"{checkpoint_path}: its words differ from the model's: {len(set(text_model.symbols) - set(names))} "
                                f"missing, {len(set(names) - set(text_model.symbols))} extra (e.g. {sorted(set(names) ^ set(text_model.symbols))[:3]})")
         old_index = {name: i for i, name in enumerate(names)}
+        if 'theta' in text_params:   # single-tensor angles: theta[i] belongs to names[i]
+            order = torch.tensor([old_index[name] for name in text_model.symbols])
+            return {**text_params, 'theta': text_params['theta'][order.to(text_params['theta'].device)]}
         remapped = {k: v for k, v in text_params.items() if not k.startswith('params.')}
         for name, j in text_model.sym2param.items():
             remapped[f"params.{j}"] = text_params[f"params.{old_index[name]}"]

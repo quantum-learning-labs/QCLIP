@@ -18,7 +18,10 @@ class VQCModel(nn.Module):
         self.max_fuse_wires = None
         self.struct_cache, self.fplan_cache = {}, {}
         self.symbols: List[str] = []
-        self.params = nn.ParameterList([])
+        # word angles: one tensor (theta[i] belongs to symbols[i]) and the fixed angle of unseen words (theta_unk, 0)
+        self.theta = nn.Parameter(torch.zeros(0))
+        self.register_buffer('theta_unk', torch.zeros(1))
+        self._register_load_state_dict_pre_hook(self._from_param_list)
         self.plan_cache = {}
         self.sym2param: Dict[str, nn.Parameter] = {}
         self.out_q: int = out_q
@@ -70,14 +73,26 @@ class VQCModel(nn.Module):
             param_values.uniform_(-0.01, 0.01)
         else:
             param_values.uniform_(-torch.pi/2, torch.pi/2)
-        self.params = nn.ParameterList([nn.Parameter(param_values[i:i+1]) for i in range(num_symbols)])
+        self.theta = nn.Parameter(param_values)
         self.sym2param = {sym: idx for idx, sym in enumerate(self.symbols)}
-        self.unk_param_index = len(self.params)
-        self.params.append(nn.Parameter(torch.zeros(1), requires_grad=False))
+        self.unk_param_index = num_symbols
+
+    @staticmethod
+    def _from_param_list(state_dict, prefix, *args):
+        # checkpoints from before the single-tensor angles store params.<i> (one per symbol) and params.<n> (unseen words)
+        keys = sorted((k for k in state_dict if k.startswith(prefix + 'params.')), key=lambda k: int(k.rsplit('.', 1)[1]))
+        if keys:
+            values = [state_dict.pop(k).reshape(-1) for k in keys]
+            state_dict[prefix + 'theta'] = torch.cat(values[:-1])
+            state_dict[prefix + 'theta_unk'] = values[-1]
+
+    def angles(self):
+        # all angles, the unseen-word angle last (index unk_param_index), mapped to (-2pi, 2pi)
+        return torch.tanh(torch.cat([self.theta, self.theta_unk])) * 2 * torch.pi
 
     def _get_params(self):
         with torch.no_grad():
-            raw_tensor = torch.cat([p for p in self.params])
+            raw_tensor = torch.cat([self.theta, self.theta_unk])
             thetas = torch.tanh(raw_tensor) * 2 * torch.pi
             
             return {
@@ -118,7 +133,7 @@ class VQCModel(nn.Module):
         # the largest box (in external wires) whose fused tensors fit the budget: complex64 entries, one per distinct box
         # of the batch (at most one per sentence), x3 for autograd copies
         if self.max_fuse_wires is None:
-            dev = self.params[0].device
+            dev = self.theta.device
             free = torch.cuda.mem_get_info(dev)[0] if dev.type == 'cuda' else 8 * 2**30
             budget = self.fuse_mem_frac * free
             entry = torch.empty((), dtype=self.precision).element_size()
@@ -139,10 +154,46 @@ class VQCModel(nn.Module):
                     by_type[gate['op_type']].append(len(param_pos))
                     param_pos.append(pos)
                     shapes.append((64, *[2] * (4 if gate['op_type'].startswith('C') else 2)))
-            expr = f"{','.join('$' + s for s in subs)}->${out}"
-            self.struct_cache[key] = {'expr': contract_expression(expr, *shapes), 'n_ops': len(tensors), 'static': static,
-                                      'param_pos': param_pos, 'by_type': dict(by_type)}
+            # chains of one-qubit operators along a wire ('ab','bc',... with b, c internal) are multiplied out first, by
+            # stacked batched matmuls per chain length; the box contraction then sees one 2x2 per chain
+            occ = Counter(''.join(subs) + out)
+            one_q = [p for p, s in enumerate(subs) if len(s) == 2]
+            starts = {subs[p][0]: p for p in one_q}
+            nxt = {p: starts[subs[p][1]] for p in one_q if occ[subs[p][1]] == 2 and subs[p][1] in starts}
+            heads = [p for p in one_q if p not in set(nxt.values())]
+            chains = []
+            for p in heads:
+                chain = [p]
+                while chain[-1] in nxt:
+                    chain.append(nxt[chain[-1]])
+                if len(chain) > 1:
+                    chains.append(chain)
+            by_len = defaultdict(list)
+            for chain in chains:
+                by_len[len(chain)].append(chain)
+            red_chain = [(L, k) for L, chs in by_len.items() for k in range(len(chs))]
+            in_chain = {p for chain in chains for p in chain}
+            others = [p for p in range(len(subs)) if p not in in_chain]
+            red_subs = [subs[ch[0]][0] + subs[ch[-1]][1] for L, chs in by_len.items() for ch in chs] + [subs[p] for p in others]
+            red_shapes = [(64, 2, 2)] * len(red_chain) + [shapes[p] for p in others]
+            expr = f"{','.join('$' + s for s in red_subs)}->${out}"
+            self.struct_cache[key] = {'expr': contract_expression(expr, *red_shapes), 'n_ops': len(tensors), 'static': static,
+                                      'param_pos': param_pos, 'by_type': dict(by_type), 'chains': dict(by_len),
+                                      'red_chain': red_chain, 'others': others}
         return self.struct_cache[key]
+
+    @staticmethod
+    def _contract_box(struct, operands, n):
+        # one box structure for n distinct boxes: multiply out the gate chains, then contract
+        products = {}
+        for L, chs in struct['chains'].items():
+            stack = torch.stack([operands[p] for ch in chs for p in ch], 1).reshape(n, len(chs), L, 2, 2)
+            prod = stack[:, :, 0]
+            for l in range(1, L):
+                prod = prod @ stack[:, :, l]
+            products[L] = prod
+        red = [products[L][:, k] for L, k in struct['red_chain']] + [operands[p] for p in struct['others']]
+        return struct['expr'](*red, backend='torch')
 
     def _fplan(self, einsum_str, tensors, batch_size):
         # split a circuit into its word boxes: each box's operands contract to one tensor on its external wires (the
@@ -218,7 +269,7 @@ class VQCModel(nn.Module):
         groups = defaultdict(list)
         for i, (einsum_str, tensors) in enumerate(batch_recipes):
             groups[einsum_str].append((i, tensors))
-        thetas = torch.tanh(torch.cat([p for p in self.params])) * 2 * torch.pi
+        thetas = self.angles()
         dev = thetas.device
         batch_size = len(batch_recipes)
 
@@ -247,7 +298,7 @@ class VQCModel(nn.Module):
                 operands[pos] = buf.expand(len(names), *buf.shape)
             if struct['param_pos']:
                 self._gates(thetas, names, struct, operands)
-            box_values[key] = struct['expr'](*operands, backend='torch')
+            box_values[key] = self._contract_box(struct, operands, len(names))
 
         # 2. each circuit structure: its boxes' tensors (looked up per sentence) and any unfused gates, contracted
         if self.discard:
@@ -283,7 +334,7 @@ class VQCModel(nn.Module):
         for i, (einsum_str, tensors) in enumerate(batch_recipes):
             groups[einsum_str].append((i, tensors))
 
-        thetas = torch.tanh(torch.cat([p for p in self.params])) * 2 * torch.pi
+        thetas = self.angles()
         dev = thetas.device
 
         batch_size = len(batch_recipes)
