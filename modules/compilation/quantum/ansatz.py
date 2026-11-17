@@ -86,6 +86,12 @@ class BaseAnsatz(ABC):
         pass
 
 
+    @staticmethod
+    def _label_box(tensor_arr, start, box):
+        # tag the tensors of one word box (its fresh |0> inputs and its gates) with the box number, so the text model can
+        # contract each box on its own first (VQCModel gate fusion). Copies: the '0' dicts are shared list entries
+        tensor_arr[start:] = [{**t, 'box': box} for t in tensor_arr[start:]]
+
     def gen_einsum_expr(self, input_indices, ccg_map):
         all_idx = [i for sub in input_indices for i in sub]
         idx_counts = Counter(all_idx)
@@ -111,7 +117,8 @@ class BaseAnsatz(ABC):
         ccg_map = {}
         input_indices, tensor_arr = [], []
 
-        for word, idx_arr, type_arr in tn:
+        for box, (word, idx_arr, type_arr) in enumerate(tn):
+            start = len(tensor_arr)
             N = sum(self.obmap.get(typ, 1) for typ in type_arr)
             current_wires = [self.get_char() for _ in range(N)]
 
@@ -124,6 +131,7 @@ class BaseAnsatz(ABC):
             current_wires, new_indices, new_tensors = self.box(word, current_wires, base_symbol, curried=False)
             input_indices.extend(new_indices)
             tensor_arr.extend(new_tensors)
+            self._label_box(tensor_arr, start, box)
 
             i = 0
             for idx, typ in zip(idx_arr, type_arr):
@@ -146,7 +154,8 @@ class BaseAnsatz(ABC):
         input_indices, tensor_arr = [], []
         tn_sorted = sort_tn(tn)
 
-        for word, idx_arr, type_arr in tn_sorted:
+        for box, (word, idx_arr, type_arr) in enumerate(tn_sorted):
+            start = len(tensor_arr)
             current_wires = []
 
             input_wires, input_types = [], []
@@ -183,6 +192,7 @@ class BaseAnsatz(ABC):
             current_wires, new_indices, new_tensors = self.box(word, current_wires, base_symbol, curried=True)
             input_indices.extend([[idx for idx in ten] for ten in new_indices])
             tensor_arr.extend(new_tensors)
+            self._label_box(tensor_arr, start, box)
             
             if passthrough:   # the outputs carry the box's wires on; the inputs are used up
                 i = 0
@@ -219,7 +229,8 @@ class BaseAnsatz(ABC):
 
         idx = 0
         N = self.obmap.get('out', 1)
-        for word, _, type_arr in tn:
+        for box, (word, _, type_arr) in enumerate(tn):
+            start = len(tensor_arr)
             current_wires = [self.get_char() for _ in range(N)]
 
             for w in current_wires:
@@ -230,6 +241,7 @@ class BaseAnsatz(ABC):
             current_wires, new_indices, new_tensors = self.ansatz(current_wires, base_symbol)
             input_indices.extend(new_indices)
             tensor_arr.extend(new_tensors)
+            self._label_box(tensor_arr, start, box)
 
             ccg_map[idx] = current_wires
             idx += 1
