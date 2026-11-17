@@ -5,6 +5,7 @@ import torch.nn as nn
 from opt_einsum import contract_expression, get_symbol
 from collections import defaultdict, Counter
 import math
+import numpy as np
 from modules.compilation.quantum.gates import *
 
 class VQCModel(nn.Module):
@@ -17,6 +18,7 @@ class VQCModel(nn.Module):
         self.fuse, self.fuse_mem_frac = fuse, fuse_mem_frac
         self.max_fuse_wires = None
         self.struct_cache, self.fplan_cache = {}, {}
+        self._reset_records()
         self.symbols: List[str] = []
         # word angles: one tensor (theta[i] belongs to symbols[i]) and the fixed angle of unseen words (theta_unk, 0)
         self.theta = nn.Parameter(torch.zeros(0))
@@ -76,6 +78,41 @@ class VQCModel(nn.Module):
         self.theta = nn.Parameter(param_values)
         self.sym2param = {sym: idx for idx, sym in enumerate(self.symbols)}
         self.unk_param_index = num_symbols
+        self._reset_records()
+
+    def _reset_records(self):
+        # per-sentence records of the fused forward, built the first time a sentence is seen and kept in RAM for the run:
+        # rec_cache[id(tensors)] = (tensors, (box instance ids, angle indices of the unfused gates)); box_inst[key] maps a
+        # box's symbol names to its instance id, box_rows[key][id] holds that instance's angle indices
+        self.rec_cache, self.box_inst, self.box_rows, self.box_arr = {}, defaultdict(dict), defaultdict(list), {}
+
+    def _record(self, plan, tensors):
+        # the tensors list of a sentence is the same object every epoch (a cell of the compiled frame); holding it in
+        # the cache keeps its id from being reused
+        hit = self.rec_cache.get(id(tensors))
+        if hit is not None and hit[0] is tensors:
+            return hit[1]
+        unk, s2p = self.unk_param_index, self.sym2param
+        ids = []
+        for b in plan['boxes']:
+            names = tuple(tensors[p]['name'] for p in b['param_pos'])
+            inst = self.box_inst[b['key']]
+            i = inst.get(names)
+            if i is None:
+                i = inst[names] = len(inst)
+                self.box_rows[b['key']].append([s2p.get(n, unk) for n in names])
+            ids.append(i)
+        rec = (ids, [s2p.get(tensors[p]['name'], unk) for p in plan['rest_param_src']])
+        self.rec_cache[id(tensors)] = (tensors, rec)
+        return rec
+
+    def _rows(self, key, n_params):
+        # angle indices of every instance of a box structure, as an array (rebuilt only when new instances appeared)
+        rows = self.box_rows[key]
+        arr = self.box_arr.get(key)
+        if arr is None or len(arr) != len(rows):
+            arr = self.box_arr[key] = np.asarray(rows, dtype=np.int64).reshape(len(rows), n_params)
+        return arr
 
     @staticmethod
     def _from_param_list(state_dict, prefix, *args):
@@ -256,9 +293,8 @@ class VQCModel(nn.Module):
         self.fplan_cache[einsum_str] = plan
         return plan
 
-    def _gates(self, thetas, names, struct, operands, slot_offset=0):
-        # fill the parameterised operand slots of a (batched) contraction from rows of symbol names
-        idx = torch.tensor([[self.sym2param.get(n, self.unk_param_index) for n in row] for row in names], device=thetas.device)
+    def _gates(self, thetas, idx, struct, operands):
+        # fill the parameterised operand slots of a (batched) contraction from rows of angle indices [n, n_params]
         angles = thetas[idx].to(dtype=self.precision)
         for op_type, cols in struct['by_type'].items():
             gate_batch = self.GATE_FNS[op_type](angles[:, cols])
@@ -273,49 +309,73 @@ class VQCModel(nn.Module):
         dev = thetas.device
         batch_size = len(batch_recipes)
 
-        # 1. every distinct word box of the batch (structure + parameter names), contracted once per structure
-        distinct, rows = {}, defaultdict(list)
-        group_plans = []
-        for einsum_str, items in groups.items():
+        # all integer indices of the batch (angle rows, box lookups, output rows) go to the GPU as one host array, so the
+        # batch makes one host-to-device copy; slots[name] = (start, shape) into it
+        parts, slots, size = [], {}, 0
+        def put(name, arr):
+            nonlocal size
+            parts.append(arr.reshape(-1))
+            slots[name] = (size, arr.shape)
+            size += arr.size
+
+        # 1. per circuit structure: the sentences' records (built once per sentence and run)
+        group_plans, by_key = [], defaultdict(list)
+        for g, (einsum_str, items) in enumerate(groups.items()):
             plan = self._fplan(einsum_str, items[0][1], batch_size)
-            refs = []
-            for b in plan['boxes']:
-                ids = []
-                for _, tensors in items:
-                    k = (b['key'], tuple(tensors[p]['name'] for p in b['param_pos']))
-                    if k not in distinct:
-                        distinct[k] = len(rows[b['key']])
-                        rows[b['key']].append(k[1])
-                    ids.append(distinct[k])
-                refs.append(torch.tensor(ids, device=dev))
-            group_plans.append((items, plan, refs))
+            recs = [self._record(plan, tensors) for _, tensors in items]
+            m, nb = len(items), len(plan['boxes'])
+            if nb:
+                ids = np.asarray([r[0] for r in recs], dtype=np.int64).reshape(m, nb)
+                for j, b in enumerate(plan['boxes']):
+                    by_key[b['key']].append((g, j, ids[:, j]))
+            if plan['param_pos']:
+                put(('rest', g), np.asarray([r[1] for r in recs], dtype=np.int64).reshape(m, len(plan['rest_param_src'])))
+            put(('out', g), np.fromiter((i for i, _ in items), dtype=np.int64, count=m))
+            group_plans.append((g, items, plan))
+        # 2. the distinct box instances of the batch, per box structure, and each sentence's position among them
+        n_inst = {}
+        for key, refs in by_key.items():
+            uniq, inv = np.unique(np.concatenate([r for _, _, r in refs]), return_inverse=True)
+            n_inst[key] = len(uniq)
+            struct = self.struct_cache[key]
+            if struct['param_pos']:
+                put(('rows', key), self._rows(key, len(struct['param_pos']))[uniq])
+            start = 0
+            for g, j, r in refs:
+                put(('ref', g, j), inv[start:start + len(r)])
+                start += len(r)
+        flat = torch.from_numpy(np.concatenate(parts)).to(dev, non_blocking=False)
+        def get(name):
+            start, shape = slots[name]
+            return flat[start:start + int(np.prod(shape))].reshape(shape)
+
+        # 3. every distinct box contracted once per structure
         box_values = {}
-        for key, names in rows.items():
+        for key, n in n_inst.items():
             struct = self.struct_cache[key]
             operands = [None] * struct['n_ops']
             for pos, buf_name in struct['static']:
                 buf = getattr(self, buf_name)
-                operands[pos] = buf.expand(len(names), *buf.shape)
+                operands[pos] = buf.expand(n, *buf.shape)
             if struct['param_pos']:
-                self._gates(thetas, names, struct, operands)
-            box_values[key] = self._contract_box(struct, operands, len(names))
+                self._gates(thetas, get(('rows', key)), struct, operands)
+            box_values[key] = self._contract_box(struct, operands, n)
 
-        # 2. each circuit structure: its boxes' tensors (looked up per sentence) and any unfused gates, contracted
+        # 4. each circuit structure: its boxes' tensors (looked up per sentence) and any unfused gates, contracted
         if self.discard:
             results = torch.zeros(batch_size, 2**self.out_q, 2**self.out_q, dtype=self.precision, device=dev)
         else:
             results = torch.zeros(batch_size, *[2]*self.out_q, dtype=self.precision, device=dev)
-        for items, plan, refs in group_plans:
-            indices, tensor_lists = zip(*items)
-            m = len(indices)
-            operands = [box_values[b['key']][r] for b, r in zip(plan['boxes'], refs)] + [None] * len(plan['rest'])
+        for g, items, plan in group_plans:
+            m = len(items)
+            operands = [box_values[b['key']][get(('ref', g, j))] for j, b in enumerate(plan['boxes'])] + [None] * len(plan['rest'])
             for pos, buf_name in plan['static']:
                 buf = getattr(self, buf_name)
                 operands[pos] = buf.expand(m, *buf.shape)
             if plan['param_pos']:
-                names = [[tensors[p]['name'] for p in plan['rest_param_src']] for tensors in tensor_lists]
-                self._gates(thetas, names, plan, operands)
+                self._gates(thetas, get(('rest', g)), plan, operands)
             group_out = plan['expr'](*operands, backend='torch')
+            out_idx = get(('out', g))
             if self.discard:
                 elems_per_item = group_out.numel() // m
                 target_sent_dim = 2**self.out_q
@@ -324,9 +384,9 @@ class VQCModel(nn.Module):
                 else:
                     sent_dim, traced_dim = elems_per_item, 1
                 group_out = group_out.reshape(m, sent_dim, traced_dim)
-                results[list(indices)] = torch.bmm(group_out, group_out.conj().transpose(1, 2))
+                results[out_idx] = torch.bmm(group_out, group_out.conj().transpose(1, 2))
             else:
-                results[list(indices)] = group_out
+                results[out_idx] = group_out
         return results
 
     def _forward_gates(self, batch_recipes):
