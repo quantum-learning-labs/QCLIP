@@ -138,8 +138,8 @@ def attach_iqm(r):
     v = iqm.get((r['layers'], r['nq']), [])
     f, src = iqm_overhead(r['layers'])
     fit = [x for x in v if x['fits'] == '1']
-    if fit: r['iqm_n2q'] = statistics.mean(float(x['iqm_n2q']) for x in fit); r['iqm_src'] = 'IQM lattice, transpiled (best of 5 seeds)'
-    else: r['iqm_n2q'] = r['n2q_logical'] * f; r['iqm_src'] = src
+    # logical x median overhead at every size (as IBM's default): per-circuit transpiles vary with placement and make the curve jagged
+    r['iqm_n2q'] = r['n2q_logical'] * f; r['iqm_src'] = src
     r['iqm_dur'] = statistics.mean(float(x['iqm_crit_s']) for x in fit) if fit else 0.0
     if fit: r['iqm_tt'] = statistics.mean(float(x['iqm_transpile_s']) for x in fit)
     return r
@@ -176,6 +176,33 @@ def row_at(nq, L):
     if r and (r.get('paths_ps') or r.get('gpu') or L == 2): return dict(r)
     return lerp_row(nq, L) if L not in (4, 8) else (dict(r) if r else None)
 
+
+# ---- GPU statevector as its own comparison line (cf. Knitter et al. 2026, statevector-only baseline) ----
+# best statevector engine per point: min over cuStateVec (state), the lazy torch statevector and Aer, J + host share. Measured at that
+# depth where available; else the 2-layer measurement at that size x the logical two-qubit gate ratio (statevector cost ~ gates x 2^n)
+# = 'scaled'; beyond the measured sizes an exponential fit (log10 J linear in qubits) over the 3 largest 2-layer sizes, same gate scaling
+# = 'extrapolated'.
+SV_ENG = ('cusv', 'lazy', 'aer')
+def sv_of(r):
+    g = r.get('gpu') or {}
+    v = [(g[e]['J'] + g[e]['s'] * PCPU, e) for e in SV_ENG if g.get(e) and g[e].get('J')]
+    return min(v) if v else None
+SV2 = {r['nq']: sv_of(r) for r in rows_all if r['layers'] == 2 and sv_of(r)}
+N2Q2 = {r['nq']: r['n2q_logical'] for r in rows_all if r['layers'] == 2 and r.get('n2q_logical')}
+_m = sorted(SV2)[-3:]
+_xs, _ys = _m, [math.log10(SV2[x][0] / N2Q2[x]) for x in _m]          # fit per two-qubit gate, so the depth scaling stays separate
+_xb, _yb = sum(_xs) / 3, sum(_ys) / 3
+SV_SLOPE = sum((x - _xb) * (y - _yb) for x, y in zip(_xs, _ys)) / sum((x - _xb) ** 2 for x in _xs); SV_ICPT = _yb - SV_SLOPE * _xb
+SV_MAXQ = max(SV2)
+def sv_point(r):
+    own = sv_of(r)
+    if own: return dict(J=own[0], status='measured', eng=own[1])
+    if r['nq'] in SV2 and r.get('n2q_logical') and r['nq'] in N2Q2:
+        return dict(J=SV2[r['nq']][0] * r['n2q_logical'] / N2Q2[r['nq']], status='scaled', eng=SV2[r['nq']][1])
+    if r.get('n2q_logical'):
+        return dict(J=10 ** (SV_ICPT + SV_SLOPE * r['nq']) * r['n2q_logical'], status='extrapolated', eng='fit')
+    return None
+
 def point(r):
     attach_iqm(r)
     c = classical(r)
@@ -185,10 +212,13 @@ def point(r):
     p = dict(nq=r['nq'], L=r['layers'], n=r['n'], classical=c['best'], cls_by=c['by'], cls_status=st,
              methods={k: dict(J=v['J'], status='interpolated' if r.get('interp') else v['status']) for k, v in c['methods'].items()},
              iqm_src=q['iqm_src'], qpu={}, be={})
+    p['sv'] = sv_point(r); p['be_sv'] = {}
     for b, f in EF.items():
         p['qpu'][b] = {str(m): f(q, m) for m in NOISE}
         m = breakeven(q, c['best'], f)
         p['be'][b] = None if m is None else TODAY[b] * m
+        m = breakeven(q, p['sv']['J'], f) if p['sv'] else None
+        p['be_sv'][b] = None if m is None else TODAY[b] * m
     p['qpu_status'] = 'interpolated' if r.get('interp') else 'modelled'
     return p
 
@@ -216,7 +246,7 @@ meta = dict(
     N0=N0, K=round(K, 1), PCPU=PCPU, ETA=ETA, RATE=RATE, route={str(k): round(v, 2) for k, v in ROUTE.items()},
     iqm_route={str(k): round(v, 2) for k, v in IQM_ROUTE.items()}, today=TODAY, noise=NOISE,
     consts=dict(IBM=IBM, IonQ=IONQ, IQM={k: v for k, v in IQM.items()}, CAL=CAL, KING_MED2Q=KING_MED2Q, KING_MEDRO=KING_MEDRO),
-    sv_ext=sv_ext,
+    sv_ext=sv_ext, sv_fit=dict(slope=SV_SLOPE, icpt=SV_ICPT, max_measured_nq=SV_MAXQ, per='J per logical 2q gate', engines=SV_ENG),
     pending=[])
 json.dump(dict(meta=meta, series=series), open(os.path.join(H, 'efig.json'), 'w'), indent=0)
 if __name__ == '__main__':
