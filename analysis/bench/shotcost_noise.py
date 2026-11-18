@@ -236,6 +236,24 @@ def main():
             for qc in circs:
                 sv = Statevector(qc.remove_final_measurements(inplace=False))
                 probs.append(np.abs(sv.data) ** 2)
+        elif prof == 'iqm_garnet':
+            # IQM Garnet (iqm-client fake backend: 20 q square lattice, prx + cz, its own depolarising/readout/T1-T2 noise model),
+            # density matrix as for Kingston; transpiled with the device target, run on Aer with the device noise model
+            from iqm.qiskit_iqm.fake_backends import IQMFakeGarnet
+            from qiskit_aer import AerSimulator
+            from qiskit import transpile as qtranspile
+            import torch
+            dev = IQMFakeGarnet()
+            nm = getattr(dev, 'noise_model', None)
+            sim = AerSimulator(method='density_matrix', device='GPU' if torch.cuda.is_available() else 'CPU', noise_model=nm,
+                               batched_shots_gpu=False, shot_branching_enable=False) if nm is not None else AerSimulator.from_backend(dev, method='density_matrix')
+            tc = qtranspile(circs, backend=dev, optimization_level=1, seed_transpiler=a.seed)
+            probs = []
+            for j in range(0, len(tc), 128):
+                res = sim.run(tc[j:j + 128], shots=a.shots, seed_simulator=1000 + a.seed).result()
+                for jj, qc in enumerate(circs[j:j + 128]):
+                    probs.append(counts_to_probs(res.get_counts(jj), qc.num_clbits))
+                print(f'{prof}: {j + len(tc[j:j + 128])}/{len(tc)} circuits, {time.time() - t0:.0f}s', flush=True)
         else:
             profile, cls = NOISY[prof]
             cfg = copy.deepcopy(config)
