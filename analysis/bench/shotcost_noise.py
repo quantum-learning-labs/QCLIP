@@ -248,7 +248,7 @@ def main():
         elif prof == 'iqm_garnet':
             # IQM Garnet (iqm-client fake backend: 20 q square lattice, prx + cz, its own depolarising/readout/T1-T2 noise model),
             # density matrix as for Kingston; transpiled with the device target, run on Aer with the device noise model
-            from iqm.qiskit_iqm.fake_backends import IQMFakeGarnet
+            from iqm.qiskit_iqm.fake_backends.fake_garnet import IQMFakeGarnet
             from qiskit_aer import AerSimulator
             from qiskit import transpile as qtranspile
             import torch
