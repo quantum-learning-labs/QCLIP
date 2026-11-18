@@ -223,11 +223,11 @@ IQM: 24 kW typical mean total (<a href="https://iqm.tech/products/iqm-radiance/"
 <code>analysis/bench/qpu_iqm.py</code>;
 </li><li><code>analysis/bench/shotcost_noise.py</code> (iqm_garnet profile, <code>--dump</code>);
 </li><li><code>analysis/bench/ionq_calib.py</code>;
-</li><li><code>analysis/bench/efig/</code> (<code>efig_calc.py</code>, <code>efig_plot.py</code>, <code>efig_page.html</code>, <code>efig_ingest.sh</code>, job scripts in <code>jobs/</code>).
+</li><li><code>analysis/bench/efig/</code> (<code>efig_calc.py</code>, <code>efig_plot.py</code>, <code>efig_page.html</code>, <code>efig_ingest.sh</code>, job scripts in <code>job_scripts/</code>).
 </li></ul>
 </li><li><b>Reproduce the figure.</b>
 </li></ul>
-<p class="cap">1. Run the jobs in <code>analysis/bench/efig/jobs/</code>: <code>job_cpu_l{5,6,7}.sh</code>, <code>job_iqm_l4.sh</code>, <code>job_calcounts.sh</code>, <code>job_gpu_rep.sh</code>, <code>mk_iqm.sh</code>, <code>job_ionq_dump.sh</code>.</p>
+<p class="cap">1. Run the jobs in <code>analysis/bench/efig/job_scripts/</code>: <code>job_cpu_l{5,6,7}.sh</code>, <code>job_iqm_l4.sh</code>, <code>job_calcounts.sh</code>, <code>job_gpu_rep.sh</code>, <code>mk_iqm.sh</code>, <code>job_ionq_dump.sh</code>.</p>
 <p class="cap">2. Copy the CSVs into <code>adv_data/</code>: <code>efig_ingest.sh</code> does this.</p>
 <p class="cap">3. Aggregate and compute: <code>python3 adv_agg.py &amp;&amp; python3 efig_calc.py</code>.</p>
 <p class="cap">4. Draw: <code>python efig_plot.py efig.json efig_log2 log2</code>.</p>

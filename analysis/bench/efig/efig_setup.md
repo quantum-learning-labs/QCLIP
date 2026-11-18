@@ -81,9 +81,9 @@ Every number below is taken from the code, configs, data files or job logs named
   - `analysis/bench/qpu_iqm.py`;
   - `analysis/bench/shotcost_noise.py` (iqm_garnet profile, `--dump`);
   - `analysis/bench/ionq_calib.py`;
-  - `analysis/bench/efig/` (`efig_calc.py`, `efig_plot.py`, `efig_page.html`, `efig_ingest.sh`, job scripts in `jobs/`).
+  - `analysis/bench/efig/` (`efig_calc.py`, `efig_plot.py`, `efig_page.html`, `efig_ingest.sh`, job scripts in `job_scripts/`).
 - **Reproduce the figure.**
-  1. Run the jobs in `analysis/bench/efig/jobs/`: `job_cpu_l{5,6,7}.sh`, `job_iqm_l4.sh`, `job_calcounts.sh`, `job_gpu_rep.sh`, `mk_iqm.sh`, `job_ionq_dump.sh`.
+  1. Run the jobs in `analysis/bench/efig/job_scripts/`: `job_cpu_l{5,6,7}.sh`, `job_iqm_l4.sh`, `job_calcounts.sh`, `job_gpu_rep.sh`, `mk_iqm.sh`, `job_ionq_dump.sh`.
   2. Copy the CSVs into `adv_data/`: `efig_ingest.sh` does this.
   3. Aggregate and compute: `python3 adv_agg.py && python3 efig_calc.py`.
   4. Draw: `python efig_plot.py efig.json efig_log2 log2`.
