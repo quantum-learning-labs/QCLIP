@@ -396,8 +396,8 @@ class ContrastiveTrainer:
     def ema_update(self):
         self.ema_t += 1
         d = min(self.ema_decay, (1 + self.ema_t) / (10 + self.ema_t))
-        for s, p in zip(self.ema, self.text_model.parameters()):
-            s.lerp_(p.detach(), 1 - d)
+        # one fused call instead of a Python loop over every tensor (the MLP control has ~1e5 tensors); same elementwise lerp
+        torch._foreach_lerp_(self.ema, [p.detach() for p in self.text_model.parameters()], 1 - d)
 
     @torch.no_grad()
     def ema_swap(self):
