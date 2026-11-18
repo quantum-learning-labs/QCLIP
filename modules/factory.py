@@ -80,7 +80,8 @@ def build_experiment(config, device):
                                             method=config['vision']['method']).to(device)
 
         text_model = VQCModel(out_q=config['embedding_qubits'], discard=config['text'].get('discard', False),
-                              fuse=config['text'].get('fuse', 'auto'), fuse_mem_frac=config['text'].get('fuse_mem_frac', 0.25)).to(device)
+                              fuse=config['text'].get('fuse', 'auto'), fuse_mem_frac=config['text'].get('fuse_mem_frac', 0.25),
+                              ckpt_mb=config['text'].get('ckpt_mb', 512)).to(device)
         loss_fn = build_loss(config)
         
     elif model_type == "microclip":   # MicroCLIP baseline: shrunk CLIP text transformer on the CLIP image vector

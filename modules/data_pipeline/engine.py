@@ -137,4 +137,4 @@ class DataEngine:
         collate_fn = self.collate_fn if split in ('train', 'val') else load_obj(self.split_config(split)['collate_fn'])
         return DataLoader(self.get_dataset(compiled_data, split=split), batch_size=self.config['batch_size'],
                           collate_fn=collate_fn, shuffle=(split == 'train'), num_workers=self.config.get("num_workers", 0),
-                          pin_memory=True)
+                          pin_memory=self.config.get('pin_memory', False))   # pinning copies the caption recipes every batch

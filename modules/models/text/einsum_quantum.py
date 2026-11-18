@@ -2,20 +2,24 @@ from tqdm import tqdm
 from typing import Dict, List
 import torch
 import torch.nn as nn
-from opt_einsum import contract_expression, get_symbol
+from opt_einsum import contract_expression, contract_path, get_symbol
+from torch.utils.checkpoint import checkpoint
 from collections import defaultdict, Counter
 import math
 import numpy as np
 from modules.compilation.quantum.gates import *
 
 class VQCModel(nn.Module):
-    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64, fuse='auto', fuse_mem_frac=0.25):
+    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64, fuse='auto', fuse_mem_frac=0.25, ckpt_mb=512):
         super().__init__()
         # gate fusion (forward): 'auto' contracts each word box on its own first, once per distinct box in the batch, when its
         # tensor fits the memory budget (fuse_mem_frac of the GPU memory free at the first batch); 'off': gate by gate
         if fuse not in ('auto', 'off'):
             raise ValueError(f"text.fuse {fuse!r}: 'auto' or 'off'")
         self.fuse, self.fuse_mem_frac = fuse, fuse_mem_frac
+        # memory: a contraction whose saved intermediates (for backward) would exceed ckpt_mb runs in batch chunks under
+        # activation checkpointing (same result, its forward recomputed in backward); in eval, chunks bound the largest one
+        self.ckpt_bytes = ckpt_mb * 2**20
         self.max_fuse_wires = None
         self.struct_cache, self.fplan_cache = {}, {}
         self._reset_records()
@@ -80,6 +84,9 @@ class VQCModel(nn.Module):
         self.unk_param_index = num_symbols
         self._reset_records()
 
+    REC_CAP = 2_000_000
+    _rec_warned = False
+
     def _reset_records(self):
         # per-sentence records of the fused forward, built the first time a sentence is seen and kept in RAM for the run:
         # rec_cache[id(tensors)] = (tensors, (box instance ids, angle indices of the unfused gates)); box_inst[key] maps a
@@ -103,6 +110,12 @@ class VQCModel(nn.Module):
                 self.box_rows[b['key']].append([s2p.get(n, unk) for n in names])
             ids.append(i)
         rec = (ids, [s2p.get(tensors[p]['name'], unk) for p in plan['rest_param_src']])
+        if len(self.rec_cache) >= self.REC_CAP:
+            # the batches hold copies of the recipes (e.g. a pinning DataLoader), so ids never repeat: don't grow forever
+            if not self._rec_warned:
+                print(f"VQC: {self.REC_CAP} sentence records and still missing; the loader copies recipes, cache cleared")
+                self._rec_warned = True
+            self.rec_cache.clear()
         self.rec_cache[id(tensors)] = (tensors, rec)
         return rec
 
@@ -211,13 +224,37 @@ class VQCModel(nn.Module):
             red_subs = [subs[ch[0]][0] + subs[ch[-1]][1] for L, chs in by_len.items() for ch in chs] + [subs[p] for p in others]
             red_shapes = [(64, 2, 2)] * len(red_chain) + [shapes[p] for p in others]
             expr = f"{','.join('$' + s for s in red_subs)}->${out}"
-            self.struct_cache[key] = {'expr': contract_expression(expr, *red_shapes), 'n_ops': len(tensors), 'static': static,
+            self.struct_cache[key] = {'expr': contract_expression(expr, *red_shapes), **self._cost(expr, red_shapes),
+                                      'n_ops': len(tensors), 'static': static,
                                       'param_pos': param_pos, 'by_type': dict(by_type), 'chains': dict(by_len),
                                       'red_chain': red_chain, 'others': others}
         return self.struct_cache[key]
 
     @staticmethod
-    def _contract_box(struct, operands, n):
+    def _cost(expr, shapes):
+        # entries per batch item: of the largest intermediate ('peak') and of all intermediates kept for backward ('saved')
+        # (the path of contract_expression for these nominal-batch shapes; every intermediate carries the batch index)
+        _, info = contract_path(expr, *shapes, shapes=True)
+        nb = shapes[0][0]
+        return {'peak': int(info.largest_intermediate) // nb, 'saved': int(sum(info.size_list)) // nb}
+
+    def _run(self, plan, ops, n):
+        # plan['expr'] on operands with leading batch dim n: in one go if it fits the budget, else in chunks (checkpointed
+        # when training)
+        item = torch.empty((), dtype=self.precision).element_size()
+        train = torch.is_grad_enabled()
+        per = (plan['saved'] if train else plan['peak']) * item
+        if per * n <= self.ckpt_bytes or (n == 1 and not train):
+            return plan['expr'](*ops, backend='torch')
+        chunk = max(1, int(self.ckpt_bytes // per))
+        run = lambda *x: plan['expr'](*x, backend='torch')
+        outs = []
+        for a in range(0, n, chunk):
+            sub = [o[a:a + chunk] for o in ops]
+            outs.append(checkpoint(run, *sub, use_reentrant=False) if train else run(*sub))
+        return torch.cat(outs)
+
+    def _contract_box(self, struct, operands, n):
         # one box structure for n distinct boxes: multiply out the gate chains, then contract
         products = {}
         for L, chs in struct['chains'].items():
@@ -227,7 +264,7 @@ class VQCModel(nn.Module):
                 prod = prod @ stack[:, :, l]
             products[L] = prod
         red = [products[L][:, k] for L, k in struct['red_chain']] + [operands[p] for p in struct['others']]
-        return struct['expr'](*red, backend='torch')
+        return self._run(struct, red, n)
 
     def _fplan(self, einsum_str, tensors, batch_size):
         # split a circuit into its word boxes: each box's operands contract to one tensor on its external wires (the
@@ -285,7 +322,7 @@ class VQCModel(nn.Module):
         outer = [b['ext'] for b in boxes] + [subs[p] for p in rest]
         expr = f"{','.join('$' + s for s in outer)}->${out}"
         plan = {'boxes': boxes, 'rest': rest, 'rest_param_src': [rest[i - len(boxes)] for i in param_pos],
-                'expr': contract_expression(expr, *shapes), 'n_ops': len(outer), 'static': static,
+                'expr': contract_expression(expr, *shapes), **self._cost(expr, shapes), 'n_ops': len(outer), 'static': static,
                 'param_pos': param_pos, 'by_type': dict(by_type)}
         self.fplan_cache[einsum_str] = plan
         return plan
@@ -371,7 +408,7 @@ class VQCModel(nn.Module):
                 operands[pos] = buf.expand(m, *buf.shape)
             if plan['param_pos']:
                 self._gates(thetas, get(('rest', g)), plan, operands)
-            group_out = plan['expr'](*operands, backend='torch')
+            group_out = self._run(plan, operands, m)
             out_idx = get(('out', g))
             if self.discard:
                 elems_per_item = group_out.numel() // m
