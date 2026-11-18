@@ -10,16 +10,18 @@ import numpy as np
 from modules.compilation.quantum.gates import *
 
 class VQCModel(nn.Module):
-    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64, fuse='auto', fuse_mem_frac=0.25, ckpt_mb=512):
+    def __init__(self, out_q: int = 9, discard=False, precision = torch.complex64, fuse='auto', fuse_mem_frac=0.25, ckpt_mb='auto', ckpt_mem_frac=0.35):
         super().__init__()
         # gate fusion (forward): 'auto' contracts each word box on its own first, once per distinct box in the batch, when its
         # tensor fits the memory budget (fuse_mem_frac of the GPU memory free at the first batch); 'off': gate by gate
         if fuse not in ('auto', 'off'):
             raise ValueError(f"text.fuse {fuse!r}: 'auto' or 'off'")
         self.fuse, self.fuse_mem_frac = fuse, fuse_mem_frac
-        # memory: a contraction whose saved intermediates (for backward) would exceed ckpt_mb runs in batch chunks under
-        # activation checkpointing (same result, its forward recomputed in backward); in eval, chunks bound the largest one
-        self.ckpt_bytes = ckpt_mb * 2**20
+        # memory: a contraction whose saved intermediates (for backward) would exceed the budget runs in batch chunks under
+        # activation checkpointing (same result, its forward recomputed in backward); in eval, chunks bound the largest one.
+        # Budget: ckpt_mb MiB, or 'auto' = ckpt_mem_frac of the GPU memory free at the first batch
+        self.ckpt_mb, self.ckpt_mem_frac = ckpt_mb, ckpt_mem_frac
+        self.ckpt_bytes = None if ckpt_mb == 'auto' else int(ckpt_mb) * 2**20
         self.max_fuse_wires = None
         self.struct_cache, self.fplan_cache = {}, {}
         self._reset_records()
@@ -242,6 +244,11 @@ class VQCModel(nn.Module):
         # plan['expr'] on operands with leading batch dim n: in one go if it fits the budget, else in chunks (checkpointed
         # when training)
         item = torch.empty((), dtype=self.precision).element_size()
+        if self.ckpt_bytes is None:
+            dev = self.theta.device
+            free = torch.cuda.mem_get_info(dev)[0] if dev.type == 'cuda' else 8 * 2**30
+            self.ckpt_bytes = int(self.ckpt_mem_frac * free)
+            print(f"VQC checkpoint budget: {self.ckpt_bytes / 2**30:.1f} GiB per contraction")
         train = torch.is_grad_enabled()
         per = (plan['saved'] if train else plan['peak']) * item
         if per * n <= self.ckpt_bytes or (n == 1 and not train):
