@@ -177,6 +177,8 @@ def main():
     ap.add_argument('--det_khz', type=float, default=0.0, help='honest only: coherent idle detuning, per-qubit N(0, sigma) kHz')
     ap.add_argument('--zz_khz', type=float, default=0.0, help='honest only: static ZZ (kHz) between coupled idle qubits')
     ap.add_argument('--rebuild', action='store_true', help='honest only: force the variant pipeline (check: equals plain honest)')
+    ap.add_argument('--dump', default=None, help='write the logical circuits (QPY) + meta (pickle) to this prefix and stop (for cloud simulators)')
+    ap.add_argument('--no_O', action='store_true', help='CU circuits only (no O-readout circuit)')
     a = ap.parse_args()
     variant = a.dd or a.det_khz or a.zz_khz or a.rebuild
     suffix = ('+dd' if a.dd else '') + (f'+det{a.det_khz:g}' if a.det_khz else '') + (f'+zz{a.zz_khz:g}' if a.zz_khz else '') + ('+rb' if a.rebuild and not (a.dd or a.det_khz or a.zz_khz) else '')
@@ -211,7 +213,7 @@ def main():
     rows = [i for i in sorted(by) if len(by[i]) == 2][:a.pairs]
     print(f'{name}: {len(rows)} pairs with <= {a.qmax} text qubits (of {len(ds)} rows)', flush=True)
     circs, meta_c = [], []
-    with_O = all(len(by[i][0][2]) <= a.o_max for i in rows)
+    with_O = all(len(by[i][0][2]) <= a.o_max for i in rows) and not a.no_O
     stride = 3 if with_O else 2
     for i in rows:
         (qt, qip, oq), (_, qin, _) = by[i]
@@ -227,6 +229,13 @@ def main():
             circs.append(qc)
         vals = np.zeros(2 ** len(oq)); vals[0], vals[1] = lp, lm
         meta_c.append((n, oq, vals))
+    if a.dump:
+        import pickle
+        from qiskit import qpy
+        with open(a.dump + '.qpy', 'wb') as fh: qpy.dump(circs, fh)
+        pickle.dump(dict(name=name, rows=rows, meta_c=meta_c, stride=stride, with_O=with_O, discard=discard, K=K, qmax=a.qmax,
+                         checkpoint=str(ckpt)), open(a.dump + '.pkl', 'wb'))
+        print('dumped', len(circs), 'circuits to', a.dump, flush=True); return
     for prof in a.profiles.split(','):
         f = out / f'{name}__{prof}{suffix if prof == "honest_miami" else ""}.npz'
         if f.exists(): print('exists, skip', f, flush=True); continue
