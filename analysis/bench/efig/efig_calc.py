@@ -27,9 +27,21 @@ def _lin(pts):
     b = sum((x - xb) * (y - yb) for x, y in pts) / sxx; return yb - b * xb, b
 CAL_PTS = _calrows('ps')
 _a, _b = _lin(CAL_PTS) if len(CAL_PTS) >= 5 else (-0.187, -0.00331)
-CAL = dict(a=_a, eIBM=-_b, eIonQ=0.004, e1IonQ=2e-4)
+CAL = dict(a=_a, eIBM=-_b, eIonQ=0.004, e1IonQ=2e-4, aIonQ=_a)
+# IonQ: the same 27 post-selected models on IonQ's cloud simulator (noise model forte-1, 100 std pairs, 4096 shots; noise_calib_ionq.csv),
+# ln F = a - eps2 (n2q + 0.05 n1q) against IonQ-native counts (one-qubit term kept at the spec ratio 2e-4 / 4e-3)
+def _ionq_rows():
+    cnt = collections.defaultdict(list); fn = os.path.join(H, 'calib_kingston_counts.csv'); fc = os.path.join(H, 'noise_calib_ionq.csv')
+    if not (os.path.exists(fn) and os.path.exists(fc)): return []
+    for r in csv.DictReader(open(fn)):
+        if r.get('circ', 'cu').startswith('cu'): cnt[r['ckpt']].append(float(r['ionq_n2q']) + 0.05 * float(r['ionq_n1q']))
+    return [(statistics.mean(cnt[r['ckpt']]), math.log(float(r['F_eff']))) for r in csv.DictReader(open(fc)) if r['ckpt'] in cnt]
+ION_PTS = _ionq_rows()
+if len(ION_PTS) >= 5:
+    _ai, _bi = _lin(ION_PTS); CAL.update(aIonQ=_ai, eIonQ=-_bi, e1IonQ=-0.05 * _bi)
 CAL_SRC = dict(IBM=f'calibrated: {len(CAL_PTS)} post-selected FakeKingston emulations, best-of-5 counts' if len(CAL_PTS) >= 5 else 'old constants',
-               IonQ='modelled: spec errors (assumed), Kingston intercept', IQM='modelled: Kingston fit scaled by median-error ratios')
+               IonQ=(f'calibrated: {len(ION_PTS)} post-selected models on the IonQ cloud simulator (forte-1)' if len(ION_PTS) >= 5 else 'modelled: spec errors (assumed), Kingston intercept'),
+               IQM='modelled: Kingston fit scaled by median-error ratios')
 IBM = dict(P=25e3, rep=250e-6, job=2 * 2 / 190)                # 25 kW, 250 us repetition delay, 2 s job overhead / 190 circuits, 2 circuits
 IONQ = dict(P=5e3, t1=1.1e-4, t2=9e-4, shot=1.5e-3, circ=2 * 10.0)   # Knitter et al. 2026 (arXiv 2605.02798)
 # NEW: IQM Garnet-class (20 q Garnet published figures; routing on the 54 q Aphrodite lattice).
@@ -153,20 +165,21 @@ def qpu_counts(r):
                 ionq_n2q=r['ionq_n2q'], ionq_n1q=r['ionq_n1q'], ionq_tt=r.get('ionq_tt') or 0,
                 iqm_n2q=r.get('iqm_n2q'), iqm_dur=r.get('iqm_dur', 0.0), iqm_tt=r.get('iqm_tt', r.get('ibm_tt') or 0), iqm_src=r.get('iqm_src'))
 
+def shots(lnF): return N0 * math.exp(min(700.0, -2.0 * lnF))   # N0 / F^2, overflow-safe for the break-even search's large error multipliers
 def e_ibm(q, m):
-    F = math.exp(CAL['a'] - CAL['eIBM'] * m * q['ibm_n2q']); N = N0 / F ** 2
+    N = shots(CAL['a'] - CAL['eIBM'] * m * q['ibm_n2q'])
     return (N * (q['ibm_dur'] + IBM['rep']) + IBM['job']) * IBM['P'] + q['ibm_tt'] * PCPU / K
 def e_ionq(q, m):
-    F = math.exp(CAL['a'] - (CAL['eIonQ'] * q['ionq_n2q'] + CAL['e1IonQ'] * q['ionq_n1q']) * m); N = N0 / F ** 2
+    N = shots(CAL['aIonQ'] - (CAL['eIonQ'] * q['ionq_n2q'] + CAL['e1IonQ'] * q['ionq_n1q']) * m)
     return (N * (q['ionq_n1q'] * IONQ['t1'] + q['ionq_n2q'] * IONQ['t2'] + IONQ['shot']) + IONQ['circ']) * IONQ['P'] + q['ionq_tt'] * PCPU / K
 def e_iqm(q, m):
     if q['iqm_n2q'] is None: return None
-    F = math.exp(IQM['a'] - IQM['eff'] * m * q['iqm_n2q']); N = N0 / F ** 2
+    N = shots(IQM['a'] - IQM['eff'] * m * q['iqm_n2q'])
     return N * (IQM['shot'] + q['iqm_dur']) * IQM['P'] + q['iqm_tt'] * PCPU / K
 EF = dict(IBM=e_ibm, IonQ=e_ionq, IQM=e_iqm)
 def F2(b, q, m):
     if b == 'IBM': return math.exp(CAL['a'] - CAL['eIBM'] * m * q['ibm_n2q']) ** 2
-    if b == 'IonQ': return math.exp(CAL['a'] - (CAL['eIonQ'] * q['ionq_n2q'] + CAL['e1IonQ'] * q['ionq_n1q']) * m) ** 2
+    if b == 'IonQ': return math.exp(CAL['aIonQ'] - (CAL['eIonQ'] * q['ionq_n2q'] + CAL['e1IonQ'] * q['ionq_n1q']) * m) ** 2
     return math.exp(IQM['a'] - IQM['eff'] * m * q['iqm_n2q']) ** 2
 TODAY = dict(IBM=CAL['eIBM'], IonQ=CAL['eIonQ'], IQM=IQM['eff'])   # effective per-2q-gate error the model multiplies by m
 
@@ -303,7 +316,7 @@ def point(r):
         elif p['sv']['status'] in ('measured', 'scaled'): p['sv'] = dict(p['sv'], J=p['sv']['J'] * MC['meas_f'])
     p['shot_J'] = dict(IBM=(q['ibm_dur'] + IBM['rep']) * IBM['P'], IonQ=(q['ionq_n1q'] * IONQ['t1'] + q['ionq_n2q'] * IONQ['t2'] + IONQ['shot']) * IONQ['P'],
                        IQM=(IQM['shot'] + q['iqm_dur']) * IQM['P'])
-    p['shots'] = {b: {str(m): N0 / F2(b, q, m) for m in NOISE} for b in EF}
+    p['shots'] = {b: {str(m): N0 / max(F2(b, q, m), 1e-300) for m in NOISE} for b in EF}
     for b, f in EF.items():
         p['qpu'][b] = {str(m): f(q, m) for m in NOISE}
         m = breakeven(q, c['best'], f)
@@ -378,8 +391,8 @@ SOURCES = [
                                f'over random-greedy-128, residual {GAIN_RMS:.2f} decades): one path-quality model for all sizes'),
     ('interpolated depths', f'log-normal, sigma = {SIG_INTERP:.2f} decades: error of the 4/8-layer interpolation measured on the real 5-layer circuits'),
     ('statevector extrapolation', 'Student-t prediction interval of the regression of log10(J per gate) on qubits over the measured 22-31 q points'),
-    ('QPU noise fit', f'bootstrap of the {len(_cal)} post-selected Kingston calibration emulations (ln F_eff against best-of-5 routed two-qubit '
-                      'counts): IBM directly; its relative spread applied to IonQ and IQM until their own calibrations land'),
+    ('QPU noise fit', f'bootstrap of the calibration runs of the same {len(_cal)} post-selected models: IBM (FakeKingston emulations, best-of-5 '
+                      f'routed counts), IonQ ({len(ION_PTS)} cloud-simulator runs, native counts); IQM uses the IBM spread until its calibration lands'),
     ('QPU power', 'IBM 25-30 kW (26 kW System Two refrigerator, arXiv:2304.14344; ~30 kW System One installations); IonQ 3.5-6.5 kW '
                   '(5 kW +-30%, assumed); IQM 24-30 kW (typical mean, IQM Radiance spec; 30 kW peak, Mansfield et al. 2025)'),
     ('QPU time per shot', 'IBM repetition delay 100-500 us (assumed; IBM docs example uses 500 us); IonQ gate and shot times +-20% (assumed); '
@@ -398,8 +411,11 @@ def draw_all(seed=12345):
             bs = [rng.choice(_cal) for _ in _cal]; a_, b_ = _fit(bs)
             fac = b_ / CAL_B0 if CAL_B0 else 1.0; da = a_ - CAL_A0
             CAL.update(base[0]); IBM.update(base[1]); IONQ.update(base[2]); IQM.update(base[3])
-            for k in ('eIBM', 'eIonQ', 'e1IonQ'): CAL[k] = base[0][k] * fac
-            CAL['a'] = base[0]['a'] + da
+            CAL['eIBM'] = base[0]['eIBM'] * fac; CAL['a'] = base[0]['a'] + da
+            if len(ION_PTS) >= 5:
+                ai, bi = _lin([rng.choice(ION_PTS) for _ in ION_PTS]); CAL.update(aIonQ=ai, eIonQ=-bi, e1IonQ=-0.05 * bi)
+            else:
+                CAL['eIonQ'] = base[0]['eIonQ'] * fac; CAL['e1IonQ'] = base[0]['e1IonQ'] * fac; CAL['aIonQ'] = base[0]['aIonQ'] + da
             IQM['eff'] = base[3]['eff'] * fac; IQM['a'] = (base[0]['a'] + da) * base[3]['a'] / base[0]['a']
             IBM['P'] = rng.uniform(*RANGES['IBM_P']); IBM['rep'] = rng.uniform(*RANGES['IBM_rep'])
             IONQ['P'] = rng.uniform(*RANGES['IonQ_P']); ft = rng.uniform(*RANGES['IonQ_t'])

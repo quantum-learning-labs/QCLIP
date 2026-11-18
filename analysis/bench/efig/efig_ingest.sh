@@ -3,6 +3,7 @@
 # export the page's store documents (efig_docs/*.json) and render the paper figure on tails. Push the docs with ArtifactData after.
 set -uo pipefail
 cd "$(dirname "$0")"; source ~/comp_bridge_agent/bin/_hpc.sh
+ssh tails-agent "cat /cs/research/pplv/comp_bridge/qclip_wt/energyfig/results/shotcost/ionq_calib/ionq_calib_fit.csv" > /tmp/efi.$$ && [ -s /tmp/efi.$$ ] && cp /tmp/efi.$$ noise_calib_ionq.csv; rm -f /tmp/efi.$$
 R=qclip_hpc/code/136a567/results/shotcost/adv
 for L in 5 6 7; do
   hpc_ssh "cat ~/$R/diag_ef_l$L/structure.csv 2>/dev/null" > /tmp/efs.$$ && [ -s /tmp/efs.$$ ] && cp /tmp/efs.$$ structure_grid_l$L.csv
