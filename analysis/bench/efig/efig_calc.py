@@ -126,7 +126,8 @@ for fn in glob.glob(os.path.join(H, 'qpu_iqm_*.csv')):
 iqm_ov = collections.defaultdict(list)
 for (L, nq), v in iqm.items():
     for r in v:
-        if r['fits'] == '1' and float(r['logical_n2q']) > 0: iqm_ov[L].append(float(r['iqm_n2q']) / float(r['logical_n2q']))
+        base = (by(L, nq) or {}).get('n2q_logical') or float(r['logical_n2q'])   # same logical count as the Kingston overhead uses
+        if r['fits'] == '1' and base > 0: iqm_ov[L].append(float(r['iqm_n2q']) / base)
 IQM_ROUTE = {L: statistics.median(v) for L, v in iqm_ov.items()}
 def iqm_overhead(L):
     if L in IQM_ROUTE: return IQM_ROUTE[L], 'IQM lattice, median at this depth'
@@ -137,7 +138,8 @@ def attach_iqm(r):
     v = iqm.get((r['layers'], r['nq']), [])
     f, src = iqm_overhead(r['layers'])
     fit = [x for x in v if x['fits'] == '1']
-    r['iqm_n2q'] = r['n2q_logical'] * f; r['iqm_src'] = src
+    if fit: r['iqm_n2q'] = statistics.mean(float(x['iqm_n2q']) for x in fit); r['iqm_src'] = 'IQM lattice, transpiled (best of 5 seeds)'
+    else: r['iqm_n2q'] = r['n2q_logical'] * f; r['iqm_src'] = src
     r['iqm_dur'] = statistics.mean(float(x['iqm_crit_s']) for x in fit) if fit else 0.0
     if fit: r['iqm_tt'] = statistics.mean(float(x['iqm_transpile_s']) for x in fit)
     return r
@@ -159,8 +161,14 @@ def lerp_row(nq, L):
     for kind in ('ps', 'rho'):
         la, lb = a.get(f'best_{kind}_lf'), b.get(f'best_{kind}_lf')
         r[f'best_{kind}_lf'] = li(la, lb); r[f'greedy_{kind}_lf'] = None
-        sa = min((c['s'] for cs in (a.get(f'paths_{kind}') or []) for c in cs if c['o'] == a.get(f'best_{kind}_by')), default=600)
-        r[f'paths_{kind}'] = [[{'o': 'interp', 'lf': r[f'best_{kind}_lf'], 's': sa}]] if r[f'best_{kind}_lf'] is not None else None
+        # two candidates, as for measured rows: the best path (search time of the slower of the two depths' best searches) and
+        # the greedy path (its search time); the model keeps the cheaper total per decision
+        st = lambda x: min((c['s'] for cs in (x.get(f'paths_{kind}') or []) for c in cs if c['o'] == x.get(f'best_{kind}_by')), default=600)
+        cand = []
+        if r[f'best_{kind}_lf'] is not None: cand.append({'o': 'interp', 'lf': r[f'best_{kind}_lf'], 's': max(st(a), st(b))})
+        g = li(a.get(f'greedy_{kind}_lf'), b.get(f'greedy_{kind}_lf'))
+        if g is not None: cand.append({'o': 'greedy-interp', 'lf': g, 's': li(a.get('greedy_path_s') or 0, b.get('greedy_path_s') or 0)})
+        r[f'paths_{kind}'] = [cand] if cand else None
     return r
 
 def row_at(nq, L):

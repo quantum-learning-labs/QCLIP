@@ -52,6 +52,13 @@ td.num { font-family: var(--mono); white-space: nowrap; }
 .methods li { margin-bottom: 6px; }
 .methods ul { margin: 0; padding-left: 18px; max-width: 80ch; }
 a { color: var(--ibm); }
+.multi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.panel { margin: 0; min-width: 0; display: grid; gap: 4px; }
+.panel figcaption { font-weight: 600; font-size: 14px; }
+.pcanvas { position: relative; height: 520px; min-width: 0; }
+.empty-inline { color: var(--muted); font-size: 14px; }
+.empty[hidden], .empty-inline[hidden], .multi[hidden], .pcanvas[hidden] { display: none; }
+@media (max-width: 760px) { .multi { grid-template-columns: 1fr; } .pcanvas { height: 440px; } }
 @media (max-width: 600px) { .canvas { height: 340px; } section.fig { padding: 14px; } }
 </style>
 
@@ -83,13 +90,18 @@ a { color: var(--ibm); }
         <button class="chip" data-f="2" data-v="log2" aria-pressed="true" id="f2-log2">log₂(qubits)</button>
         <button class="chip" data-f="2" data-v="L4" aria-pressed="false" id="f2-L4">4 layers</button>
         <button class="chip" data-f="2" data-v="L8" aria-pressed="false" id="f2-L8">8 layers</button></div>
-      <div class="grp"><span class="lab">QPUs</span>
-        <button class="chip" data-q="IBM" aria-pressed="true" id="q-IBM">IBM</button>
-        <button class="chip" data-q="IonQ" aria-pressed="true" id="q-IonQ">IonQ</button>
-        <button class="chip" data-q="IQM" aria-pressed="true" id="q-IQM">IQM</button></div>
+      <div class="grp"><span class="lab">View</span>
+        <button class="chip" data-view="split" aria-pressed="true" id="v-split">One panel per QPU</button>
+        <button class="chip" data-view="all" aria-pressed="false" id="v-all">All backends</button></div>
     </div>
-    <div class="canvas"><canvas id="c2" aria-label="Energy per decision against total qubits"></canvas><div class="empty" id="e2">Waiting for data.</div></div>
     <div class="legend" id="lg2"></div>
+    <div class="multi" id="multi">
+      <figure class="panel"><figcaption id="t-IBM">IBM Kingston</figcaption><div class="pcanvas"><canvas id="c2-IBM" aria-label="IBM energy per decision against qubits"></canvas></div></figure>
+      <figure class="panel"><figcaption id="t-IonQ">IonQ Forte</figcaption><div class="pcanvas"><canvas id="c2-IonQ" aria-label="IonQ energy per decision against qubits"></canvas></div></figure>
+      <figure class="panel"><figcaption id="t-IQM">IQM Garnet-class</figcaption><div class="pcanvas"><canvas id="c2-IQM" aria-label="IQM energy per decision against qubits"></canvas></div></figure>
+    </div>
+    <div class="pcanvas" id="allwrap" hidden><canvas id="c2-all" aria-label="All backends: energy per decision against qubits"></canvas></div>
+    <div class="empty-inline" id="e2">Waiting for data.</div>
     <p class="cap" id="cap2"></p>
   </section>
 
@@ -109,7 +121,7 @@ a { color: var(--ibm); }
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
-const S = { f1: 'log2', f2: 'log2', q: { IBM: true, IonQ: true, IQM: true } };
+const S = { f1: 'log2', f2: 'log2', view: 'split' };
 let DATA = { meta: null, series: {} };
 const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const COL = () => ({ IBM: tok('--ibm'), IonQ: tok('--ionq'), IQM: tok('--iqm'), cls: tok('--cls'), sv: tok('--sv'), grid: tok('--grid'), muted: tok('--muted'), fg: tok('--fg'), bg: tok('--bg') });
@@ -158,27 +170,90 @@ function fig1() {
     + ['IBM', 'IonQ', 'IQM'].map(b => `<b>${b}</b> (${say(b)})`).join('. ') + '.';
 }
 
-function fig2() {
-  const pts = DATA.series[S.f2] || [], c = COL(), ds = [];
-  E('e2').hidden = pts.length > 0;
-  ds.push({ label: 'Best classical', data: pts.map(p => ({ x: p.nq, y: p.classical, p })), borderColor: c.cls, backgroundColor: pts.map(p => ptFill(p.cls_status, c.cls)), pointBorderColor: c.cls,
-    pointStyle: pts.map(p => ptStyle(p.cls_status)), pointRadius: 5, borderWidth: 3.5, order: 0 });
-  const L = S.f2 === 'L4' ? 4 : S.f2 === 'L8' ? 8 : null, ext = L && DATA.meta.sv_ext && DATA.meta.sv_ext[L];
-  const sv = pts.filter(p => p.methods && p.methods.statevector);
-  if (sv.length) ds.push({ label: 'GPU statevector (measured)', data: sv.map(p => ({ x: p.nq, y: p.methods.statevector.J, p })), borderColor: c.sv, backgroundColor: c.sv, pointRadius: 3, borderWidth: 1.5 });
-  if (ext) { const xs = [ext.from_nq, 60, 90, 124]; ds.push({ label: 'GPU statevector (extrapolated)', data: xs.map(x => ({ x, y: Math.pow(10, ext.icpt + ext.slope * x) })), borderColor: c.sv, borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5 }); }
-  for (const b of ['IBM', 'IonQ', 'IQM']) if (S.q[b]) for (const m of ['1', '0.1', '0.01'])
-    ds.push({ label: `${b}, ${NLAB[m]}`, data: pts.filter(p => p.qpu[b] && p.qpu[b][m] != null).map(p => ({ x: p.nq, y: p.qpu[b][m], p })), borderColor: c[b], borderDash: DASH[m], pointRadius: 0, borderWidth: m === '1' ? 2.2 : 1.6 });
-  const opt = { responsive: true, maintainAspectRatio: false, animation: false, parsing: false, scales: axes('Energy per decision (J, whole system)', 1e-1, 1e12),
-    plugins: { legend: { display: false }, tooltip: { callbacks: { label: t => `${t.dataset.label}: ${sciT(t.raw.y)} J at ${t.raw.x} q` + (t.raw.p ? `, ${t.raw.p.L} layers` + (t.dataset.label === 'Best classical' ? ` (${t.raw.p.cls_by}, ${t.raw.p.cls_status})` : '') : '') } } } };
-  if (ch2) { ch2.data.datasets = ds; ch2.options = opt; ch2.update(); } else ch2 = new Chart(E('c2'), { type: 'line', data: { datasets: ds }, options: opt });
-  E('lg2').innerHTML = `<span style="color:${c.cls}"><span class="sw" style="border-top-width:3px"></span>best classical</span><span style="color:${c.sv}"><span class="sw"></span>statevector (dashed: extrapolated)</span>`
-    + ['IBM', 'IonQ', 'IQM'].filter(b => S.q[b]).map(b => `<span style="color:${c[b]}"><span class="sw"></span>${NAMES[b]}</span>`).join('')
-    + `<span><span class="sw" style="color:${c.muted}"></span>today</span><span><span class="sw dash" style="color:${c.muted}"></span>10× lower 2q error</span><span><span class="sw dot" style="color:${c.muted}"></span>100× lower</span>`;
-  const out = pts.filter(p => p.qpu.IQM && p.qpu.IQM['1'] > 1e12).length;
-  E('cap2').innerHTML = `Energy for one decision. Lower is better. Lines above the top of the axis are off-scale (their values are in the table)${out ? '; IQM at today\'s error is above 10<sup>12</sup> J at every size shown' : ''}. Only the two-qubit gate error is reduced in the 10× and 100× lines; readout, state preparation and coherence stay at today's values.`;
+const SUP = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
+const pow10 = n => '10' + String(n).split('').map(ch => SUP[ch]).join('') + ' J';
+const charts2 = {};
+// direct labels at the right end of each line, and crossover ticks (first qubit count where a QPU line drops below best classical)
+const endLabels = { id: 'endLabels', afterDatasetsDraw(chart) {
+  const { ctx, chartArea: a } = chart; ctx.save(); ctx.font = '11px "IBM Plex Sans", system-ui, sans-serif'; ctx.textBaseline = 'middle';
+  const used = [];
+  chart.data.datasets.forEach((ds, i) => {
+    if (!ds.endLabel || !chart.isDatasetVisible(i)) return;
+    const meta = chart.getDatasetMeta(i), pts = meta.data.filter(p => !p.skip && p.y >= a.top && p.y <= a.bottom);
+    if (!pts.length) return;
+    const p = pts[pts.length - 1]; let y = p.y;
+    for (const u of used) if (Math.abs(u - y) < 12) y = u + (y >= u ? 12 : -12);
+    used.push(y); ctx.fillStyle = ds.borderColor; ctx.textAlign = 'left'; ctx.fillText(ds.endLabel, Math.min(p.x + 5, a.right + 4), y);
+  });
+  for (const t of chart.options.crossTicks || []) {
+    const x = chart.scales.x.getPixelForValue(t.x); if (x < a.left || x > a.right) continue;
+    ctx.strokeStyle = t.col; ctx.lineWidth = 1.5; ctx.setLineDash(t.dash || []); ctx.beginPath(); ctx.moveTo(x, a.bottom); ctx.lineTo(x, a.bottom - 14); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = t.col; ctx.textAlign = 'center'; ctx.fillText(Math.round(t.x) + ' q', x, a.bottom - 22 - (t.row || 0) * 12);
+  }
+  ctx.restore(); } };
+
+function crossAt(pts, key) {   // first crossing of a QPU line below best classical, interpolated in log energy between sizes
+  for (let i = 0; i < pts.length; i++) {
+    const q = pts[i].qpu[key[0]][key[1]], c = pts[i].classical; if (q == null || c == null) continue;
+    if (q <= c) { if (i === 0) return pts[0].nq; const p = pts[i - 1], q0 = p.qpu[key[0]][key[1]], c0 = p.classical;
+      const d0 = Math.log10(q0) - Math.log10(c0), d1 = Math.log10(q) - Math.log10(c); return p.nq + (pts[i].nq - p.nq) * d0 / (d0 - d1); }
+  }
+  return null;
 }
 
+function yRange(pts, backs) {
+  const v = [];
+  for (const p of pts) { if (p.classical) v.push(p.classical); if (p.methods && p.methods.statevector) v.push(p.methods.statevector.J);
+    for (const b of backs) for (const m of ['0.1', '0.01']) if (p.qpu[b][m]) v.push(p.qpu[b][m]); }
+  const lo = Math.floor(Math.log10(Math.min(...v))) - 1, hi = Math.ceil(Math.log10(Math.max(...v))) + 1;
+  return [Math.pow(10, lo), Math.pow(10, hi)];
+}
+
+function panel(id, pts, backs, yr, opts = {}) {
+  const c = COL(), ds = [], L = S.f2 === 'L4' ? 4 : S.f2 === 'L8' ? 8 : null, ext = L && DATA.meta.sv_ext && DATA.meta.sv_ext[L];
+  const sv = pts.filter(p => p.methods && p.methods.statevector);
+  if (sv.length) ds.push({ label: 'statevector', data: sv.map(p => ({ x: p.nq, y: p.methods.statevector.J })), borderColor: c.muted + 'aa', borderWidth: 1, pointRadius: 0, endLabel: ext ? '' : 'statevector' });
+  if (ext) ds.push({ label: 'statevector, extrapolated', data: [ext.from_nq, 70, 124].map(x => ({ x, y: Math.pow(10, ext.icpt + ext.slope * x) })), borderColor: c.muted + 'aa', borderDash: [5, 4], borderWidth: 1, pointRadius: 0, endLabel: 'statevector' });
+  ds.push({ label: 'best classical', data: pts.map(p => ({ x: p.nq, y: p.classical, p })), borderColor: c.cls, borderWidth: 2.4, order: 0,
+    pointRadius: pts.map(p => p.cls_status === 'measured' ? 3.5 : 0), pointBackgroundColor: c.cls, pointBorderColor: c.cls,
+    segment: { borderDash: s => (s.p1.raw.p.cls_status === 'interpolated' || s.p0.raw.p.cls_status === 'interpolated') ? [6, 4] : undefined }, endLabel: 'best classical' });
+  const ticks = [];
+  for (const b of backs) for (const m of ['1', '0.1', '0.01']) {
+    const d = pts.filter(p => p.qpu[b][m] != null).map(p => ({ x: p.nq, y: p.qpu[b][m], p }));
+    ds.push({ label: `${b}, ${NLAB[m]}`, data: d, borderColor: c[b], borderDash: DASH[m], borderWidth: m === '1' ? 1.8 : 1.4, pointRadius: 0,
+      endLabel: backs.length > 1 ? `${b} ${m === '1' ? 'today' : m === '0.1' ? '10×' : '100×'}` : (m === '1' ? 'today' : m === '0.1' ? '10× lower' : '100× lower') });
+    const x = crossAt(pts, [b, m]); if (x != null) ticks.push({ x, col: c[b], dash: DASH[m], row: ticks.length });
+  }
+  const opt = { responsive: true, maintainAspectRatio: false, animation: false, parsing: false, crossTicks: ticks,
+    layout: { padding: { right: 96 } },
+    scales: {
+      x: { type: 'linear', min: 14, max: 126, title: { display: !opts.noX, text: 'total qubits', color: c.muted }, grid: { color: c.grid }, ticks: { color: c.muted, stepSize: 20 } },
+      y: { type: 'logarithmic', min: yr[0], max: yr[1], title: { display: !opts.noY, text: 'energy per decision', color: c.muted },
+           grid: { color: ctx => { const l = Math.log10(ctx.tick.value); return Math.abs(l - Math.round(l)) < 1e-6 ? c.grid : 'transparent'; } },
+           afterBuildTicks: ax => { const t = []; for (let e = Math.round(Math.log10(yr[0])); e <= Math.round(Math.log10(yr[1])); e++) t.push({ value: Math.pow(10, e) }); ax.ticks = t; },
+           ticks: { color: c.muted, display: !opts.noYTicks, callback: v => { const l = Math.log10(v), n = Math.round(l); const span = Math.log10(yr[1]) - Math.log10(yr[0]); return Math.abs(l - n) < 1e-6 && (span <= 12 || n % 2 === 0) ? pow10(n) : ''; } } } },
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: t => `${t.dataset.label}: ${sciT(t.raw.y)} J at ${t.raw.x} q` + (t.raw.p && t.dataset.label === 'best classical' ? ` (${t.raw.p.cls_by}, ${t.raw.p.cls_status})` : '') } } } };
+  if (charts2[id]) { charts2[id].data.datasets = ds; charts2[id].options = opt; charts2[id].update(); }
+  else charts2[id] = new Chart(E(id), { type: 'line', data: { datasets: ds }, options: opt, plugins: [endLabels] });
+  return ticks;
+}
+
+function fig2() {
+  const pts = DATA.series[S.f2] || [], c = COL();
+  E('e2').hidden = pts.length > 0; if (!pts.length) return;
+  const split = S.view !== 'all';
+  E('multi').hidden = !split; E('allwrap').hidden = split;
+  const backs = ['IBM', 'IonQ', 'IQM'], yr = yRange(pts, backs), cross = {};
+  if (split) { backs.forEach((b, i) => { cross[b] = panel('c2-' + b, pts, [b], yr, { noYTicks: false, noY: i > 0 }); E('t-' + b).style.color = c[b]; }); }
+  else { panel('c2-all', pts, backs, yr); backs.forEach(b => { cross[b] = []; }); }
+  E('lg2').innerHTML = `<span style="color:${c.cls}"><span class="sw" style="border-top-width:3px"></span>best classical (● measured, dashed segment: interpolated depth, otherwise path upper bound)</span>`
+    + `<span><span class="sw" style="color:${c.muted}"></span>today</span><span><span class="sw dash" style="color:${c.muted}"></span>10× lower 2q error</span><span><span class="sw dot" style="color:${c.muted}"></span>100× lower</span>`
+    + `<span style="color:${c.muted}"><span class="sw"></span>statevector (thin; dashed: extrapolated)</span><span>QPU lines are modelled. Ticks on the x axis: first qubit count where that line drops below best classical.</span>`;
+  const say = b => { const cs = (cross[b] || []).map((t, i) => t); const lab = ['today', '10× lower', '100× lower'];
+    const xs = ['1', '0.1', '0.01'].map(m => crossAt(pts, [b, m])); return xs.map((x, i) => `${lab[i]}: ${x ? '≈' + Math.round(x) + ' q' : 'none to 124 q'}`).join(', '); };
+  E('cap2').innerHTML = `Energy for one decision; lower is better. All panels share both axes. Lines that leave the top of a panel are off-scale there; their values are in the table. Only the two-qubit gate error is reduced in the 10× and 100× lines; readout, state preparation and coherence stay at today's values. Crossovers: `
+    + backs.map(b => `<b>${b}</b> ${say(b)}`).join('; ') + '.';
+}
 function table() {
   const pts = DATA.series[S.f1] || [], tb = E('tbl').querySelector('tbody');
   tb.innerHTML = pts.map(p => `<tr><td class="num">${p.nq}</td><td class="num">${p.L}</td><td class="num">${sci(p.classical)}</td><td>${p.cls_by}</td><td>${p.cls_status}</td>`
@@ -223,10 +298,10 @@ document.querySelectorAll('.chip[data-f]').forEach(b => b.addEventListener('clic
   const f = b.dataset.f; S['f' + f] = b.dataset.v;
   document.querySelectorAll(`.chip[data-f="${f}"]`).forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); render();
 }));
-document.querySelectorAll('.chip[data-q]').forEach(b => b.addEventListener('click', () => {
-  S.q[b.dataset.q] = !S.q[b.dataset.q]; b.setAttribute('aria-pressed', S.q[b.dataset.q] ? 'true' : 'false'); render();
+document.querySelectorAll('.chip[data-view]').forEach(b => b.addEventListener('click', () => {
+  S.view = b.dataset.view; document.querySelectorAll('.chip[data-view]').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); render();
 }));
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { ch1 && ch1.destroy(); ch2 && ch2.destroy(); ch1 = ch2 = null; render(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { ch1 && ch1.destroy(); ch1 = null; for (const k in charts2) { charts2[k].destroy(); delete charts2[k]; } render(); });
 
 (async () => {
   const fail = setTimeout(() => { E('livetxt').textContent = 'Live data unavailable in this view (sign in to see it).'; }, 10000);
