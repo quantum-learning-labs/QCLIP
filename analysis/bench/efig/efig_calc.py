@@ -24,6 +24,8 @@ IQM['a'] = CAL['a'] * IQM['ro'] / KING_MEDRO                   # intercept (SPAM
 NOISE = [1, 0.1, 0.01]       # multiplier on the two-qubit (and IonQ one-qubit) gate error only; readout/SPAM intercept a unchanged
 
 rows_all = D['rows']
+import random
+MC = None   # set to a dict during Monte Carlo draws (see the uncertainty section at the end)
 def by(L, nq): return next((r for r in rows_all if r['layers'] == L and r['nq'] == nq), None)
 
 # routing: Kingston routed 2q = logical 2q x median overhead at that depth (page default 'fit')
@@ -31,6 +33,10 @@ ov = collections.defaultdict(list)
 for r in rows_all:
     if r.get('ibm_n2q') and r.get('n2q_logical'): ov[r['layers']].append(r['ibm_n2q'] / r['n2q_logical'])
 ROUTE = {L: statistics.median(v) for L, v in ov.items()}
+def ov_rel(L):   # individual-circuit Kingston overheads at (or nearest to) depth L, relative to their median
+    Lc = L if L in ov else min(ov, key=lambda x: abs(x - L)); med = statistics.median(ov[Lc]); return [v / med for v in ov[Lc]]
+def iqm_rel(L):
+    Lc = L if L in iqm_ov else min(iqm_ov, key=lambda x: abs(x - L)); med = statistics.median(iqm_ov[Lc]); return [v / med for v in iqm_ov[Lc]]
 def route(L):   # median overhead at L; between measured depths, linear in L (marked interpolated with the row)
     if L in ROUTE: return ROUTE[L]
     lo = max(x for x in ROUTE if x < L); hi = min(x for x in ROUTE if x > L)
@@ -45,7 +51,17 @@ def etafit(key):
     return statistics.median(v)
 ETA, RATE = etafit('J'), etafit('s')     # FLOP/J and FLOP/s of exact TN on the L4 (compute-bound runs)
 
-def tnc(meas, meas_s, paths, lf_any, lf_greedy, mult, gps):
+GREEDY = ('greedy', 'greedy-interp')
+def opt_gap(cs):
+    # path-search uncertainty of one shape: best path of the best non-greedy optimiser vs the second-best one (None if < 2 optimisers)
+    bo = {}
+    for c in cs:
+        if c.get('lf') is not None and c['o'] not in GREEDY: bo[c['o']] = min(bo.get(c['o'], 1e9), c['lf'])
+    v = sorted(bo.values()); return (v[1] - v[0]) if len(v) > 1 else None
+def row_gap(r, kind):
+    g = [opt_gap(cs) for cs in (r.get(f'paths_{kind}') or [])]; g = [x for x in g if x is not None]
+    return sum(g) / len(g) if g else 0.0
+def tnc(meas, meas_s, paths, lf_any, lf_greedy, mult, gps, gap_fb=0.0):
     # classical TN energy for one network kind: per shape the path with the lowest (mult x run + search / K); geometric mean over shapes
     if meas is None and lf_any is None: return None
     over = max(1.0, meas - (10 ** lf_greedy / ETA if lf_greedy is not None else 0)) if meas is not None else 1.0
@@ -53,11 +69,18 @@ def tnc(meas, meas_s, paths, lf_any, lf_greedy, mult, gps):
         if meas is not None: return meas if c['o'] == 'greedy' else min(meas, max(10 ** c['lf'] / ETA, over))
         return max(1.0, 10 ** c['lf'] / ETA)
     shapes = paths if paths else [[{'o': 'greedy', 'lf': lf_any, 's': gps or 0}]]
+    if MC: shapes = [MC['rng'].choice(shapes) for _ in shapes]          # workload: resample the circuit shapes of this size
     per = []
     for cs in shapes:
         best = None
+        if MC:   # one-sided path-quality band: a path better than the best found by up to the gap between the two best distinct optimisers
+            gap = opt_gap(cs); gap = gap_fb if gap is None else gap
+            u = MC['rng'].random()
+            cs = [dict(c, lf=c['lf'] - u * gap) if c.get('lf') is not None and c['o'] not in GREEDY else c for c in cs]
         for c in cs:
-            ru = run(c); t_run = (meas_s if (meas is not None and ru == meas) else max(0.016, 10 ** c['lf'] / RATE))
+            ru = run(c)
+            if MC and meas is not None and ru == meas: ru = meas * MC['meas_f']   # measured: idle-subtracted (net) .. gross convention
+            t_run = (meas_s if (meas is not None and ru == meas) else max(0.016, 10 ** c['lf'] / RATE))
             host = mult * t_run * PCPU                       # host share of the GPU run (one busy core)
             tot = mult * ru + host + c['s'] * PCPU / K
             if best is None or tot < best['tot']: best = dict(tot=tot, meas=meas is not None and ru == meas, o=c['o'], lf=c['lf'])
@@ -66,14 +89,20 @@ def tnc(meas, meas_s, paths, lf_any, lf_greedy, mult, gps):
     return dict(J=gm, measured=all(p['meas'] for p in per), by=collections.Counter(p['o'] for p in per).most_common(1)[0][0])
 
 def classical(r):
+    for kind in ('ps', 'rho'):   # path-search uncertainty: this row's optimiser gap, else the mean of the 4/8-layer rows of that size
+        if f'gap_{kind}' not in r:
+            gg = row_gap(r, kind)
+            if not gg:
+                nb = [row_gap(x, kind) for x in (by(4, r['nq']), by(8, r['nq'])) if x]; gg = sum(nb) / len(nb) if nb else 0.0
+            r[f'gap_{kind}'] = gg
     g = r.get('gpu') or {}
     out = {}
     sv = g.get('cusv_rho')
     if sv: out['statevector'] = dict(J=sv['J'] + sv['s'] * PCPU, status='measured')
     lfP = r.get('best_ps_lf', r.get('greedy_ps_lf')); lfR = r.get('best_rho_lf', r.get('greedy_rho_lf'))
     gt, gr = g.get('tn'), g.get('tn_rho')
-    T = tnc(gr['J'] if gr else None, gr['s'] if gr else None, r.get('paths_rho'), lfR, r.get('greedy_rho_lf'), 1, r.get('greedy_path_s'))
-    A = tnc(gt['J'] if gt else None, gt['s'] if gt else None, r.get('paths_ps'), lfP, r.get('greedy_ps_lf'), N0, r.get('greedy_path_s'))
+    T = tnc(gr['J'] if gr else None, gr['s'] if gr else None, r.get('paths_rho'), lfR, r.get('greedy_rho_lf'), 1, r.get('greedy_path_s'), r.get('gap_rho', 0.0))
+    A = tnc(gt['J'] if gt else None, gt['s'] if gt else None, r.get('paths_ps'), lfP, r.get('greedy_ps_lf'), N0, r.get('greedy_path_s'), r.get('gap_ps', 0.0))
     if T: out['exact TN'] = dict(J=T['J'], status='measured' if T['measured'] else 'upper')
     if A: out['TN sampler'] = dict(J=A['J'], status='measured' if A['measured'] else 'upper')
     M = [m for m in ((r.get('mps') or {}).get('rho') or []) if m.get('J') and m.get('mrel') is not None and m['mrel'] <= 0.1
@@ -85,6 +114,7 @@ def classical(r):
 
 def qpu_counts(r):
     L = r['layers']; f = route(L) * r['n2q_logical'] / r['ibm_n2q']
+    if MC: f *= MC['rng'].choice(ov_rel(L))                      # workload: placement-dependent routing overhead of individual circuits
     return dict(ibm_n2q=r['ibm_n2q'] * f, ibm_dur=r['ibm_duration_s'] * f, ibm_tt=r.get('ibm_tt') or 0,
                 ionq_n2q=r['ionq_n2q'], ionq_n1q=r['ionq_n1q'], ionq_tt=r.get('ionq_tt') or 0,
                 iqm_n2q=r.get('iqm_n2q'), iqm_dur=r.get('iqm_dur', 0.0), iqm_tt=r.get('iqm_tt', r.get('ibm_tt') or 0), iqm_src=r.get('iqm_src'))
@@ -100,6 +130,10 @@ def e_iqm(q, m):
     F = math.exp(IQM['a'] - IQM['eff'] * m * q['iqm_n2q']); N = N0 / F ** 2
     return N * (IQM['shot'] + q['iqm_dur']) * IQM['P'] + q['iqm_tt'] * PCPU / K
 EF = dict(IBM=e_ibm, IonQ=e_ionq, IQM=e_iqm)
+def F2(b, q, m):
+    if b == 'IBM': return math.exp(CAL['a'] - CAL['eIBM'] * m * q['ibm_n2q']) ** 2
+    if b == 'IonQ': return math.exp(CAL['a'] - (CAL['eIonQ'] * q['ionq_n2q'] + CAL['e1IonQ'] * q['ionq_n1q']) * m) ** 2
+    return math.exp(IQM['a'] - IQM['eff'] * m * q['iqm_n2q']) ** 2
 TODAY = dict(IBM=CAL['eIBM'], IonQ=CAL['eIonQ'], IQM=IQM['eff'])   # effective per-2q-gate error the model multiplies by m
 
 def breakeven(q, Ec, f):
@@ -139,6 +173,7 @@ def attach_iqm(r):
     f, src = iqm_overhead(r['layers'])
     fit = [x for x in v if x['fits'] == '1']
     # logical x median overhead at every size (as IBM's default): per-circuit transpiles vary with placement and make the curve jagged
+    if MC and iqm_ov: f *= MC['rng'].choice(iqm_rel(r['layers']))
     r['iqm_n2q'] = r['n2q_logical'] * f; r['iqm_src'] = src
     r['iqm_dur'] = statistics.mean(float(x['iqm_crit_s']) for x in fit) if fit else 0.0
     if fit: r['iqm_tt'] = statistics.mean(float(x['iqm_transpile_s']) for x in fit)
@@ -169,6 +204,7 @@ def lerp_row(nq, L):
         g = li(a.get(f'greedy_{kind}_lf'), b.get(f'greedy_{kind}_lf'))
         if g is not None: cand.append({'o': 'greedy-interp', 'lf': g, 's': li(a.get('greedy_path_s') or 0, b.get('greedy_path_s') or 0)})
         r[f'paths_{kind}'] = [cand] if cand else None
+        r[f'gap_{kind}'] = (row_gap(a, kind) + row_gap(b, kind)) / 2   # path-search uncertainty borrowed from the real 4/8-layer rows
     return r
 
 def row_at(nq, L):
@@ -194,6 +230,14 @@ _xs, _ys = _m, [math.log10(SV2[x][0] / N2Q2[x]) for x in _m]          # fit per 
 _xb, _yb = sum(_xs) / 3, sum(_ys) / 3
 SV_SLOPE = sum((x - _xb) * (y - _yb) for x, y in zip(_xs, _ys)) / sum((x - _xb) ** 2 for x in _xs); SV_ICPT = _yb - SV_SLOPE * _xb
 SV_MAXQ = max(SV2)
+# prediction interval of the statevector extrapolation: regression of log10(J per gate) on qubits over the measured 2-layer sizes >= 22 q
+_pm = sorted(x for x in SV2 if x >= 22)
+_px, _py = _pm, [math.log10(SV2[x][0] / N2Q2[x]) for x in _pm]
+_pxb, _pyb = sum(_px) / len(_px), sum(_py) / len(_py); _sxx = sum((x - _pxb) ** 2 for x in _px)
+_pb = sum((x - _pxb) * (y - _pyb) for x, y in zip(_px, _py)) / _sxx
+_res = [y - (_pyb + _pb * (x - _pxb)) for x, y in zip(_px, _py)]
+SV_S = math.sqrt(sum(e * e for e in _res) / max(1, len(_px) - 2)); SV_DOF = max(1, len(_px) - 2)
+def sv_pi(x): return SV_S * math.sqrt(1 + 1 / len(_px) + (x - _pxb) ** 2 / _sxx)
 def sv_point(r):
     own = sv_of(r)
     if own: return dict(J=own[0], status='measured', eng=own[1])
@@ -209,10 +253,18 @@ def point(r):
     if c is None or not r.get('ibm_n2q'): return None
     q = qpu_counts(r)
     st = 'interpolated' if r.get('interp') else c['status']
+    if MC and r.get('interp'):
+        f = 10 ** MC['rng'].gauss(0, MC['sig_interp']); c = dict(c, best=c['best'] * f)
     p = dict(nq=r['nq'], L=r['layers'], n=r['n'], classical=c['best'], cls_by=c['by'], cls_status=st,
              methods={k: dict(J=v['J'], status='interpolated' if r.get('interp') else v['status']) for k, v in c['methods'].items()},
              iqm_src=q['iqm_src'], qpu={}, be={})
     p['sv'] = sv_point(r); p['be_sv'] = {}
+    if MC and p['sv']:
+        if p['sv']['status'] == 'extrapolated': p['sv'] = dict(p['sv'], J=p['sv']['J'] * 10 ** (MC['sv_t']() * sv_pi(r['nq'])))
+        elif p['sv']['status'] in ('measured', 'scaled'): p['sv'] = dict(p['sv'], J=p['sv']['J'] * MC['meas_f'])
+    p['shot_J'] = dict(IBM=(q['ibm_dur'] + IBM['rep']) * IBM['P'], IonQ=(q['ionq_n1q'] * IONQ['t1'] + q['ionq_n2q'] * IONQ['t2'] + IONQ['shot']) * IONQ['P'],
+                       IQM=(IQM['shot'] + q['iqm_dur']) * IQM['P'])
+    p['shots'] = {b: {str(m): N0 / F2(b, q, m) for m in NOISE} for b in EF}
     for b, f in EF.items():
         p['qpu'][b] = {str(m): f(q, m) for m in NOISE}
         m = breakeven(q, c['best'], f)
@@ -241,13 +293,142 @@ for L in (2, 4, 8):
         xb, yb = sum(xs) / 3, sum(ys) / 3; s = sum((x - xb) * (y - yb) for x, y in zip(xs, ys)) / sum((x - xb) ** 2 for x in xs)
         sv_ext[L] = dict(slope=s, icpt=yb - s * xb, from_nq=max(xs))
 
+# ================= uncertainty: Monte Carlo over the real sources, band = 16th-84th percentile of the draws =================
+NDRAW = int(os.environ.get('EFIG_DRAWS', '1000'))
+def build_series():
+    out = {}
+    for name, rule in (('log2', L_of), ('L4', lambda n: 4), ('L8', lambda n: 8)):
+        pts = []
+        for nq in SIZES:
+            r = row_at(nq, rule(nq))
+            if r is None: continue
+            p = point(r)
+            if p: pts.append(p)
+        out[name] = pts
+    return out
+# measurement convention: idle-subtracted (net) / gross energy per decision of the GPU runs
+_ratios = []
+for fn in glob.glob(os.path.join(H, 'gpu_engines*.csv')):
+    for r in csv.DictReader(open(fn)):
+        try:
+            g, n = float(r['J_gross_per_decision']), float(r['J_net_per_decision'])
+            if g > 0 and 0 < n <= g: _ratios.append(n / g)
+        except (KeyError, ValueError): pass
+NET_GROSS = statistics.median(_ratios) if _ratios else 1.0
+# interpolation error: the real 5-layer circuits against what the 4/8-layer interpolation predicted for them
+_ie = []
+for nq in SIZES:
+    real = by(5, nq)
+    if real and real.get('paths_ps'):
+        a_, b_ = classical(attach_iqm(dict(real))), classical(attach_iqm(lerp_row(nq, 5) or {}) ) if lerp_row(nq, 5) else None
+        if a_ and b_: _ie.append(math.log10(b_['best'] / a_['best']))
+SIG_INTERP = math.sqrt(sum(e * e for e in _ie) / len(_ie)) if _ie else 0.5
+# noise-fit parameters: bootstrap of the calibration emulations (until each backend's own calibration lands: the Kingston post-selected
+# runs, ln F_eff against mean qubits, whose relative slope and intercept spread is applied to every backend)
+_cal = [r for r in csv.DictReader(open(os.path.join(H, 'noise_calib.csv'))) if r['method'] == 'ps']
+def _fit(rows):
+    xs = [float(r['nq_mean']) for r in rows]; ys = [math.log(float(r['F_eff'])) for r in rows]
+    xb, yb = sum(xs) / len(xs), sum(ys) / len(ys); sxx = sum((x - xb) ** 2 for x in xs)
+    b = sum((x - xb) * (y - yb) for x, y in zip(xs, ys)) / sxx if sxx else 0.0
+    return yb - b * xb, b
+CAL_A0, CAL_B0 = _fit(_cal)
+RANGES = dict(IBM_P=(25e3, 30e3), IBM_rep=(100e-6, 500e-6), IonQ_P=(3.5e3, 6.5e3), IonQ_t=(0.8, 1.2), IQM_P=(24e3, 30e3), IQM_shot=(0.96e-3, 1.92e-3))
+SOURCES = [
+    ('workload', 'classical: circuit shapes of each size resampled (the 2-5 typical-width shapes searched per size, not the full test-set '
+                 'distribution); QPU: routing overhead of individual circuits at that depth (placement on the coupling map)'),
+    ('measured GPU energy', f'idle-subtracted to gross energy convention (median net/gross {NET_GROSS:.2f}); no repeated runs exist, so '
+                            'run-to-run spread is not covered'),
+    ('classical upper bounds', 'one-sided (downward only): a path better than the best found by up to the gap between the two best '
+                               'distinct optimisers at that shape (path-quality band)'),
+    ('interpolated depths', f'log-normal, sigma = {SIG_INTERP:.2f} decades: error of the 4/8-layer interpolation measured on the real 5-layer circuits'),
+    ('statevector extrapolation', 'Student-t prediction interval of the regression of log10(J per gate) on qubits over the measured 22-31 q points'),
+    ('QPU noise fit', f'bootstrap of the {len(_cal)} post-selected Kingston calibration emulations (slope and intercept of ln F_eff), applied to all '
+                      'backends until their own calibrations land'),
+    ('QPU power', 'IBM 25-30 kW (26 kW System Two refrigerator, arXiv:2304.14344; ~30 kW System One installations); IonQ 3.5-6.5 kW '
+                  '(5 kW +-30%, assumed); IQM 24-30 kW (typical mean, IQM Radiance spec; 30 kW peak, Mansfield et al. 2025)'),
+    ('QPU time per shot', 'IBM repetition delay 100-500 us (assumed; IBM docs example uses 500 us); IonQ gate and shot times +-20% (assumed); '
+                          'IQM 0.96-1.92 ms (CLOPS-derived upper value, half of it as lower, assumed)'),
+]
+NOT_COVERED = ['better classical algorithms than those tried (paths are upper bounds only within the searched optimisers)',
+               'hardware roadmaps (gate speed, power, connectivity changes)', 'run-to-run GPU energy spread (no repeats)',
+               'error mitigation or error correction overheads', 'queueing and job-scheduling time']
+def draw_all(seed=12345):
+    global MC
+    rng = random.Random(seed)
+    base = (dict(CAL), dict(IBM), dict(IONQ), dict(IQM), dict(TODAY))
+    draws = []
+    try:
+        for i in range(NDRAW):
+            bs = [rng.choice(_cal) for _ in _cal]; a_, b_ = _fit(bs)
+            fac = b_ / CAL_B0 if CAL_B0 else 1.0; da = a_ - CAL_A0
+            CAL.update(base[0]); IBM.update(base[1]); IONQ.update(base[2]); IQM.update(base[3])
+            for k in ('eIBM', 'eIonQ', 'e1IonQ'): CAL[k] = base[0][k] * fac
+            CAL['a'] = base[0]['a'] + da
+            IQM['eff'] = base[3]['eff'] * fac; IQM['a'] = (base[0]['a'] + da) * base[3]['a'] / base[0]['a']
+            IBM['P'] = rng.uniform(*RANGES['IBM_P']); IBM['rep'] = rng.uniform(*RANGES['IBM_rep'])
+            IONQ['P'] = rng.uniform(*RANGES['IonQ_P']); ft = rng.uniform(*RANGES['IonQ_t'])
+            for k in ('t1', 't2', 'shot'): IONQ[k] = base[2][k] * ft
+            IQM['P'] = rng.uniform(*RANGES['IQM_P']); IQM['shot'] = rng.uniform(*RANGES['IQM_shot'])
+            TODAY.update(IBM=CAL['eIBM'], IonQ=CAL['eIonQ'], IQM=IQM['eff'])
+            dof = SV_DOF
+            MC = dict(rng=rng, meas_f=rng.uniform(NET_GROSS, 1.0), sig_interp=SIG_INTERP,
+                      sv_t=lambda: rng.gauss(0, 1) / math.sqrt(rng.gammavariate(dof / 2, 2) / dof))
+            draws.append(build_series())
+    finally:
+        MC = None
+        CAL.update(base[0]); IBM.update(base[1]); IONQ.update(base[2]); IQM.update(base[3]); TODAY.update(base[4])
+    return draws
+def pct(v, q):
+    v = sorted(v); k = (len(v) - 1) * q; f = math.floor(k); c = min(f + 1, len(v) - 1); return v[f] + (v[c] - v[f]) * (k - f)
+def crossing(pts, b, m, base):
+    B = (lambda p: p['sv']['J'] if p.get('sv') else None) if base == 'sv' else (lambda p: p['classical'])
+    for i, p in enumerate(pts):
+        q, c = p['qpu'][b].get(m), B(p)
+        if q is None or c is None: continue
+        if q <= c:
+            if i == 0: return p['nq']
+            o = pts[i - 1]; q0, c0 = o['qpu'][b][m], B(o)
+            if c0 is None or q0 is None: return p['nq']
+            d0, d1 = math.log10(q0) - math.log10(c0), math.log10(q) - math.log10(c)
+            return o['nq'] + (p['nq'] - o['nq']) * d0 / (d0 - d1) if d0 != d1 else p['nq']
+    return None
+def attach_bands(series, draws):
+    cross = {}
+    for name, pts in series.items():
+        D_ = [d[name] for d in draws if len(d[name]) == len(pts)]
+        lg = lambda v: [math.log10(x) for x in v if x and x > 0]
+        band = lambda v: None if len(v) < 10 else [10 ** pct(v, 0.16), 10 ** pct(v, 0.84)]
+        for i, p in enumerate(pts):
+            p['band'] = dict(classical=band(lg([d[i]['classical'] for d in D_])),
+                             sv=band(lg([d[i]['sv']['J'] for d in D_ if d[i].get('sv')])),
+                             qpu={b: {m: band(lg([d[i]['qpu'][b][m] for d in D_ if d[i]['qpu'][b].get(m)])) for m in p['qpu'][b]} for b in EF},
+                             be={b: band(lg([d[i]['be'][b] for d in D_ if d[i]['be'][b]])) for b in EF},
+                             be_sv={b: band(lg([d[i]['be_sv'][b] for d in D_ if d[i]['be_sv'].get(b)])) for b in EF},
+                             be_frac={b: sum(1 for d in D_ if d[i]['be'][b]) / len(D_) for b in EF})
+        cr = {}
+        for b in EF:
+            for m in (str(x) for x in NOISE):
+                for base_ in ('cls', 'sv'):
+                    xs = [crossing(d, b, m, base_) for d in D_]
+                    got = [x for x in xs if x is not None]
+                    cr[f'{b}|{m}|{base_}'] = dict(x=crossing(pts, b, m, base_), lo=pct(got, 0.16) if len(got) >= 10 else None,
+                                                  hi=pct(got, 0.84) if len(got) >= 10 else None, frac=len(got) / len(xs))
+        cross[name] = cr
+    return cross
+_t0 = datetime.datetime.now()
+DRAWS = draw_all() if NDRAW else []
+CROSS = attach_bands(series, DRAWS) if DRAWS else {}
+MC_S = (datetime.datetime.now() - _t0).total_seconds()
+
 meta = dict(
     updated=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
     N0=N0, K=round(K, 1), PCPU=PCPU, ETA=ETA, RATE=RATE, route={str(k): round(v, 2) for k, v in ROUTE.items()},
     iqm_route={str(k): round(v, 2) for k, v in IQM_ROUTE.items()}, today=TODAY, noise=NOISE,
     consts=dict(IBM=IBM, IonQ=IONQ, IQM={k: v for k, v in IQM.items()}, CAL=CAL, KING_MED2Q=KING_MED2Q, KING_MEDRO=KING_MEDRO),
     sv_ext=sv_ext, sv_fit=dict(slope=SV_SLOPE, icpt=SV_ICPT, max_measured_nq=SV_MAXQ, per='J per logical 2q gate', engines=SV_ENG),
-    pending=[])
+    pending=[], cross=CROSS,
+    unc=dict(draws=NDRAW, band='16th-84th percentile of the Monte Carlo draws; central line = current estimate', sources=SOURCES,
+             not_covered=NOT_COVERED, sig_interp=SIG_INTERP, net_gross=NET_GROSS, cal_rows=len(_cal), ranges=RANGES, seconds=MC_S))
 json.dump(dict(meta=meta, series=series), open(os.path.join(H, 'efig.json'), 'w'), indent=0)
 if __name__ == '__main__':
     for name, pts in series.items():

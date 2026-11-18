@@ -57,6 +57,9 @@ a { color: var(--ibm); }
 .panel figcaption { font-weight: 600; font-size: 14px; }
 .pcanvas { position: relative; height: 520px; min-width: 0; }
 .empty-inline { color: var(--muted); font-size: 14px; }
+.mini { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.mcanvas { position: relative; height: 280px; min-width: 0; }
+@media (max-width: 760px) { .mini { grid-template-columns: 1fr; } }
 .empty[hidden], .empty-inline[hidden], .multi[hidden], .pcanvas[hidden] { display: none; }
 @media (max-width: 760px) { .multi { grid-template-columns: 1fr; } .pcanvas { height: 440px; } }
 @media (max-width: 600px) { .canvas { height: 340px; } section.fig { padding: 14px; } }
@@ -101,6 +104,12 @@ a { color: var(--ibm); }
       <figure class="panel"><figcaption id="t-IQM">IQM Garnet-class</figcaption><div class="pcanvas"><canvas id="c2-IQM" aria-label="IQM energy per decision against qubits"></canvas></div></figure>
     </div>
     <div class="pcanvas" id="allwrap" hidden><canvas id="c2-all" aria-label="All backends: energy per decision against qubits"></canvas></div>
+    <h3 style="margin-top:6px">Energy per decision = shots × energy per shot</h3>
+    <div class="mini">
+      <figure class="panel"><figcaption>Energy per shot</figcaption><div class="mcanvas"><canvas id="c-shotJ" aria-label="Energy per shot by backend"></canvas></div></figure>
+      <figure class="panel"><figcaption>Shots per decision (solid: today; dotted: 100× lower 2q error)</figcaption><div class="mcanvas"><canvas id="c-shots" aria-label="Shots per decision by backend"></canvas></div></figure>
+    </div>
+    <p class="cap" id="cap2b"></p>
     <div class="empty-inline" id="e2">Waiting for data.</div>
     <p class="cap" id="cap2"></p>
   </section>
@@ -153,6 +162,7 @@ function fig1() {
     const v = pts.filter(p => p.be && p.be[b] != null);
     ds.push({ label: `${b}: break-even error`, data: v.map(p => ({ x: p.nq, y: p.be[b], p })), borderColor: c[b], backgroundColor: v.map(p => ptFill(p.cls_status, c[b])),
       pointBorderColor: c[b], pointStyle: v.map(p => ptStyle(p.cls_status)), pointRadius: 5, borderWidth: 2.5, tension: 0, spanGaps: false });
+    bandDs(ds, pts, p => p.band && p.band.be[b], c[b]); bandDs(ds, pts, p => p.band && p.band.be_sv[b], c[b]);
     const w = pts.filter(p => p.be_sv && p.be_sv[b] != null);
     ds.push({ label: `${b}: break-even vs statevector only`, data: w.map(p => ({ x: p.nq, y: p.be_sv[b], p })), borderColor: c[b], borderWidth: 1.4, borderDash: [3, 3],
       pointStyle: 'triangle', pointRadius: 4, pointBackgroundColor: c.bg, pointBorderColor: c[b] });
@@ -161,7 +171,7 @@ function fig1() {
       ds.push({ label: `${b} ${NLAB[m]}`, data: [{ x: 14, y: today * +m }, { x: 128, y: today * +m }], borderColor: c[b] + (m === '1' ? 'cc' : '88'), borderDash: DASH[m], borderWidth: m === '1' ? 1.6 : 1.2, pointRadius: 0, fill: false });
   }
   const opt = { responsive: true, maintainAspectRatio: false, animation: false, parsing: false, scales: axes('Two-qubit gate error at break-even (effective, per gate)', 1e-6, 3e-2),
-    plugins: { legend: { display: false }, tooltip: { callbacks: { label: t => t.raw.p ? `${t.dataset.label}: ${sciT(t.raw.y)} at ${t.raw.x} q, ${t.raw.p.L} layers (${t.raw.p.cls_status})` : `${t.dataset.label}: ${sciT(t.raw.y)}` } } } };
+    plugins: { legend: { display: false }, tooltip: { filter: t => !t.dataset.label.startsWith('_band'), callbacks: { label: t => t.raw.p ? `${t.dataset.label}: ${sciT(t.raw.y)} at ${t.raw.x} q, ${t.raw.p.L} layers (${t.raw.p.cls_status})` : `${t.dataset.label}: ${sciT(t.raw.y)}` } } } };
   if (ch1) { ch1.data.datasets = ds; ch1.options = opt; ch1.update(); } else ch1 = new Chart(E('c1'), { type: 'line', data: { datasets: ds }, options: opt });
   E('lg1').innerHTML = ['IBM', 'IonQ', 'IQM'].map(b => `<span style="color:${c[b]}"><span class="sw"></span>${NAMES[b]}: vs best classical</span>`).join('')
     + `<span><span class="sw dash" style="color:${c.muted}"></span>▲ vs GPU statevector only (same colours)</span>`
@@ -211,6 +221,15 @@ function crossAt(pts, key, base) {   // first crossing of a QPU line below best 
   return null;
 }
 
+const fmtX = (k, rule) => { const c = DATA.meta.cross && DATA.meta.cross[rule] && DATA.meta.cross[rule][k]; if (!c || c.x == null) return null;
+  const x = Math.round(c.x); if (c.lo == null) return { x, txt: `${x} q` };
+  const lo = Math.round(Math.min(c.x, c.lo)), hi = Math.round(Math.max(c.x, c.hi)); return { x, txt: lo === hi ? `${x} q` : `${x} q [${lo}–${hi}]`, lo, hi }; };
+function bandDs(ds, pts, get, col, order = 5) {   // shaded 16-84% band: lower edge, then upper edge filled down to it
+  const v = pts.map(p => ({ p, b: get(p) })).filter(o => o.b && o.b[0] > 0);
+  if (v.length < 2) return;
+  ds.push({ label: '_band_lo', data: v.map(o => ({ x: o.p.nq, y: o.b[0] })), borderWidth: 0, pointRadius: 0, fill: false, order, tension: 0 });
+  ds.push({ label: '_band_hi', data: v.map(o => ({ x: o.p.nq, y: o.b[1] })), borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: col + '26', order, tension: 0 });
+}
 function yRange(pts, backs) {
   const v = [];
   for (const p of pts) { if (p.classical) v.push(p.classical); if (p.sv && p.sv.status !== 'extrapolated') v.push(p.sv.J);
@@ -222,6 +241,9 @@ function yRange(pts, backs) {
 function panel(id, pts, backs, yr, opts = {}) {
   const c = COL(), ds = [];
   const sv = pts.filter(p => p.sv);
+  bandDs(ds, pts, p => p.band && p.band.classical, c.cls);
+  bandDs(ds, pts, p => p.band && p.band.sv, c.sv);
+  for (const b of backs) for (const m of ['1', '0.01']) bandDs(ds, pts, p => p.band && p.band.qpu[b][m], c[b]);
   if (sv.length) ds.push({ label: 'GPU statevector', data: sv.map(p => ({ x: p.nq, y: p.sv.J, p })), borderColor: c.sv, borderWidth: 2, order: 1,
     pointRadius: sv.map(p => p.sv.status === 'extrapolated' ? 0 : 3), pointBackgroundColor: sv.map(p => p.sv.status === 'measured' ? c.sv : c.bg), pointBorderColor: c.sv,
     segment: { borderDash: q => q.p1.raw.p.sv.status === 'extrapolated' ? [6, 4] : undefined }, endLabel: 'GPU statevector' });
@@ -233,8 +255,9 @@ function panel(id, pts, backs, yr, opts = {}) {
     const d = pts.filter(p => p.qpu[b][m] != null).map(p => ({ x: p.nq, y: p.qpu[b][m], p }));
     ds.push({ label: `${b}, ${NLAB[m]}`, data: d, borderColor: c[b], borderDash: DASH[m], borderWidth: m === '1' ? 1.8 : 1.4, pointRadius: 0,
       endLabel: backs.length > 1 ? `${b} ${m === '1' ? 'today' : m === '0.1' ? '10×' : '100×'}` : (m === '1' ? 'today' : m === '0.1' ? '10× lower' : '100× lower') });
-    const x = crossAt(pts, [b, m]); if (x != null) ticks.push({ x, col: c[b], dash: DASH[m], row: ticks.length, lab: Math.round(x) + ' q' });
-    const xs = crossAt(pts, [b, m], 'sv'); if (xs != null) ticks.push({ x: xs, col: c[b], tcol: c.sv, dash: DASH[m], row: ticks.length, lab: 'sv ' + Math.round(xs) + ' q', top: true });
+    const fx = fmtX(`${b}|${m}|cls`, S.f2), fs = fmtX(`${b}|${m}|sv`, S.f2);
+    const x = crossAt(pts, [b, m]); if (x != null) ticks.push({ x, col: c[b], dash: DASH[m], row: ticks.length, lab: fx ? fx.txt : Math.round(x) + ' q' });
+    const xs = crossAt(pts, [b, m], 'sv'); if (xs != null) ticks.push({ x: xs, col: c[b], tcol: c.sv, dash: DASH[m], row: ticks.length, lab: 'sv ' + (fs ? fs.txt : Math.round(xs) + ' q'), top: true });
   }
   let nb = 0, nt = 0; for (const t of ticks) t.krow = t.top ? nt++ : nb++;
   const opt = { responsive: true, maintainAspectRatio: false, animation: false, parsing: false, crossTicks: ticks,
@@ -245,7 +268,7 @@ function panel(id, pts, backs, yr, opts = {}) {
            grid: { color: ctx => { const l = Math.log10(ctx.tick.value); return Math.abs(l - Math.round(l)) < 1e-6 ? c.grid : 'transparent'; } },
            afterBuildTicks: ax => { const t = []; for (let e = Math.round(Math.log10(yr[0])); e <= Math.round(Math.log10(yr[1])); e++) t.push({ value: Math.pow(10, e) }); ax.ticks = t; },
            ticks: { color: c.muted, display: !opts.noYTicks, callback: v => { const l = Math.log10(v), n = Math.round(l); const span = Math.log10(yr[1]) - Math.log10(yr[0]); return Math.abs(l - n) < 1e-6 && (span <= 12 || n % 2 === 0) ? pow10(n) : ''; } } } },
-    plugins: { legend: { display: false }, tooltip: { callbacks: { label: t => `${t.dataset.label}: ${sciT(t.raw.y)} J at ${t.raw.x} q` + (t.raw.p && t.dataset.label === 'best classical' ? ` (${t.raw.p.cls_by}, ${t.raw.p.cls_status})` : '') } } } };
+    plugins: { legend: { display: false }, tooltip: { filter: t => !t.dataset.label.startsWith('_band'), callbacks: { label: t => `${t.dataset.label}: ${sciT(t.raw.y)} J at ${t.raw.x} q` + (t.raw.p && t.dataset.label === 'best classical' ? ` (${t.raw.p.cls_by}, ${t.raw.p.cls_status})` : '') } } } };
   if (charts2[id]) { charts2[id].data.datasets = ds; charts2[id].options = opt; charts2[id].update(); }
   else charts2[id] = new Chart(E(id), { type: 'line', data: { datasets: ds }, options: opt, plugins: [endLabels] });
   return ticks;
@@ -261,12 +284,32 @@ function fig2() {
   else { panel('c2-all', pts, backs, yr); backs.forEach(b => { cross[b] = []; }); }
   E('lg2').innerHTML = `<span style="color:${c.cls}"><span class="sw" style="border-top-width:3px"></span>best classical (● measured, dashed segment: interpolated depth, otherwise path upper bound)</span>`
     + `<span><span class="sw" style="color:${c.muted}"></span>today</span><span><span class="sw dash" style="color:${c.muted}"></span>10× lower 2q error</span><span><span class="sw dot" style="color:${c.muted}"></span>100× lower</span>`
-    + `<span style="color:${c.sv}"><span class="sw"></span>GPU statevector (● measured, ○ scaled by gate count, dashed: exponential fit)</span><span>QPU lines are modelled. Bottom ticks: QPU line drops below best classical. Top ticks (▼, "sv"): below GPU statevector only.</span>`;
+    + `<span style="color:${c.sv}"><span class="sw"></span>GPU statevector (● measured, ○ scaled by gate count, dashed: exponential fit)</span><span>QPU lines are modelled. Shaded: 16–84% band. Bottom ticks: QPU line drops below best classical. Top ticks (▼, "sv"): below GPU statevector only; brackets: crossover interval.</span>`;
   const say = b => { const cs = (cross[b] || []).map((t, i) => t); const lab = ['today', '10× lower', '100× lower'];
-    const xs = ['1', '0.1', '0.01'].map(m => crossAt(pts, [b, m])), xv = ['1', '0.1', '0.01'].map(m => crossAt(pts, [b, m], 'sv'));
-    return xs.map((x, i) => `${lab[i]}: ${x ? '≈' + Math.round(x) + ' q' : 'none to 124 q'} (vs statevector ${xv[i] ? '≈' + Math.round(xv[i]) + ' q' : 'none'})`).join(', '); };
-  E('cap2').innerHTML = `Energy for one decision; lower is better. All panels share both axes. Lines that leave the top of a panel are off-scale there; their values are in the table. Only the two-qubit gate error is reduced in the 10× and 100× lines; readout, state preparation and coherence stay at today's values. Crossovers: `
+    return ['1', '0.1', '0.01'].map((m, i) => { const f = fmtX(`${b}|${m}|cls`, S.f2), v = fmtX(`${b}|${m}|sv`, S.f2);
+      return `${lab[i]}: ${f ? f.txt : 'none to 124 q'} (vs statevector ${v ? v.txt : 'none'})`; }).join(', '); };
+  E('cap2').innerHTML = `Energy for one decision; lower is better. Shaded: 16th–84th percentile of ${DATA.meta.unc ? DATA.meta.unc.draws : ''} Monte Carlo draws (best classical: one-sided, downward only, as a better contraction path could exist); brackets give the same interval for each crossover. All panels share both axes. Lines that leave the top of a panel are off-scale there; their values are in the table. Only the two-qubit gate error is reduced in the 10× and 100× lines; readout, state preparation and coherence stay at today's values. Crossovers: `
     + backs.map(b => `<b>${b}</b> ${say(b)}`).join('; ') + '.';
+}
+const chartsD = {};
+function decomp() {
+  const pts = DATA.series[S.f2] || [], c = COL(); if (!pts.length || !pts[0].shot_J) return;
+  const mk = (id, ds, ylab, unit) => {
+    const v = ds.flatMap(d => d.data.map(o => o.y)).filter(y => y > 0), lo = Math.pow(10, Math.floor(Math.log10(Math.min(...v)))), hi = Math.pow(10, Math.ceil(Math.log10(Math.max(...v))));
+    const opt = { responsive: true, maintainAspectRatio: false, animation: false, parsing: false, layout: { padding: { right: 56 } },
+      scales: { x: { type: 'linear', min: 14, max: 126, title: { display: true, text: 'total qubits', color: c.muted }, grid: { color: c.grid }, ticks: { color: c.muted, stepSize: 20 } },
+        y: { type: 'logarithmic', min: lo, max: hi, title: { display: true, text: ylab, color: c.muted }, grid: { color: c.grid },
+             afterBuildTicks: ax => { const t = []; for (let e = Math.round(Math.log10(lo)); e <= Math.round(Math.log10(hi)); e++) t.push({ value: Math.pow(10, e) }); ax.ticks = t; },
+             ticks: { color: c.muted, callback: v => { const n = Math.round(Math.log10(v)); return '10' + String(n).split('').map(ch => SUP[ch]).join('') + unit; } } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: t => `${t.dataset.label}: ${sciT(t.raw.y)}${unit} at ${t.raw.x} q` } } } };
+    if (chartsD[id]) { chartsD[id].data.datasets = ds; chartsD[id].options = opt; chartsD[id].update(); } else chartsD[id] = new Chart(E(id), { type: 'line', data: { datasets: ds }, options: opt, plugins: [endLabels] });
+  };
+  const B = ['IBM', 'IonQ', 'IQM'];
+  mk('c-shotJ', B.map(b => ({ label: b, data: pts.map(p => ({ x: p.nq, y: p.shot_J[b] })), borderColor: c[b], borderWidth: 2, pointRadius: 0, endLabel: b })), 'energy per shot', ' J');
+  mk('c-shots', B.flatMap(b => ['1', '0.01'].map(m => ({ label: `${b} ${NLAB[m]}`, data: pts.map(p => ({ x: p.nq, y: p.shots[b][m] })), borderColor: c[b], borderDash: DASH[m], borderWidth: m === '1' ? 2 : 1.5, pointRadius: 0, endLabel: m === '1' ? b : '' }))), 'shots per decision', '');
+  const at = q => pts.reduce((a, p) => Math.abs(p.nq - q) < Math.abs(a.nq - q) ? p : a);
+  const p64 = at(64);
+  E('cap2b').innerHTML = `At ${p64.nq} qubits one shot costs ${B.map(b => `${b} ${sci(p64.shot_J[b])} J`).join(', ')}: trapped ions are slow per shot (gates in series, ~1 ms per two-qubit gate), superconducting devices fast (µs circuits plus a fixed repetition or reset time). At today's noise the shot count, which grows as 1/F², dominates: IBM's routing on heavy-hex adds about ${DATA.meta.route ? Math.round(DATA.meta.route['4']) : 4}× two-qubit gates, IonQ's all-to-all coupling none. At 10–100× lower error the shot counts flatten and the energy per shot decides.`;
 }
 function table() {
   const pts = DATA.series[S.f1] || [], tb = E('tbl').querySelector('tbody');
@@ -288,6 +331,7 @@ function methods() {
     `<li><b>Lower noise.</b> The 10× and 100× lines multiply only the per-gate error ε (for IonQ also its one-qubit term). The intercept a (readout, state preparation) and the per-shot time are unchanged.</li>`,
     `<li><b>Classical.</b> Cheapest of: cuStateVec density-matrix statevector (measured to 31 qubits), exact tensor-network contraction, tensor-network sampler (N₀ post-selected amplitudes), and MPS, counted only when its margin error is ≤ 10% and its decisions agree with exact contraction on ≥ 95% of pairs. GPU energies are NVML board energy on an NVIDIA L4. Unmeasured contractions use the best path found (cotengra, random-greedy, greedy) at ${sciT(m.ETA)} FLOP/J measured on the L4; these are upper bounds. A better path would lower the classical curve, so beyond the measured range the comparison favours the QPU.</li>`,
     `<li><b>Statevector line and Knitter et al. 2026.</b> <a href="https://arxiv.org/abs/2605.02798" target="_blank" rel="noopener">Knitter et al.</a> (IonQ / QuantumBasel) find an energy break-even near 34 qubits for an IonQ Forte Enterprise against GPU statevector simulation on one NVIDIA L4, the approach they themselves call a worst case for the classical side. Their energy study fixes 600 shots per circuit at every size, although their accuracy study needed 500 to 20,000 shots from 10 to 18 qubits; it keeps the circuit depth fixed, a regime that tensor networks and MPS contract cheaply; and it extrapolates 10–28-qubit measurements with a linear fit for the QPU and an exponential fit for the GPU. Here the QPU's shots grow as 1/F² with the circuit's fidelity and include the post-selection success probability, and the classical side is the cheapest of four methods. The GPU statevector line (best of cuStateVec, a torch statevector and Aer on the same L4 class; measured to 31 qubits at 2 layers, scaled by two-qubit gate count to other depths, exponential fit beyond) reproduces their kind of comparison: against it alone (log-depth rule) the QPUs break even at today's error from ${svRange()}. Against the best classical method they need 10–100× lower two-qubit error.</li>`,
+    (m.unc ? `<li><b>Uncertainty.</b> Every line carries a band: the 16th–84th percentile of ${m.unc.draws} Monte Carlo draws over these sources; the central line is the current estimate. <ul>${m.unc.sources.map(([k, v]) => `<li><b>${k}:</b> ${v}</li>`).join('')}</ul> Not covered: ${m.unc.not_covered.join('; ')}.</li>` : '') +
     `<li><b>Whole system, same PUE.</b> QPU powers are whole-system wall power (cryostat or vacuum, control electronics). The GPU side adds a host share of ${m.PCPU} W (one busy CPU core, assumed) for the run time. The same facility PUE multiplies both sides and cancels.</li>`,
     `<li><b>One-off costs.</b> Contraction-path search and transpilation are charged at ${m.PCPU} W for their measured wall time, shared by the ${m.K} decisions per circuit shape of the test set.</li>`,
     `<li><b>Routing.</b> IBM: logical two-qubit gates × the median routing overhead on Kingston (${Object.entries(m.route).map(([L, f]) => L + ' layers ' + f + '×').join(', ')}). IQM: the same rule on the 54-qubit IQM square lattice${Object.keys(m.iqm_route || {}).length ? ' (' + Object.entries(m.iqm_route).map(([L, f]) => L + ' layers ' + f + '×').join(', ') + ')' : '; until those transpiles land, Kingston\'s overhead stands in (heavy-hex has fewer couplings, so this overstates IQM\'s gate count)'}. IonQ: all-to-all, no routing.</li>`,
@@ -310,7 +354,7 @@ function render() {
   if (!DATA.meta) return;
   E('upd').textContent = 'updated ' + DATA.meta.updated;
   E('pend').textContent = (DATA.meta.pending || []).length ? 'pending: ' + DATA.meta.pending.join(', ') : '';
-  fig1(); fig2(); table(); methods();
+  fig1(); fig2(); decomp(); table(); methods();
 }
 
 document.querySelectorAll('.chip[data-f]').forEach(b => b.addEventListener('click', () => {
@@ -320,7 +364,7 @@ document.querySelectorAll('.chip[data-f]').forEach(b => b.addEventListener('clic
 document.querySelectorAll('.chip[data-view]').forEach(b => b.addEventListener('click', () => {
   S.view = b.dataset.view; document.querySelectorAll('.chip[data-view]').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); render();
 }));
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { ch1 && ch1.destroy(); ch1 = null; for (const k in charts2) { charts2[k].destroy(); delete charts2[k]; } render(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { ch1 && ch1.destroy(); ch1 = null; for (const k in charts2) { charts2[k].destroy(); delete charts2[k]; } for (const k in chartsD) { chartsD[k].destroy(); delete chartsD[k]; } render(); });
 
 (async () => {
   const fail = setTimeout(() => { E('livetxt').textContent = 'Live data unavailable in this view (sign in to see it).'; }, 10000);
