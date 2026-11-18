@@ -76,21 +76,8 @@ pre.code { font-family: var(--mono); font-size: 12px; background: var(--bg); bor
     <div class="status" id="status"><span class="pill"><span class="dot" id="livedot"></span><span id="livetxt">Connecting to the live data…</span></span><span id="upd"></span><span id="pend"></span></div>
   </header>
 
-  <section class="fig" aria-labelledby="f1h">
-    <h2 id="f1h">1 · Two-qubit error needed to break even</h2>
-    <div class="ctl" role="group" aria-label="Depth rule for figure 1">
-      <div class="grp"><span class="lab">Depth</span>
-        <button class="chip" data-f="1" data-v="log2" aria-pressed="true" id="f1-log2">log₂(qubits)</button>
-        <button class="chip" data-f="1" data-v="L4" aria-pressed="false" id="f1-L4">4 layers</button>
-        <button class="chip" data-f="1" data-v="L8" aria-pressed="false" id="f1-L8">8 layers</button></div>
-    </div>
-    <div class="canvas"><canvas id="c1" aria-label="Break-even two-qubit error against total qubits"></canvas><div class="empty" id="e1">Waiting for data. The page fills itself as results are written.</div></div>
-    <div class="legend" id="lg1"></div>
-    <p class="cap" id="cap1"></p>
-  </section>
-
   <section class="fig" aria-labelledby="f2h">
-    <h2 id="f2h">2 · Energy per decision</h2>
+    <h2 id="f2h">Energy per decision</h2>
     <div class="ctl" role="group" aria-label="Controls for figure 2">
       <div class="grp"><span class="lab">Depth</span>
         <button class="chip" data-f="2" data-v="log2" aria-pressed="true" id="f2-log2">log₂(qubits)</button>
@@ -115,6 +102,18 @@ pre.code { font-family: var(--mono); font-size: 12px; background: var(--bg); bor
     <p class="cap" id="cap2b"></p>
     <div class="empty-inline" id="e2">Waiting for data.</div>
     <p class="cap" id="cap2"></p>
+  </section>
+  <section class="fig" aria-labelledby="f1h">
+    <h2 id="f1h">Supplementary · Two-qubit error needed to break even</h2>
+    <div class="ctl" role="group" aria-label="Depth rule for figure 1">
+      <div class="grp"><span class="lab">Depth</span>
+        <button class="chip" data-f="1" data-v="log2" aria-pressed="true" id="f1-log2">log₂(qubits)</button>
+        <button class="chip" data-f="1" data-v="L4" aria-pressed="false" id="f1-L4">4 layers</button>
+        <button class="chip" data-f="1" data-v="L8" aria-pressed="false" id="f1-L8">8 layers</button></div>
+    </div>
+    <div class="canvas"><canvas id="c1" aria-label="Break-even two-qubit error against total qubits"></canvas><div class="empty" id="e1">Waiting for data. The page fills itself as results are written.</div></div>
+    <div class="legend" id="lg1"></div>
+    <p class="cap" id="cap1"></p>
   </section>
 
   <section class="fig" aria-labelledby="t1h">
@@ -404,7 +403,7 @@ function fig2() {
   const say = b => { const cs = (cross[b] || []).map((t, i) => t); const lab = ['today', '10× lower', '100× lower'];
     return ['1', '0.1', '0.01'].map((m, i) => { const f = fmtX(`${b}|${m}|cls`, S.f2), v = fmtX(`${b}|${m}|sv`, S.f2);
       return `${lab[i]}: ${f ? f.txt : 'none to 124 q'} (vs statevector ${v ? v.txt : 'none'})`; }).join(', '); };
-  E('cap2').innerHTML = `Energy for one decision; lower is better. Shaded: 16th–84th percentile of ${DATA.meta.unc ? DATA.meta.unc.draws : ''} Monte Carlo draws (best classical: one-sided, downward only, as a better contraction path could exist); brackets give the same interval for each crossover. All panels share both axes. Lines that leave the top of a panel are off-scale there; their values are in the table. Only the two-qubit gate error is reduced in the 10× and 100× lines; readout, state preparation and coherence stay at today's values. Crossovers: `
+  E('cap2').innerHTML = `Energy for one decision; lower is better. Shaded: 16th–84th percentile of ${DATA.meta.unc ? DATA.meta.unc.draws : ''} Monte Carlo draws (best classical and statevector: one-sided, with the best path found and gross energy as the upper edge, as a better contraction path could exist; the band widens with size because the path search improves less reliably on larger networks, and vanishes where a fixed per-run overhead rather than the path sets the cost); brackets give the same interval for each crossover. All panels share both axes. Lines that leave the top of a panel are off-scale there; their values are in the table. Only the two-qubit gate error is reduced in the 10× and 100× lines; readout, state preparation and coherence stay at today's values. Crossovers: `
     + backs.map(b => `<b>${b}</b> ${say(b)}`).join('; ') + '.';
 }
 const chartsD = {};
