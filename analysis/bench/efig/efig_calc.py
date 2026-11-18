@@ -11,7 +11,25 @@ D = json.load(open(os.path.join(H, 'adv.json')))
 N0 = 179                     # noiseless shots per decision at 10% margin error; shot accounting divides per-shot variance by shots x acceptance (1/p0 included)
 K = D['reuse']['decisions'] / D['reuse']['shapes']   # decisions per circuit shape in the std test set (1833 / 25): one-off costs / K
 PCPU = 20.0                  # W, one busy CPU core (path search, transpile, host share of a GPU run); assumed: no power counter on the nodes
-CAL = dict(a=-0.187, eIBM=0.00331, eIonQ=0.004, e1IonQ=2e-4)   # Kingston CU fit ln F = a - eIBM n2q; IonQ Forte 99.6% / 99.98% assumed
+# IBM: ln F_eff = a - eIBM n2q refitted on the 27 post-selected FakeKingston noisy emulations (noise_calib.csv: F_eff = slope of noisy on
+# exact margins, 300 std pairs, 2^20 shots) against their best-of-5 routed two-qubit counts (calib_kingston_counts.csv, mean of the CU circuits),
+# i.e. the same counts the figure prices. IonQ: Forte 99.6% / 99.98% (assumed) until its own calibration lands.
+def _calrows(method='ps'):
+    cnt = collections.defaultdict(list)
+    fn = os.path.join(H, 'calib_kingston_counts.csv')
+    if os.path.exists(fn):
+        for r in csv.DictReader(open(fn)):
+            if r.get('circ', 'cu').startswith('cu'): cnt[r['ckpt']].append(float(r['ibm_n2q']))
+    return [(statistics.mean(cnt[r['ckpt']]), math.log(float(r['F_eff']))) for r in csv.DictReader(open(os.path.join(H, 'noise_calib.csv')))
+            if r['method'] == method and r['ckpt'] in cnt]
+def _lin(pts):
+    xb, yb = sum(x for x, _ in pts) / len(pts), sum(y for _, y in pts) / len(pts); sxx = sum((x - xb) ** 2 for x, _ in pts)
+    b = sum((x - xb) * (y - yb) for x, y in pts) / sxx; return yb - b * xb, b
+CAL_PTS = _calrows('ps')
+_a, _b = _lin(CAL_PTS) if len(CAL_PTS) >= 5 else (-0.187, -0.00331)
+CAL = dict(a=_a, eIBM=-_b, eIonQ=0.004, e1IonQ=2e-4)
+CAL_SRC = dict(IBM=f'calibrated: {len(CAL_PTS)} post-selected FakeKingston emulations, best-of-5 counts' if len(CAL_PTS) >= 5 else 'old constants',
+               IonQ='modelled: spec errors (assumed), Kingston intercept', IQM='modelled: Kingston fit scaled by median-error ratios')
 IBM = dict(P=25e3, rep=250e-6, job=2 * 2 / 190)                # 25 kW, 250 us repetition delay, 2 s job overhead / 190 circuits, 2 circuits
 IONQ = dict(P=5e3, t1=1.1e-4, t2=9e-4, shot=1.5e-3, circ=2 * 10.0)   # Knitter et al. 2026 (arXiv 2605.02798)
 # NEW: IQM Garnet-class (20 q Garnet published figures; routing on the 54 q Aphrodite lattice).
@@ -223,8 +241,13 @@ def lerp_row(nq, L):
         r[f'gap_{kind}'] = (row_gap(a, kind) + row_gap(b, kind)) / 2   # path-search uncertainty borrowed from the real 4/8-layer rows
     return r
 
+def has_ctg(r):
+    return any(c['o'] == 'ctg' for k in ('ps', 'rho') for cs in (r.get(f'paths_{k}') or []) for c in cs)
 def row_at(nq, L):
     r = by(L, nq)
+    # a new-depth (5-7 layer) circuit replaces its interpolation only once its cotengra search has landed: random-greedy paths alone are
+    # weak upper bounds (up to 10^3 x above the cotengra path) and would put the curve out of order
+    if r and L in (5, 6, 7) and not has_ctg(r) and not r.get('gpu'): r = None
     if r and (r.get('paths_ps') or r.get('gpu') or L == 2): return dict(r)
     return lerp_row(nq, L) if L not in (4, 8) else (dict(r) if r else None)
 
@@ -341,12 +364,8 @@ for nq in SIZES:
 SIG_INTERP = math.sqrt(sum(e * e for e in _ie) / len(_ie)) if _ie else 0.5
 # noise-fit parameters: bootstrap of the calibration emulations (until each backend's own calibration lands: the Kingston post-selected
 # runs, ln F_eff against mean qubits, whose relative slope and intercept spread is applied to every backend)
-_cal = [r for r in csv.DictReader(open(os.path.join(H, 'noise_calib.csv'))) if r['method'] == 'ps']
-def _fit(rows):
-    xs = [float(r['nq_mean']) for r in rows]; ys = [math.log(float(r['F_eff'])) for r in rows]
-    xb, yb = sum(xs) / len(xs), sum(ys) / len(ys); sxx = sum((x - xb) ** 2 for x in xs)
-    b = sum((x - xb) * (y - yb) for x, y in zip(xs, ys)) / sxx if sxx else 0.0
-    return yb - b * xb, b
+_cal = CAL_PTS
+def _fit(rows): return _lin(rows)
 CAL_A0, CAL_B0 = _fit(_cal)
 RANGES = dict(IBM_P=(25e3, 30e3), IBM_rep=(100e-6, 500e-6), IonQ_P=(3.5e3, 6.5e3), IonQ_t=(0.8, 1.2), IQM_P=(24e3, 30e3), IQM_shot=(0.96e-3, 1.92e-3))
 SOURCES = [
@@ -359,8 +378,8 @@ SOURCES = [
                                f'over random-greedy-128, residual {GAIN_RMS:.2f} decades): one path-quality model for all sizes'),
     ('interpolated depths', f'log-normal, sigma = {SIG_INTERP:.2f} decades: error of the 4/8-layer interpolation measured on the real 5-layer circuits'),
     ('statevector extrapolation', 'Student-t prediction interval of the regression of log10(J per gate) on qubits over the measured 22-31 q points'),
-    ('QPU noise fit', f'bootstrap of the {len(_cal)} post-selected Kingston calibration emulations (slope and intercept of ln F_eff), applied to all '
-                      'backends until their own calibrations land'),
+    ('QPU noise fit', f'bootstrap of the {len(_cal)} post-selected Kingston calibration emulations (ln F_eff against best-of-5 routed two-qubit '
+                      'counts): IBM directly; its relative spread applied to IonQ and IQM until their own calibrations land'),
     ('QPU power', 'IBM 25-30 kW (26 kW System Two refrigerator, arXiv:2304.14344; ~30 kW System One installations); IonQ 3.5-6.5 kW '
                   '(5 kW +-30%, assumed); IQM 24-30 kW (typical mean, IQM Radiance spec; 30 kW peak, Mansfield et al. 2025)'),
     ('QPU time per shot', 'IBM repetition delay 100-500 us (assumed; IBM docs example uses 500 us); IonQ gate and shot times +-20% (assumed); '
@@ -442,6 +461,7 @@ meta = dict(
     updated=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
     N0=N0, K=round(K, 1), PCPU=PCPU, ETA=ETA, RATE=RATE, route={str(k): round(v, 2) for k, v in ROUTE.items()},
     iqm_route={str(k): round(v, 2) for k, v in IQM_ROUTE.items()}, today=TODAY, noise=NOISE,
+    cal_src=CAL_SRC, cal_fit=dict(a=CAL['a'], eps=CAL['eIBM'], n=len(CAL_PTS)),
     consts=dict(IBM=IBM, IonQ=IONQ, IQM={k: v for k, v in IQM.items()}, CAL=CAL, KING_MED2Q=KING_MED2Q, KING_MEDRO=KING_MEDRO),
     sv_ext=sv_ext, sv_fit=dict(slope=SV_SLOPE, icpt=SV_ICPT, max_measured_nq=SV_MAXQ, per='J per logical 2q gate', engines=SV_ENG),
     pending=[], cross=CROSS,

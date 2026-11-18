@@ -188,13 +188,13 @@ IBM: FakeKingston (qiskit-ibm-runtime 0.47.0), seeds 0–4, keeping the fewest t
 </li><li>IonQ: basis {rz, ry, rx, rxx}, all-to-all, seed 0.
 </li><li>IQM: iqm-client 35.0.1 <code>IQMFakeAphrodite</code> (54-qubit square lattice, prx + cz), seeds 0–4.
 </li></ul>
-</li><li><b>Routing overhead.</b> Routed two-qubit gates divided by logical two-qubit gates, as a median per depth. Kingston: 3.94 (2 layers), 4.15 (4), 3.59 (5), 3.69 (8). IQM: 1.58 (4), 1.39 (5). Every size is priced at logical × median overhead; the spread of individual circuits enters the uncertainty.
+</li><li><b>Routing overhead.</b> Routed two-qubit gates divided by logical two-qubit gates, as a median per depth. Kingston: 3.94 (2 layers), 4.15 (4), 3.59 (5), 4.55 (6), 3.69 (8). IQM: 1.58 (4), 1.39 (5). Every size is priced at logical × median overhead; the spread of individual circuits enters the uncertainty.
 </li><li><b>Shots.</b> N = N₀ / F² with N₀ = 179 noiseless shots per decision for a 10% margin error. N₀ comes from the shot study (CPTP report §23.1). That accounting divides the per-shot variance by shots × acceptance, so 1/p₀ is included. The derivation of 179 is <b>not re-derived here</b>.
 </li><li><b>Fidelity.</b> ln F = a − ε·n₂q.
 <ul><li>
-IBM: a = −0.187, ε = 3.31 × 10⁻³ per routed two-qubit gate. F is the least-squares slope of noisy on exact margins, from 54 density-matrix emulations on FakeKingston (6–13 q, 300 std pairs, 2²⁰ shots, CU readout).
+IBM (calibrated): a = −0.241, ε = 3.67 × 10⁻³ (± 0.56 × 10⁻³) per routed two-qubit gate. F is the least-squares slope of noisy on exact margins, from 27 density-matrix emulations of the post-selected models on FakeKingston (6–13 q, 300 std pairs, 2²⁰ shots, CU readout), fitted against their best-of-5 routed two-qubit counts (<code>calib_kingston_counts.csv</code>), the same counts the figure prices. The fit over all 54 emulations (post-selected and discard) gives a = −0.194, ε = 3.73 × 10⁻³, the same within errors. The constants used before (a = −0.187, ε = 3.31 × 10⁻³) were fitted against counts that were not stored.
 </li><li>IonQ: ε₂ = 4 × 10⁻³ and ε₁ = 2 × 10⁻⁴ (99.6% / 99.98%, <b>assumed</b>), with Kingston's a.
-</li><li>IQM: Kingston's fit scaled by the median-error ratios: ε = 3.31 × 10⁻³ × 5 × 10⁻³ / 1.8 × 10⁻³ and a = −0.187 × 3 × 10⁻² / 9.52 × 10⁻³. This is a model, not a calibration.
+</li><li>IQM: Kingston's fit scaled by the median-error ratios: ε = 3.67 × 10⁻³ × 5 × 10⁻³ / 1.8 × 10⁻³ and a = −0.241 × 3 × 10⁻² / 9.52 × 10⁻³. This is a model, not a calibration.
 </li><li>Like-for-like calibrations on the same 27 post-selected models (IQM fake Garnet, IonQ cloud simulator with noise model forte-1) are running and replace these constants when they land.
 </li></ul>
 </li><li><b>Energy per decision.</b>
@@ -213,13 +213,13 @@ IQM: 24 kW typical mean total (<a href="https://iqm.tech/products/iqm-radiance/"
 </li></ul>
 <h3>Uncertainty</h3>
 <ul><li>
-<b>Method.</b> 1000 Monte Carlo draws; the bands are the 16th–84th percentiles; the central line is the current estimate (<code>efig_calc.py</code>, seed 12345).
-</li><li><b>Workload.</b> Circuit shapes per size are resampled. The QPU routing overhead is drawn from the overheads of individual circuits at that depth.
-</li><li><b>GPU energy.</b> U(net/gross, 1) × measured, with median net/gross 0.47. Run-to-run repeats on an L4 are being added.
-</li><li><b>Classical upper bounds.</b> One-sided: log₁₀ FLOP − U(0, 1) × the gap between the two best non-greedy optimisers.
+<b>Method.</b> 2000 Monte Carlo draws; the bands are the 16th–84th percentiles; the central line is the current estimate (<code>efig_calc.py</code>, seed 12345). Classical and statevector bands are one-sided: the central estimate (best path found, gross energy) is their upper edge.
+</li><li><b>Workload.</b> The QPU routing overhead is drawn from the overheads of individual circuits at that depth. On the classical side one typical-width network per size was searched, so the per-sentence spread of contraction cost is <b>not covered</b>.
+</li><li><b>GPU energy.</b> U(net/gross, 1) × measured (median net/gross 0.47). Run-to-run repeats on an L4 are queued and will be added.
+</li><li><b>Classical upper bounds.</b> One-sided: log₁₀ FLOP − U(0, 1) × g, with g = 0.135 × log₁₀ FLOP, a single fit over 92 networks of the gain of the 600 s cotengra search over random-greedy-128 (residual 0.78 decades). It is used as the scale of a further improvement a better search could find. The band vanishes where the cost is set by the fixed per-run overhead (≥ 1 J of kernel launches) rather than by the path.
 </li><li><b>Interpolated depths.</b> Log-normal with σ = 0.35 decades, measured on the real 5-layer circuits.
 </li><li><b>Statevector extrapolation.</b> Student-t prediction interval.
-</li><li><b>QPU noise fit.</b> Bootstrap of the 27 post-selected Kingston calibration runs, applied to all backends until their own calibrations land.
+</li><li><b>QPU noise fit.</b> Bootstrap of the 27 post-selected Kingston calibration runs (ln F against best-of-5 routed counts): IBM directly; its relative spread is applied to IonQ and IQM until their own calibrations land.
 </li><li><b>QPU ranges.</b> Power, uniform: IBM 25–30 kW, IonQ 3.5–6.5 kW (<b>assumed</b>), IQM 24–30 kW. Time per shot: IBM repetition delay 100–500 µs (<b>assumed</b>), IonQ ×0.8–1.2 (<b>assumed</b>), IQM 0.96–1.92 ms (<b>assumed</b> lower end).
 </li><li><b>Not covered.</b> Better classical algorithms than those tried; hardware roadmaps; error mitigation or correction overheads; queueing.
 </li></ul>

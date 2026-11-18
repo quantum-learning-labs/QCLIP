@@ -59,13 +59,13 @@ Every number below is taken from the code, configs, data files or job logs named
     \item IonQ: basis \{rz, ry, rx, rxx\}, all-to-all, seed 0.
     \item IQM: iqm-client 35.0.1 \texttt{IQMFakeAphrodite} (54-qubit square lattice, prx + cz), seeds 0--4.
   \end{itemize}
-  \item \textbf{Routing overhead.} Routed two-qubit gates divided by logical two-qubit gates, as a median per depth. Kingston: 3.94 (2 layers), 4.15 (4), 3.59 (5), 3.69 (8). IQM: 1.58 (4), 1.39 (5). Every size is priced at logical $\times$ median overhead; the spread of individual circuits enters the uncertainty.
+  \item \textbf{Routing overhead.} Routed two-qubit gates divided by logical two-qubit gates, as a median per depth. Kingston: 3.94 (2 layers), 4.15 (4), 3.59 (5), 4.55 (6), 3.69 (8). IQM: 1.58 (4), 1.39 (5). Every size is priced at logical $\times$ median overhead; the spread of individual circuits enters the uncertainty.
   \item \textbf{Shots.} N = N$_{0}$ / F$^{2}$ with N$_{0}$ = 179 noiseless shots per decision for a 10\% margin error. N$_{0}$ comes from the shot study (CPTP report §23.1). That accounting divides the per-shot variance by shots $\times$ acceptance, so 1/p$_{0}$ is included. The derivation of 179 is \textbf{not re-derived here}.
   \item \textbf{Fidelity.} ln F = a -- $\varepsilon\cdot$n$_{2}$q.
   \begin{itemize}
-    \item IBM: a = --0.187, $\varepsilon$ = 3.31 $\times$ 10$^{-3}$ per routed two-qubit gate. F is the least-squares slope of noisy on exact margins, from 54 density-matrix emulations on FakeKingston (6--13 q, 300 std pairs, 2$^{20}$ shots, CU readout).
+    \item IBM (calibrated): a = --0.241, $\varepsilon$ = 3.67 $\times$ 10$^{-3}$ (± 0.56 $\times$ 10$^{-3}$) per routed two-qubit gate. F is the least-squares slope of noisy on exact margins, from 27 density-matrix emulations of the post-selected models on FakeKingston (6--13 q, 300 std pairs, 2$^{20}$ shots, CU readout), fitted against their best-of-5 routed two-qubit counts (\texttt{calib\_kingston\_counts.csv}), the same counts the figure prices. The fit over all 54 emulations (post-selected and discard) gives a = --0.194, $\varepsilon$ = 3.73 $\times$ 10$^{-3}$, the same within errors. The constants used before (a = --0.187, $\varepsilon$ = 3.31 $\times$ 10$^{-3}$) were fitted against counts that were not stored.
     \item IonQ: $\varepsilon_{2}$ = 4 $\times$ 10$^{-3}$ and $\varepsilon_{1}$ = 2 $\times$ 10$^{-4}$ (99.6\% / 99.98\%, \textbf{assumed}), with Kingston's a.
-    \item IQM: Kingston's fit scaled by the median-error ratios: $\varepsilon$ = 3.31 $\times$ 10$^{-3}$ $\times$ 5 $\times$ 10$^{-3}$ / 1.8 $\times$ 10$^{-3}$ and a = --0.187 $\times$ 3 $\times$ 10$^{-2}$ / 9.52 $\times$ 10$^{-3}$. This is a model, not a calibration.
+    \item IQM: Kingston's fit scaled by the median-error ratios: $\varepsilon$ = 3.67 $\times$ 10$^{-3}$ $\times$ 5 $\times$ 10$^{-3}$ / 1.8 $\times$ 10$^{-3}$ and a = --0.241 $\times$ 3 $\times$ 10$^{-2}$ / 9.52 $\times$ 10$^{-3}$. This is a model, not a calibration.
     \item Like-for-like calibrations on the same 27 post-selected models (IQM fake Garnet, IonQ cloud simulator with noise model forte-1) are running and replace these constants when they land.
   \end{itemize}
   \item \textbf{Energy per decision.}
@@ -92,7 +92,7 @@ Every number below is taken from the code, configs, data files or job logs named
   \item \textbf{Classical upper bounds.} One-sided: log$_{10}$ FLOP -- U(0, 1) $\times$ g, with g = 0.135 $\times$ log$_{10}$ FLOP, a single fit over 92 networks of the gain of the 600 s cotengra search over random-greedy-128 (residual 0.78 decades). It is used as the scale of a further improvement a better search could find. The band vanishes where the cost is set by the fixed per-run overhead ($\ge$ 1 J of kernel launches) rather than by the path.
   \item \textbf{Interpolated depths.} Log-normal with $\sigma$ = 0.35 decades, measured on the real 5-layer circuits.
   \item \textbf{Statevector extrapolation.} Student-t prediction interval.
-  \item \textbf{QPU noise fit.} Bootstrap of the 27 post-selected Kingston calibration runs, applied to all backends until their own calibrations land.
+  \item \textbf{QPU noise fit.} Bootstrap of the 27 post-selected Kingston calibration runs (ln F against best-of-5 routed counts): IBM directly; its relative spread is applied to IonQ and IQM until their own calibrations land.
   \item \textbf{QPU ranges.} Power, uniform: IBM 25--30 kW, IonQ 3.5--6.5 kW (\textbf{assumed}), IQM 24--30 kW. Time per shot: IBM repetition delay 100--500 $\mu$s (\textbf{assumed}), IonQ $\times$0.8--1.2 (\textbf{assumed}), IQM 0.96--1.92 ms (\textbf{assumed} lower end).
   \item \textbf{Not covered.} Better classical algorithms than those tried; hardware roadmaps; error mitigation or correction overheads; queueing.
 

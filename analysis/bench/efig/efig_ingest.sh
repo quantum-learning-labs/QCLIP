@@ -18,10 +18,16 @@ python3 - <<'PY'
 import json, math, os
 d = json.load(open('efig.json'))
 pend = []
-have = {r['layers'] for r in json.load(open('adv.json'))['rows'] if r.get('paths_ps')}
+have = {r['layers'] for r in json.load(open('adv.json'))['rows'] if any(c['o'] == 'ctg' for cs in (r.get('paths_ps') or []) for c in cs)}
 for L in (5, 6, 7):
     if L not in have: pend.append(f'{L}-layer circuits (interpolated until then)')
 if not d['meta']['iqm_route']: pend.append('IQM transpiles (Kingston overhead stands in)')
+for L, f in ((5, 'tw_bounds_ctg_l5.csv'), (6, 'tw_bounds_ctg_l6.csv'), (7, 'tw_bounds_ctg_l7.csv')):
+    if not os.path.exists(f) or sum(1 for _ in open(f)) < 2: pend.append(f'{L}-layer cotengra paths (random-greedy bounds until then)')
+cs = d['meta'].get('cal_src', {})
+for b_ in ('IonQ', 'IQM'):
+    if not cs.get(b_, '').startswith('calibrated'): pend.append(f'{b_} noise calibration (modelled until then)')
+if not os.path.exists('gpu_rep.csv'): pend.append('GPU run-to-run repeats')
 d['meta']['pending'] = pend
 clean = lambda x: None if isinstance(x, float) and not math.isfinite(x) else {k: clean(v) for k, v in x.items()} if isinstance(x, dict) else [clean(v) for v in x] if isinstance(x, list) else x
 os.makedirs('efig_docs', exist_ok=True)
@@ -30,6 +36,6 @@ for k, v in d['series'].items(): json.dump({'points': clean(v)}, open(f'efig_doc
 print('pending:', pend)
 PY
 W=/cs/research/pplv/comp_bridge/qclip_wt/energyfig/analysis/bench/efig
-scp -q efig.json efig_calc.py efig_plot.py tails-agent:$W/ && ssh tails-agent "cd $W && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_log2 log2 && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_L4 L4 && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_L8 L8" && scp -q "tails-agent:$W/efig_*.p*" . && ls -la efig_*.pdf
+scp -q efig.json efig_calc.py efig_plot.py tails-agent:$W/ && ssh tails-agent "cd $W && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_log2 log2 && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_L4 L4 && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_L8 L8 && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_log2_supp log2 with_breakeven" && scp -q "tails-agent:$W/efig_*.p*" . && ls -la efig_*.pdf
 # paper files: LaTeX figure + methods, and the page's 'paper' store document (push it with ArtifactData set, pinned to its version)
-python3 efig_tex.py && python3 efig_paperdoc.py "$(ssh tails-agent 'cd /cs/research/pplv/comp_bridge/qclip_wt/energyfig && git rev-parse --short HEAD')"
+python3 efig_setup_html.py && python3 efig_tex.py && python3 efig_paperdoc.py "$(ssh tails-agent 'cd /cs/research/pplv/comp_bridge/qclip_wt/energyfig && git rev-parse --short HEAD')"

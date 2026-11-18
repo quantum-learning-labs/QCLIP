@@ -44,12 +44,12 @@ Every number below is taken from the code, configs, data files or job logs named
   - IBM: FakeKingston (qiskit-ibm-runtime 0.47.0), seeds 0–4, keeping the fewest two-qubit gates per circuit.
   - IonQ: basis {rz, ry, rx, rxx}, all-to-all, seed 0.
   - IQM: iqm-client 35.0.1 `IQMFakeAphrodite` (54-qubit square lattice, prx + cz), seeds 0–4.
-- **Routing overhead.** Routed two-qubit gates divided by logical two-qubit gates, as a median per depth. Kingston: 3.94 (2 layers), 4.15 (4), 3.59 (5), 3.69 (8). IQM: 1.58 (4), 1.39 (5). Every size is priced at logical × median overhead; the spread of individual circuits enters the uncertainty.
+- **Routing overhead.** Routed two-qubit gates divided by logical two-qubit gates, as a median per depth. Kingston: 3.94 (2 layers), 4.15 (4), 3.59 (5), 4.55 (6), 3.69 (8). IQM: 1.58 (4), 1.39 (5). Every size is priced at logical × median overhead; the spread of individual circuits enters the uncertainty.
 - **Shots.** N = N₀ / F² with N₀ = 179 noiseless shots per decision for a 10% margin error. N₀ comes from the shot study (CPTP report §23.1). That accounting divides the per-shot variance by shots × acceptance, so 1/p₀ is included. The derivation of 179 is **not re-derived here**.
 - **Fidelity.** ln F = a − ε·n₂q.
-  - IBM: a = −0.187, ε = 3.31 × 10⁻³ per routed two-qubit gate. F is the least-squares slope of noisy on exact margins, from 54 density-matrix emulations on FakeKingston (6–13 q, 300 std pairs, 2²⁰ shots, CU readout).
+  - IBM (calibrated): a = −0.241, ε = 3.67 × 10⁻³ (± 0.56 × 10⁻³) per routed two-qubit gate. F is the least-squares slope of noisy on exact margins, from 27 density-matrix emulations of the post-selected models on FakeKingston (6–13 q, 300 std pairs, 2²⁰ shots, CU readout), fitted against their best-of-5 routed two-qubit counts (`calib_kingston_counts.csv`), the same counts the figure prices. The fit over all 54 emulations (post-selected and discard) gives a = −0.194, ε = 3.73 × 10⁻³, the same within errors. The constants used before (a = −0.187, ε = 3.31 × 10⁻³) were fitted against counts that were not stored.
   - IonQ: ε₂ = 4 × 10⁻³ and ε₁ = 2 × 10⁻⁴ (99.6% / 99.98%, **assumed**), with Kingston's a.
-  - IQM: Kingston's fit scaled by the median-error ratios: ε = 3.31 × 10⁻³ × 5 × 10⁻³ / 1.8 × 10⁻³ and a = −0.187 × 3 × 10⁻² / 9.52 × 10⁻³. This is a model, not a calibration.
+  - IQM: Kingston's fit scaled by the median-error ratios: ε = 3.67 × 10⁻³ × 5 × 10⁻³ / 1.8 × 10⁻³ and a = −0.241 × 3 × 10⁻² / 9.52 × 10⁻³. This is a model, not a calibration.
   - Like-for-like calibrations on the same 27 post-selected models (IQM fake Garnet, IonQ cloud simulator with noise model forte-1) are running and replace these constants when they land.
 - **Energy per decision.**
   - IBM: [N (t_circ + 250 µs) + 2·2/190 s] × 25 kW.
@@ -69,7 +69,7 @@ Every number below is taken from the code, configs, data files or job logs named
 - **Classical upper bounds.** One-sided: log₁₀ FLOP − U(0, 1) × g, with g = 0.135 × log₁₀ FLOP, a single fit over 92 networks of the gain of the 600 s cotengra search over random-greedy-128 (residual 0.78 decades). It is used as the scale of a further improvement a better search could find. The band vanishes where the cost is set by the fixed per-run overhead (≥ 1 J of kernel launches) rather than by the path.
 - **Interpolated depths.** Log-normal with σ = 0.35 decades, measured on the real 5-layer circuits.
 - **Statevector extrapolation.** Student-t prediction interval.
-- **QPU noise fit.** Bootstrap of the 27 post-selected Kingston calibration runs, applied to all backends until their own calibrations land.
+- **QPU noise fit.** Bootstrap of the 27 post-selected Kingston calibration runs (ln F against best-of-5 routed counts): IBM directly; its relative spread is applied to IonQ and IQM until their own calibrations land.
 - **QPU ranges.** Power, uniform: IBM 25–30 kW, IonQ 3.5–6.5 kW (**assumed**), IQM 24–30 kW. Time per shot: IBM repetition delay 100–500 µs (**assumed**), IonQ ×0.8–1.2 (**assumed**), IQM 0.96–1.92 ms (**assumed** lower end).
 - **Not covered.** Better classical algorithms than those tried; hardware roadmaps; error mitigation or correction overheads; queueing.
 
