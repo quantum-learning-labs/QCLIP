@@ -1,0 +1,243 @@
+<title>QPU Energy Crossover</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap">
+<style>
+/* Layout: one reading column of two figure panels (break-even error, then energy), controls above each, methods and sources below. */
+:root {
+  --bg: #fbfbf9; --panel: #ffffff; --fg: #1d2230; --muted: #5d6474; --rule: #dfe2e8; --grid: #eceef2;
+  --ibm: #2f62d6; --ionq: #c2410c; --iqm: #0f8a6a; --cls: #1d2230; --sv: #8a5cd1; --warn: #9a6b00; --ok: #1b7f3b;
+  --display: "Source Serif 4", Georgia, serif; --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12151c; --panel: #181c25; --fg: #e6e8ee; --muted: #9aa1b2; --rule: #2a303c; --grid: #232834;
+  --ibm: #7ea2ff; --ionq: #ff9a62; --iqm: #45d1a8; --cls: #e6e8ee; --sv: #b99af0; --warn: #e2b04a; --ok: #5fd08a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12151c; --panel: #181c25; --fg: #e6e8ee; --muted: #9aa1b2; --rule: #2a303c; --grid: #232834;
+  --ibm: #7ea2ff; --ionq: #ff9a62; --iqm: #45d1a8; --cls: #e6e8ee; --sv: #b99af0; --warn: #e2b04a; --ok: #5fd08a; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 980px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+h1 { font-family: var(--display); font-weight: 600; font-size: clamp(26px, 4vw, 36px); line-height: 1.15; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 22px; margin: 0; text-wrap: balance; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0; font-weight: 600; }
+p { margin: 0; max-width: 72ch; }
+.lede { color: var(--muted); max-width: 72ch; }
+.status { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 13px; color: var(--muted); font-family: var(--mono); }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border: 1px solid var(--rule); border-radius: 999px; background: var(--panel); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.dot.live { background: var(--ok); }
+section.fig { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 20px; display: grid; gap: 14px; min-width: 0; }
+.ctl { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; }
+.ctl .grp { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.ctl .lab { color: var(--muted); margin-right: 4px; }
+.chip { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chip:focus-visible { outline: 2px solid var(--ibm); outline-offset: 2px; }
+.canvas { position: relative; height: 440px; min-width: 0; }
+.cap { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
+.cap b { color: var(--fg); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 26px; height: 0; border-top: 2px solid currentColor; display: inline-block; }
+.sw.dash { border-top-style: dashed; } .sw.dot { border-top-style: dotted; border-top-width: 3px; }
+.mk { width: 9px; height: 9px; border-radius: 50%; display: inline-block; border: 2px solid var(--cls); }
+.mk.f { background: var(--cls); } .mk.x { border-radius: 0; transform: rotate(45deg); width: 8px; height: 8px; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; }
+.tblw { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; width: 100%; }
+th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+td.num { font-family: var(--mono); white-space: nowrap; }
+.methods { display: grid; gap: 12px; }
+.methods li { margin-bottom: 6px; }
+.methods ul { margin: 0; padding-left: 18px; max-width: 80ch; }
+a { color: var(--ibm); }
+@media (max-width: 600px) { .canvas { height: 340px; } section.fig { padding: 14px; } }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:12px">
+    <h3>qclip · inference energy · QPU against the best classical method</h3>
+    <h1>When does a QPU spend less energy per decision than a GPU?</h1>
+    <p class="lede">One decision of the CCG-structured post-selected circuit family, grown in qubits per wire, with depth set by the log-depth rule <span style="font-family:var(--mono)">L = round(log₂ qubits)</span>. The classical side is the cheapest of GPU statevector, exact tensor-network contraction, a tensor-network shot sampler and MPS. Each QPU is drawn at today's two-qubit error and at 10× and 100× lower.</p>
+    <div class="status" id="status"><span class="pill"><span class="dot" id="livedot"></span><span id="livetxt">Connecting to the live data…</span></span><span id="upd"></span><span id="pend"></span></div>
+  </header>
+
+  <section class="fig" aria-labelledby="f1h">
+    <h2 id="f1h">1 · Two-qubit error needed to break even</h2>
+    <div class="ctl" role="group" aria-label="Depth rule for figure 1">
+      <div class="grp"><span class="lab">Depth</span>
+        <button class="chip" data-f="1" data-v="log2" aria-pressed="true" id="f1-log2">log₂(qubits)</button>
+        <button class="chip" data-f="1" data-v="L4" aria-pressed="false" id="f1-L4">4 layers</button>
+        <button class="chip" data-f="1" data-v="L8" aria-pressed="false" id="f1-L8">8 layers</button></div>
+    </div>
+    <div class="canvas"><canvas id="c1" aria-label="Break-even two-qubit error against total qubits"></canvas><div class="empty" id="e1">Waiting for data. The page fills itself as results are written.</div></div>
+    <div class="legend" id="lg1"></div>
+    <p class="cap" id="cap1"></p>
+  </section>
+
+  <section class="fig" aria-labelledby="f2h">
+    <h2 id="f2h">2 · Energy per decision</h2>
+    <div class="ctl" role="group" aria-label="Controls for figure 2">
+      <div class="grp"><span class="lab">Depth</span>
+        <button class="chip" data-f="2" data-v="log2" aria-pressed="true" id="f2-log2">log₂(qubits)</button>
+        <button class="chip" data-f="2" data-v="L4" aria-pressed="false" id="f2-L4">4 layers</button>
+        <button class="chip" data-f="2" data-v="L8" aria-pressed="false" id="f2-L8">8 layers</button></div>
+      <div class="grp"><span class="lab">QPUs</span>
+        <button class="chip" data-q="IBM" aria-pressed="true" id="q-IBM">IBM</button>
+        <button class="chip" data-q="IonQ" aria-pressed="true" id="q-IonQ">IonQ</button>
+        <button class="chip" data-q="IQM" aria-pressed="true" id="q-IQM">IQM</button></div>
+    </div>
+    <div class="canvas"><canvas id="c2" aria-label="Energy per decision against total qubits"></canvas><div class="empty" id="e2">Waiting for data.</div></div>
+    <div class="legend" id="lg2"></div>
+    <p class="cap" id="cap2"></p>
+  </section>
+
+  <section class="fig" aria-labelledby="t1h">
+    <h2 id="t1h">Points</h2>
+    <p class="cap">Every point with its status. Measured: run on the GPU with an energy counter. Upper bound: energy from the best contraction path found (a better path can only lower it). Interpolated: depth 5–7 estimated from the 4- and 8-layer circuits of the same size, replaced as the real circuits land. Modelled: QPU energy from transpiled gate counts and published device figures.</p>
+    <div class="tblw"><table id="tbl"><thead><tr><th>Qubits</th><th>Layers</th><th>Best classical (J)</th><th>Method</th><th>Status</th><th>IBM today (J)</th><th>IonQ today (J)</th><th>IQM today (J)</th><th>Break-even ε<sub>2q</sub> IBM / IonQ / IQM</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="fig methods" aria-labelledby="mh">
+    <h2 id="mh">How the comparison is made</h2>
+    <ul id="methods"></ul>
+    <h3>Device figures and sources</h3>
+    <div class="tblw"><table id="srcs"><thead><tr><th>Parameter</th><th>Value</th><th>Source</th></tr></thead><tbody></tbody></table></div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const S = { f1: 'log2', f2: 'log2', q: { IBM: true, IonQ: true, IQM: true } };
+let DATA = { meta: null, series: {} };
+const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = () => ({ IBM: tok('--ibm'), IonQ: tok('--ionq'), IQM: tok('--iqm'), cls: tok('--cls'), sv: tok('--sv'), grid: tok('--grid'), muted: tok('--muted'), fg: tok('--fg'), bg: tok('--bg') });
+const NAMES = { IBM: 'IBM Kingston (heavy-hex)', IonQ: 'IonQ Forte (all-to-all)', IQM: 'IQM Garnet-class (square lattice)' };
+const DASH = { '1': [], '0.1': [7, 5], '0.01': [2, 4] };
+const NLAB = { '1': 'today', '0.1': '10× lower', '0.01': '100× lower' };
+const sci = v => { if (v == null || !isFinite(v)) return '–'; const [m, e] = v.toExponential(1).split('e'); return `${m}×10<sup>${+e}</sup>`; };
+const sciT = v => { if (v == null || !isFinite(v)) return ''; const [m, e] = v.toExponential(1).split('e'); return `${m}e${+e}`; };
+const E = id => document.getElementById(id);
+let ch1 = null, ch2 = null;
+
+function logTicks(v) { const l = Math.log10(v); return Math.abs(l - Math.round(l)) < 1e-6 ? '10^' + Math.round(l) : ''; }
+function axes(ylab, ymin, ymax) {
+  const c = COL();
+  return {
+    x: { type: 'linear', min: 14, max: 128, title: { display: true, text: 'Total qubits in the decision circuit', color: c.muted }, grid: { color: c.grid }, ticks: { color: c.muted } },
+    y: { type: 'logarithmic', min: ymin, max: ymax, title: { display: true, text: ylab, color: c.muted }, grid: { color: c.grid },
+         ticks: { color: c.muted, callback: v => { const l = Math.log10(v); return Math.abs(l - Math.round(l)) < 1e-6 ? '1e' + Math.round(l) : ''; } } }
+  };
+}
+const ptStyle = st => st === 'measured' ? 'circle' : st === 'interpolated' ? 'rectRot' : 'circle';
+const ptFill = (st, col) => st === 'measured' ? col : 'transparent';
+
+function fig1() {
+  const pts = DATA.series[S.f1] || [], c = COL();
+  E('e1').hidden = pts.length > 0;
+  const ds = [];
+  for (const b of ['IBM', 'IonQ', 'IQM']) {
+    const v = pts.filter(p => p.be && p.be[b] != null);
+    ds.push({ label: `${b}: break-even error`, data: v.map(p => ({ x: p.nq, y: p.be[b], p })), borderColor: c[b], backgroundColor: v.map(p => ptFill(p.cls_status, c[b])),
+      pointBorderColor: c[b], pointStyle: v.map(p => ptStyle(p.cls_status)), pointRadius: 5, borderWidth: 2.5, tension: 0, spanGaps: false });
+    const today = DATA.meta.today[b];
+    for (const m of ['1', '0.1', '0.01'])
+      ds.push({ label: `${b} ${NLAB[m]}`, data: [{ x: 14, y: today * +m }, { x: 128, y: today * +m }], borderColor: c[b] + (m === '1' ? 'cc' : '88'), borderDash: DASH[m], borderWidth: m === '1' ? 1.6 : 1.2, pointRadius: 0, fill: false });
+  }
+  const opt = { responsive: true, maintainAspectRatio: false, animation: false, parsing: false, scales: axes('Two-qubit gate error at break-even (effective, per gate)', 1e-6, 3e-2),
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: t => t.raw.p ? `${t.dataset.label}: ${sciT(t.raw.y)} at ${t.raw.x} q, ${t.raw.p.L} layers (${t.raw.p.cls_status})` : `${t.dataset.label}: ${sciT(t.raw.y)}` } } } };
+  if (ch1) { ch1.data.datasets = ds; ch1.options = opt; ch1.update(); } else ch1 = new Chart(E('c1'), { type: 'line', data: { datasets: ds }, options: opt });
+  E('lg1').innerHTML = ['IBM', 'IonQ', 'IQM'].map(b => `<span style="color:${c[b]}"><span class="sw"></span>${NAMES[b]}: break-even</span>`).join('')
+    + `<span><span class="sw" style="color:${c.muted}"></span>today's error</span><span><span class="sw dash" style="color:${c.muted}"></span>10× lower</span><span><span class="sw dot" style="color:${c.muted}"></span>100× lower</span>`
+    + `<span><span class="mk f"></span>classical measured</span><span><span class="mk"></span>classical upper bound</span><span><span class="mk x"></span>interpolated depth</span>`;
+  const first = {};
+  for (const b of ['IBM', 'IonQ', 'IQM']) for (const m of ['1', '0.1', '0.01']) { const t = DATA.meta.today[b] * +m; const w = pts.find(p => p.be && p.be[b] != null && p.be[b] >= t); first[b + m] = w ? w.nq : null; }
+  const say = b => ['1', '0.1', '0.01'].map(m => `${NLAB[m]}: ${first[b + m] ? 'from ' + first[b + m] + ' qubits' : 'not within 124 qubits'}`).join('; ');
+  E('cap1').innerHTML = `A QPU spends less energy than the best classical method wherever its two-qubit error lies <b>below</b> its break-even curve. Missing points: even an error-free QPU costs more there. `
+    + ['IBM', 'IonQ', 'IQM'].map(b => `<b>${b}</b> (${say(b)})`).join('. ') + '.';
+}
+
+function fig2() {
+  const pts = DATA.series[S.f2] || [], c = COL(), ds = [];
+  E('e2').hidden = pts.length > 0;
+  ds.push({ label: 'Best classical', data: pts.map(p => ({ x: p.nq, y: p.classical, p })), borderColor: c.cls, backgroundColor: pts.map(p => ptFill(p.cls_status, c.cls)), pointBorderColor: c.cls,
+    pointStyle: pts.map(p => ptStyle(p.cls_status)), pointRadius: 5, borderWidth: 3.5, order: 0 });
+  const L = S.f2 === 'L4' ? 4 : S.f2 === 'L8' ? 8 : null, ext = L && DATA.meta.sv_ext && DATA.meta.sv_ext[L];
+  const sv = pts.filter(p => p.methods && p.methods.statevector);
+  if (sv.length) ds.push({ label: 'GPU statevector (measured)', data: sv.map(p => ({ x: p.nq, y: p.methods.statevector.J, p })), borderColor: c.sv, backgroundColor: c.sv, pointRadius: 3, borderWidth: 1.5 });
+  if (ext) { const xs = [ext.from_nq, 60, 90, 124]; ds.push({ label: 'GPU statevector (extrapolated)', data: xs.map(x => ({ x, y: Math.pow(10, ext.icpt + ext.slope * x) })), borderColor: c.sv, borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5 }); }
+  for (const b of ['IBM', 'IonQ', 'IQM']) if (S.q[b]) for (const m of ['1', '0.1', '0.01'])
+    ds.push({ label: `${b}, ${NLAB[m]}`, data: pts.filter(p => p.qpu[b] && p.qpu[b][m] != null).map(p => ({ x: p.nq, y: p.qpu[b][m], p })), borderColor: c[b], borderDash: DASH[m], pointRadius: 0, borderWidth: m === '1' ? 2.2 : 1.6 });
+  const opt = { responsive: true, maintainAspectRatio: false, animation: false, parsing: false, scales: axes('Energy per decision (J, whole system)', 1e-1, 1e12),
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: t => `${t.dataset.label}: ${sciT(t.raw.y)} J at ${t.raw.x} q` + (t.raw.p ? `, ${t.raw.p.L} layers` + (t.dataset.label === 'Best classical' ? ` (${t.raw.p.cls_by}, ${t.raw.p.cls_status})` : '') : '') } } } };
+  if (ch2) { ch2.data.datasets = ds; ch2.options = opt; ch2.update(); } else ch2 = new Chart(E('c2'), { type: 'line', data: { datasets: ds }, options: opt });
+  E('lg2').innerHTML = `<span style="color:${c.cls}"><span class="sw" style="border-top-width:3px"></span>best classical</span><span style="color:${c.sv}"><span class="sw"></span>statevector (dashed: extrapolated)</span>`
+    + ['IBM', 'IonQ', 'IQM'].filter(b => S.q[b]).map(b => `<span style="color:${c[b]}"><span class="sw"></span>${NAMES[b]}</span>`).join('')
+    + `<span><span class="sw" style="color:${c.muted}"></span>today</span><span><span class="sw dash" style="color:${c.muted}"></span>10× lower 2q error</span><span><span class="sw dot" style="color:${c.muted}"></span>100× lower</span>`;
+  const out = pts.filter(p => p.qpu.IQM && p.qpu.IQM['1'] > 1e12).length;
+  E('cap2').innerHTML = `Energy for one decision. Lower is better. Lines above the top of the axis are off-scale (their values are in the table)${out ? '; IQM at today\'s error is above 10<sup>12</sup> J at every size shown' : ''}. Only the two-qubit gate error is reduced in the 10× and 100× lines; readout, state preparation and coherence stay at today's values.`;
+}
+
+function table() {
+  const pts = DATA.series[S.f1] || [], tb = E('tbl').querySelector('tbody');
+  tb.innerHTML = pts.map(p => `<tr><td class="num">${p.nq}</td><td class="num">${p.L}</td><td class="num">${sci(p.classical)}</td><td>${p.cls_by}</td><td>${p.cls_status}</td>`
+    + ['IBM', 'IonQ', 'IQM'].map(b => `<td class="num">${sci(p.qpu[b]['1'])}</td>`).join('')
+    + `<td class="num">${['IBM', 'IonQ', 'IQM'].map(b => p.be[b] != null ? sci(p.be[b]) : 'never').join(' / ')}</td></tr>`).join('');
+}
+
+function methods() {
+  const m = DATA.meta; if (!m) return;
+  const cs = m.consts;
+  E('methods').innerHTML = [
+    `<li><b>Depth rule.</b> L = round(log₂ qubits): 16–22 qubits at 4 layers, 25–40 at 5, 49–79 at 6, 100–124 at 7. Trainable circuits need depth that grows with width, but cost-function-dependent barren plateaus appear beyond logarithmic depth for local costs (Cerezo et al., Nat. Commun. 12, 1791, 2021), so log depth is the deepest trainable regime. Fixed 4 and 8 layers are shown for reference.</li>`,
+    `<li><b>Shots.</b> N = N₀ / F² with N₀ = ${m.N0} noiseless shots per decision for a 10% margin error. The shot accounting divides the per-shot variance by shots × acceptance, so the post-selection success probability (1/p₀) and the decision margin are inside N₀. F is the effective circuit fidelity: ln F = a − ε·n₂q (IBM: fitted on 54 noisy Kingston emulations of 6–13-qubit circuits, a = ${cs.CAL.a}, ε = ${cs.CAL.eIBM}).</li>`,
+    `<li><b>Lower noise.</b> The 10× and 100× lines multiply only the per-gate error ε (for IonQ also its one-qubit term). The intercept a (readout, state preparation) and the per-shot time are unchanged.</li>`,
+    `<li><b>Classical.</b> Cheapest of: cuStateVec density-matrix statevector (measured to 31 qubits), exact tensor-network contraction, tensor-network sampler (N₀ post-selected amplitudes), and MPS, counted only when its margin error is ≤ 10% and its decisions agree with exact contraction on ≥ 95% of pairs. GPU energies are NVML board energy on an NVIDIA L4. Unmeasured contractions use the best path found (cotengra, random-greedy, greedy) at ${sciT(m.ETA)} FLOP/J measured on the L4; these are upper bounds. A better path would lower the classical curve, so beyond the measured range the comparison favours the QPU.</li>`,
+    `<li><b>Whole system, same PUE.</b> QPU powers are whole-system wall power (cryostat or vacuum, control electronics). The GPU side adds a host share of ${m.PCPU} W (one busy CPU core, assumed) for the run time. The same facility PUE multiplies both sides and cancels.</li>`,
+    `<li><b>One-off costs.</b> Contraction-path search and transpilation are charged at ${m.PCPU} W for their measured wall time, shared by the ${m.K} decisions per circuit shape of the test set.</li>`,
+    `<li><b>Routing.</b> IBM: logical two-qubit gates × the median routing overhead on Kingston (${Object.entries(m.route).map(([L, f]) => L + ' layers ' + f + '×').join(', ')}). IQM: the same rule on the 54-qubit IQM square lattice${Object.keys(m.iqm_route || {}).length ? ' (' + Object.entries(m.iqm_route).map(([L, f]) => L + ' layers ' + f + '×').join(', ') + ')' : '; until those transpiles land, Kingston\'s overhead stands in (heavy-hex has fewer couplings, so this overstates IQM\'s gate count)'}. IonQ: all-to-all, no routing.</li>`,
+  ].join('');
+  const rows = [
+    ['IBM power, repetition delay, job overhead', `${cs.IBM.P / 1e3} kW, ${cs.IBM.rep * 1e6} µs, 2 s per 190 circuits`, 'Public IBM figures (assumed)'],
+    ['IBM per-gate log-fidelity ε', `${cs.CAL.eIBM}`, 'Fit to noisy FakeKingston emulation (this study)'],
+    ['IonQ power, timing', `${cs.IonQ.P / 1e3} kW; 110 µs 1q, 900 µs 2q, 1.5 ms per shot, 10 s per circuit`, '<a href="https://arxiv.org/abs/2605.02798" target="_blank" rel="noopener">Knitter et al. 2026, arXiv:2605.02798</a>'],
+    ['IonQ errors', '2q 4×10⁻³, 1q 2×10⁻⁴', 'IonQ Forte 99.6% / 99.98% (assumed)'],
+    ['IQM power', `${cs.IQM.P / 1e3} kW typical mean total`, '<a href="https://iqm.tech/products/iqm-radiance/" target="_blank" rel="noopener">IQM Radiance specifications</a>; 30 kW peak during cooldown: <a href="https://arxiv.org/abs/2509.12949" target="_blank" rel="noopener">Mansfield et al. 2025</a>'],
+    ['IQM time per shot', `${(cs.IQM.shot * 1e3).toFixed(2)} ms (incl. overheads) + gate time`, 'From CLOPS = 2600 at QV 32, 100×10×100 shots (<a href="https://arxiv.org/abs/2408.12433" target="_blank" rel="noopener">IQM Garnet benchmarks, arXiv:2408.12433</a>)'],
+    ['IQM errors', 'CZ 5×10⁻³, 1q 9×10⁻⁴, readout 3×10⁻²', 'Median values, arXiv:2408.12433'],
+    ['IQM gate durations', 'PRX 20 ns, CZ 40 ns', 'iqm-client fake Garnet; CZ 20–40 ns per arXiv:2408.12433'],
+    ['IQM fidelity model', `ε = ${cs.IQM.eff.toFixed(4)}, a = ${cs.IQM.a.toFixed(3)}`, 'Kingston fit scaled by the ratio of median CZ errors (5×10⁻³ / 1.8×10⁻³) and readout errors (3×10⁻² / 9.5×10⁻³): a model, not a calibration'],
+  ];
+  E('srcs').querySelector('tbody').innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td class="num" style="white-space:normal">${r[1]}</td><td>${r[2]}</td></tr>`).join('');
+}
+
+function render() {
+  if (!DATA.meta) return;
+  E('upd').textContent = 'updated ' + DATA.meta.updated;
+  E('pend').textContent = (DATA.meta.pending || []).length ? 'pending: ' + DATA.meta.pending.join(', ') : '';
+  fig1(); fig2(); table(); methods();
+}
+
+document.querySelectorAll('.chip[data-f]').forEach(b => b.addEventListener('click', () => {
+  const f = b.dataset.f; S['f' + f] = b.dataset.v;
+  document.querySelectorAll(`.chip[data-f="${f}"]`).forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); render();
+}));
+document.querySelectorAll('.chip[data-q]').forEach(b => b.addEventListener('click', () => {
+  S.q[b.dataset.q] = !S.q[b.dataset.q]; b.setAttribute('aria-pressed', S.q[b.dataset.q] ? 'true' : 'false'); render();
+}));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { ch1 && ch1.destroy(); ch2 && ch2.destroy(); ch1 = ch2 = null; render(); });
+
+(async () => {
+  const fail = setTimeout(() => { E('livetxt').textContent = 'Live data unavailable in this view (sign in to see it).'; }, 10000);
+  for (let i = 0; i < 30 && !window.claude; i++) await new Promise(r => setTimeout(r, 100));
+  const db = window.claude ? await window.claude.use('db') : null;
+  if (!db) { clearTimeout(fail); E('livetxt').textContent = 'Live data unavailable in this view (sign in to see it).'; return; }
+  db.collection('fig').onSnapshot(snap => {
+    clearTimeout(fail);
+    for (const d of snap.docs) { const v = d.data(); if (!v) continue; if (d.id === 'meta') DATA.meta = v; else DATA.series[d.id] = v.points || []; }
+    E('livedot').classList.add('live'); E('livetxt').textContent = 'Live: redraws when new results are written';
+    render();
+  }, () => { clearTimeout(fail); E('livetxt').textContent = 'Live connection lost. Reload the page to reconnect.'; });
+})();
+</script>
