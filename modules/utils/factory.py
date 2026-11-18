@@ -131,7 +131,8 @@ def build_experiment(config, device):
             image_model = FrozenCLIP().to(device)
         else:
             image_model = TTNImageModel(embedding_dim=config['embedding_dim']).to(device)
-        text_model = MLPModel(hdim=config['text']['hidden_dim'], out_dim=config['embedding_dim']).to(device)
+        text_model = MLPModel(hdim=config['text']['hidden_dim'], out_dim=config['embedding_dim'],
+                              batched=bool(config['text'].get('mlp_batched', False))).to(device)
         loss_fn = classical_loss(config) if config['vision']['method'] == 'clip' else InfoNCE()
         
     else:
