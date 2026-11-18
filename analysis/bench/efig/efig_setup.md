@@ -63,10 +63,10 @@ Every number below is taken from the code, configs, data files or job logs named
 
 ### Uncertainty
 
-- **Method.** 1000 Monte Carlo draws; the bands are the 16th–84th percentiles; the central line is the current estimate (`efig_calc.py`, seed 12345).
-- **Workload.** Circuit shapes per size are resampled. The QPU routing overhead is drawn from the overheads of individual circuits at that depth.
-- **GPU energy.** U(net/gross, 1) × measured, with median net/gross 0.47. Run-to-run repeats on an L4 are being added.
-- **Classical upper bounds.** One-sided: log₁₀ FLOP − U(0, 1) × the gap between the two best non-greedy optimisers.
+- **Method.** 2000 Monte Carlo draws; the bands are the 16th–84th percentiles; the central line is the current estimate (`efig_calc.py`, seed 12345). Classical and statevector bands are one-sided: the central estimate (best path found, gross energy) is their upper edge.
+- **Workload.** The QPU routing overhead is drawn from the overheads of individual circuits at that depth. On the classical side one typical-width network per size was searched, so the per-sentence spread of contraction cost is **not covered**.
+- **GPU energy.** U(net/gross, 1) × measured (median net/gross 0.47). Run-to-run repeats on an L4 are queued and will be added.
+- **Classical upper bounds.** One-sided: log₁₀ FLOP − U(0, 1) × g, with g = 0.135 × log₁₀ FLOP, a single fit over 92 networks of the gain of the 600 s cotengra search over random-greedy-128 (residual 0.78 decades). It is used as the scale of a further improvement a better search could find. The band vanishes where the cost is set by the fixed per-run overhead (≥ 1 J of kernel launches) rather than by the path.
 - **Interpolated depths.** Log-normal with σ = 0.35 decades, measured on the real 5-layer circuits.
 - **Statevector extrapolation.** Student-t prediction interval.
 - **QPU noise fit.** Bootstrap of the 27 post-selected Kingston calibration runs, applied to all backends until their own calibrations land.

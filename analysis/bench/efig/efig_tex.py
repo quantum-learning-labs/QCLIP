@@ -51,20 +51,18 @@ def x(b, m, base):
 B = [('IBM', 'IBM Kingston'), ('IonQ', 'IonQ Forte'), ('IQM', 'IQM Garnet-class')]
 interp = sorted({p['L'] for p in d['series']['log2'] if p['cls_status'] == 'interpolated'})
 cap = (r'\textbf{Inference energy per decision: QPUs against the best classical method.} '
-       r'One image-choice decision of the CCG-structured post-selected circuit family (SVO-Probes standard test set), grown in qubits per wire, '
-       r'with depth $L=\mathrm{round}(\log_2 n_q)$. '
-       r'(a) Effective two-qubit gate error at which a QPU spends as much energy as the best classical method (circles) or as GPU statevector simulation only '
-       r'(triangles); horizontal lines mark each device\textquoteright s effective error today (solid) and 10$\times$ (dashed) and 100$\times$ (dotted) lower. '
-       r'A QPU wins below its curve; missing points: even an error-free QPU costs more. '
-       r'(b--d) Energy per decision (whole system) of each QPU at today\textquoteright s error and 10$\times$ and 100$\times$ lower two-qubit error, against the best classical method '
-       r'(black: cheapest of GPU statevector, exact tensor-network contraction, tensor-network sampler and MPS, path search amortised; filled markers measured, '
-       r'otherwise best-path upper bounds) and GPU statevector simulation (purple; dashed: exponential extrapolation). '
-       r'Shaded: 16th--84th percentile of ' + str(M.get('unc', {}).get('draws', '')) + r' Monte Carlo draws over workload, measurement, path-quality, '
-       r'interpolation, calibration, power and timing uncertainty (best classical: one-sided). '
-       "Ticks mark crossovers with their intervals (bottom: below best classical; top, ``sv'': below statevector). " 
-       + 'Crossovers against the best classical method at 10$\\times$ / 100$\\times$ lower error: '
+       r'Energy (whole system) for one image-choice decision of the CCG-structured post-selected circuit family (SVO-Probes standard test set), grown in '
+       r'qubits per wire with depth $L=\mathrm{round}(\log_2 n_q)$, on (a) IBM Kingston, (b) IonQ Forte and (c) an IQM Garnet-class device, at today\textquoteright s '
+       r'two-qubit error (solid) and 10$\times$ (dashed) and 100$\times$ (dotted) lower. '
+       r'Black: best classical method, the cheapest of GPU statevector, exact tensor-network contraction, tensor-network sampler and MPS, with path search '
+       r'amortised (filled markers measured, otherwise best-path upper bounds); purple: GPU statevector simulation alone (dashed: exponential extrapolation). '
+       r'Shaded: 16th--84th percentile of ' + str(M.get('unc', {}).get('draws', '')) + r' Monte Carlo draws over measurement, path-quality, interpolation, '
+       r'calibration, power and timing uncertainty. Classical bands are one-sided, as a better contraction path may exist; they widen with circuit size '
+       r'as the path search improves less reliably, and vanish where a fixed per-run overhead, not the path, sets the cost. '
+       "Bottom ticks mark where a QPU line drops below the best classical method, top ticks (``sv'') where it drops below statevector simulation, with intervals. "
+       + 'Against the best classical method, at 10$\\times$ / 100$\\times$ lower two-qubit error: '
        + '; '.join(f'{n} {x(b, "0.1", "cls")} / {x(b, "0.01", "cls")} qubits' for b, n in B)
-       + '; none at today\'s error up to 124 qubits. Against statevector only, at today\'s error: '
+       + '; none at today\'s error up to 124 qubits. Against statevector simulation alone, at today\'s error: '
        + '; '.join(f'{n} {x(b, "1", "sv")}' for b, n in B) + ' qubits. '
        + (f'Depths {", ".join(map(str, interp))} are interpolated from 4- and 8-layer circuits (preliminary). ' if interp else '')
        + r'Setup and sources: Section~\ref{sec:energy-setup}.')

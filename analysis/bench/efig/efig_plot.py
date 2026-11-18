@@ -15,8 +15,11 @@ LS = {'1': '-', '0.1': (0, (6, 3)), '0.01': (0, (1.5, 2.5))}
 BK = ['IBM', 'IonQ', 'IQM']; NAME = dict(IBM='IBM Kingston', IonQ='IonQ Forte', IQM='IQM Garnet-class')
 plt.rcParams.update({'font.family': 'serif', 'font.size': 8.5, 'axes.linewidth': 0.6, 'xtick.major.width': 0.6, 'ytick.major.width': 0.6,
                      'pdf.fonttype': 42, 'axes.spines.top': False, 'axes.spines.right': False})
-fig, ax = plt.subplots(2, 2, figsize=(7.1, 5.6), constrained_layout=True)
-a, panels = ax[0, 0], [ax[0, 1], ax[1, 0], ax[1, 1]]
+BE = len(sys.argv) > 4 and sys.argv[4] == 'with_breakeven'   # paper version: energy panels only
+if BE:
+    fig, ax = plt.subplots(2, 2, figsize=(7.1, 5.6), constrained_layout=True); a, panels = ax[0, 0], [ax[0, 1], ax[1, 0], ax[1, 1]]
+else:
+    fig, ax = plt.subplots(1, 3, figsize=(7.1, 3.1), constrained_layout=True, sharey=True); a, panels = None, list(ax)
 
 def bands(ax_, get, col, alpha=0.15, z=1):
     pts = [(p['nq'], get(p)) for p in P if get(p)]
@@ -41,8 +44,8 @@ def cross(key, base):
             return o['nq'] + (p['nq'] - o['nq']) * d0 / (d0 - d1)
     return None
 
-# (a) break-even error
-for bk in BK:
+# (a) break-even error (supplementary version only)
+for bk in (BK if BE else []):
     bands(a, lambda p: (p.get('band') or {}).get('be', {}).get(bk), C[bk]); bands(a, lambda p: (p.get('band') or {}).get('be_sv', {}).get(bk), C[bk], 0.08)
     pts = [p for p in P if p['be'][bk] is not None]
     a.plot([p['nq'] for p in pts], [p['be'][bk] for p in pts], color=C[bk], lw=1.5, marker='o', ms=3, mfc='white', zorder=3)
@@ -50,9 +53,10 @@ for bk in BK:
     a.plot([p['nq'] for p in pts], [p['be_sv'][bk] for p in pts], color=C[bk], lw=1.0, ls=(0, (3, 2)), marker='^', ms=3, mfc='white', zorder=3)
     for m in ('1', '0.1', '0.01'):
         a.axhline(M['today'][bk] * float(m), color=C[bk], lw=0.7, ls=LS[m], alpha=0.8 if m == '1' else 0.55, zorder=1)
-a.set_yscale('log'); a.set_xlim(14, 128); a.set_ylim(1e-6, 3e-2)
-a.set_xlabel('total qubits'); a.set_ylabel('break-even two-qubit error (effective)')
-a.set_title('(a) QPU wins below its curve', fontsize=9, loc='left')
+if BE:
+    a.set_yscale('log'); a.set_xlim(14, 128); a.set_ylim(1e-6, 3e-2)
+    a.set_xlabel('total qubits'); a.set_ylabel('break-even two-qubit error (effective)')
+    a.set_title('(a) QPU wins below its curve', fontsize=9, loc='left')
 
 # (b-d) energy per backend, shared axes
 vals = [p['classical'] for p in P] + [p['sv']['J'] for p in P if p.get('sv') and p['sv']['status'] != 'extrapolated'] + \
@@ -81,15 +85,16 @@ for k, (bk, axp) in enumerate(zip(BK, panels)):
         if x: nt += 1; axp.annotate(f'sv {xlab((bk, m), "sv") or round(x)}', (x, yhi), xytext=(0, -3 - 9 * nt), textcoords='offset points', ha='center', fontsize=6.5, color=C['sv'],
                            arrowprops=dict(arrowstyle='-', color=C[bk], lw=0.8))
     axp.set_yscale('log'); axp.set_xlim(14, 128); axp.set_ylim(ylo, yhi)
-    axp.set_xlabel('total qubits'); axp.set_ylabel('energy per decision (J)')
-    axp.set_title(f'({"bcd"[k]}) {NAME[bk]}', fontsize=9, loc='left', color=C[bk])
-for x in [a] + panels: x.grid(True, which='major', lw=0.3, color='#d9dce2')
+    axp.set_xlabel('total qubits')
+    if k == 0 or BE: axp.set_ylabel('energy per decision (J)')
+    axp.set_title(f'({("bcd" if BE else "abc")[k]}) {NAME[bk]}', fontsize=9, loc='left', color=C[bk])
+for x in ([a] if BE else []) + panels: x.grid(True, which='major', lw=0.3, color='#d9dce2')
 
 h = [Line2D([], [], color=C['cls'], lw=2, label='best classical (GPU)'), Line2D([], [], color=C['sv'], lw=1.3, label='GPU statevector'),
      Line2D([], [], color=C['sv'], lw=1.3, ls=(0, (5, 3)), label='statevector, exp. fit')] + \
     [Line2D([], [], color='0.35', lw=1, ls=LS[m], label=l) for m, l in (('1', 'QPU today'), ('0.1', '10× lower 2q error'), ('0.01', '100× lower'))] + \
-    [Line2D([], [], color='0.3', lw=1.2, marker='o', mfc='white', ms=3, label='(a) vs best classical'), Line2D([], [], color='0.3', lw=1, ls=(0, (3, 2)), marker='^', mfc='white', ms=3, label='(a) vs statevector only')]
+    ([Line2D([], [], color='0.3', lw=1.2, marker='o', mfc='white', ms=3, label='(a) vs best classical'), Line2D([], [], color='0.3', lw=1, ls=(0, (3, 2)), marker='^', mfc='white', ms=3, label='(a) vs statevector only')] if BE else [])
 h.append(matplotlib.patches.Patch(color='0.5', alpha=0.25, label='16–84% band'))
-fig.legend(handles=h, loc='outside lower center', ncol=5, frameon=False, fontsize=7.2)
+fig.legend(handles=h, loc='outside lower center', ncol=4 if not BE else 5, frameon=False, fontsize=7.2)
 fig.savefig(out + '.pdf'); fig.savefig(out + '.png', dpi=200)
 print('wrote', out + '.pdf')

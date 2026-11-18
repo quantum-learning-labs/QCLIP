@@ -52,6 +52,23 @@ def etafit(key):
 ETA, RATE = etafit('J'), etafit('s')     # FLOP/J and FLOP/s of exact TN on the L4 (compute-bound runs)
 
 GREEDY = ('greedy', 'greedy-interp')
+# Path-quality model (one fit for all sizes and depths): how much the last search stage (cotengra, 600 s) improved on the stage before it
+# (random-greedy-128), against the size of the best path (log10 FLOP). Taken as the scale of a further improvement a better search could
+# still find. Cotengra failures (gain < -0.5 decades) are excluded.
+_G = []
+for _r in rows_all:
+    for _k in ('ps', 'rho'):
+        for _cs in (_r.get(f'paths_{_k}') or []):
+            _bo = {}
+            for _c in _cs:
+                if _c.get('lf') is not None: _bo[_c['o']] = min(_bo.get(_c['o'], 1e9), _c['lf'])
+            if 'random-greedy-128' in _bo and 'ctg' in _bo and _bo['random-greedy-128'] - _bo['ctg'] > -0.5:
+                _G.append((_bo['ctg'], max(0.0, _bo['random-greedy-128'] - _bo['ctg'])))
+_gx, _gy = [x for x, _ in _G], [y for _, y in _G]
+_gxb, _gyb = sum(_gx) / len(_gx), sum(_gy) / len(_gy)
+GAIN_B = sum((x - _gxb) * (y - _gyb) for x, y in zip(_gx, _gy)) / sum((x - _gxb) ** 2 for x in _gx); GAIN_A = _gyb - GAIN_B * _gxb
+GAIN_RMS = math.sqrt(sum((y - (GAIN_A + GAIN_B * x)) ** 2 for x, y in zip(_gx, _gy)) / max(1, len(_gx) - 2))
+def gain(lf): return max(0.0, GAIN_A + GAIN_B * lf)
 def opt_gap(cs):
     # path-search uncertainty of one shape: best path of the best non-greedy optimiser vs the second-best one (None if < 2 optimisers)
     bo = {}
@@ -74,9 +91,8 @@ def tnc(meas, meas_s, paths, lf_any, lf_greedy, mult, gps, gap_fb=0.0):
     for cs in shapes:
         best = None
         if MC:   # one-sided path-quality band: a path better than the best found by up to the gap between the two best distinct optimisers
-            gap = opt_gap(cs); gap = gap_fb if gap is None else gap
             u = MC['rng'].random()
-            cs = [dict(c, lf=c['lf'] - u * gap) if c.get('lf') is not None and c['o'] not in GREEDY else c for c in cs]
+            cs = [dict(c, lf=c['lf'] - u * gain(c['lf'])) if c.get('lf') is not None and c['o'] not in GREEDY else c for c in cs]
         for c in cs:
             ru = run(c)
             if MC and meas is not None and ru == meas: ru = meas * MC['meas_f']   # measured: idle-subtracted (net) .. gross convention
@@ -294,7 +310,7 @@ for L in (2, 4, 8):
         sv_ext[L] = dict(slope=s, icpt=yb - s * xb, from_nq=max(xs))
 
 # ================= uncertainty: Monte Carlo over the real sources, band = 16th-84th percentile of the draws =================
-NDRAW = int(os.environ.get('EFIG_DRAWS', '1000'))
+NDRAW = int(os.environ.get('EFIG_DRAWS', '2000'))
 def build_series():
     out = {}
     for name, rule in (('log2', L_of), ('L4', lambda n: 4), ('L8', lambda n: 8)):
@@ -334,12 +350,13 @@ def _fit(rows):
 CAL_A0, CAL_B0 = _fit(_cal)
 RANGES = dict(IBM_P=(25e3, 30e3), IBM_rep=(100e-6, 500e-6), IonQ_P=(3.5e3, 6.5e3), IonQ_t=(0.8, 1.2), IQM_P=(24e3, 30e3), IQM_shot=(0.96e-3, 1.92e-3))
 SOURCES = [
-    ('workload', 'classical: circuit shapes of each size resampled (the 2-5 typical-width shapes searched per size, not the full test-set '
-                 'distribution); QPU: routing overhead of individual circuits at that depth (placement on the coupling map)'),
-    ('measured GPU energy', f'idle-subtracted to gross energy convention (median net/gross {NET_GROSS:.2f}); no repeated runs exist, so '
-                            'run-to-run spread is not covered'),
-    ('classical upper bounds', 'one-sided (downward only): a path better than the best found by up to the gap between the two best '
-                               'distinct optimisers at that shape (path-quality band)'),
+    ('workload', 'QPU: routing overhead of individual circuits at that depth (placement on the coupling map); classical: one typical-width '
+                 'network per size was searched, so the per-sentence spread of contraction cost is NOT covered'),
+    ('measured GPU energy', f'idle-subtracted to gross energy convention (median net/gross {NET_GROSS:.2f}; gross, the central value, is the '
+                            'upper edge); run-to-run repeats on an L4 are queued and will be added'),
+    ('classical upper bounds', f'one-sided (downward only; the best path found is the upper edge): log10 FLOP lowered by U(0,1) x g, where '
+                               f'g = {GAIN_A:.2f} + {GAIN_B:.3f} log10 FLOP (fit over {len(_G)} networks of the gain of the 600 s cotengra search '
+                               f'over random-greedy-128, residual {GAIN_RMS:.2f} decades): one path-quality model for all sizes'),
     ('interpolated depths', f'log-normal, sigma = {SIG_INTERP:.2f} decades: error of the 4/8-layer interpolation measured on the real 5-layer circuits'),
     ('statevector extrapolation', 'Student-t prediction interval of the regression of log10(J per gate) on qubits over the measured 22-31 q points'),
     ('QPU noise fit', f'bootstrap of the {len(_cal)} post-selected Kingston calibration emulations (slope and intercept of ln F_eff), applied to all '
@@ -399,8 +416,9 @@ def attach_bands(series, draws):
         lg = lambda v: [math.log10(x) for x in v if x and x > 0]
         band = lambda v: None if len(v) < 10 else [10 ** pct(v, 0.16), 10 ** pct(v, 0.84)]
         for i, p in enumerate(pts):
-            p['band'] = dict(classical=band(lg([d[i]['classical'] for d in D_])),
-                             sv=band(lg([d[i]['sv']['J'] for d in D_ if d[i].get('sv')])),
+            up = lambda bnd, c: None if bnd is None else [min(bnd[0], c), max(bnd[1], c)]
+            p['band'] = dict(classical=up(band(lg([d[i]['classical'] for d in D_])), p['classical']),
+                             sv=up(band(lg([d[i]['sv']['J'] for d in D_ if d[i].get('sv')])), p['sv']['J']) if p.get('sv') else None,
                              qpu={b: {m: band(lg([d[i]['qpu'][b][m] for d in D_ if d[i]['qpu'][b].get(m)])) for m in p['qpu'][b]} for b in EF},
                              be={b: band(lg([d[i]['be'][b] for d in D_ if d[i]['be'][b]])) for b in EF},
                              be_sv={b: band(lg([d[i]['be_sv'][b] for d in D_ if d[i]['be_sv'].get(b)])) for b in EF},

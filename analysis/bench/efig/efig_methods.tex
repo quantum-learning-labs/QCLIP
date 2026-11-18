@@ -86,10 +86,10 @@ Every number below is taken from the code, configs, data files or job logs named
 \paragraph{Uncertainty}
 
 \begin{itemize}
-  \item \textbf{Method.} 1000 Monte Carlo draws; the bands are the 16th--84th percentiles; the central line is the current estimate (\texttt{efig\_calc.py}, seed 12345).
-  \item \textbf{Workload.} Circuit shapes per size are resampled. The QPU routing overhead is drawn from the overheads of individual circuits at that depth.
-  \item \textbf{GPU energy.} U(net/gross, 1) $\times$ measured, with median net/gross 0.47. Run-to-run repeats on an L4 are being added.
-  \item \textbf{Classical upper bounds.} One-sided: log$_{10}$ FLOP -- U(0, 1) $\times$ the gap between the two best non-greedy optimisers.
+  \item \textbf{Method.} 2000 Monte Carlo draws; the bands are the 16th--84th percentiles; the central line is the current estimate (\texttt{efig\_calc.py}, seed 12345). Classical and statevector bands are one-sided: the central estimate (best path found, gross energy) is their upper edge.
+  \item \textbf{Workload.} The QPU routing overhead is drawn from the overheads of individual circuits at that depth. On the classical side one typical-width network per size was searched, so the per-sentence spread of contraction cost is \textbf{not covered}.
+  \item \textbf{GPU energy.} U(net/gross, 1) $\times$ measured (median net/gross 0.47). Run-to-run repeats on an L4 are queued and will be added.
+  \item \textbf{Classical upper bounds.} One-sided: log$_{10}$ FLOP -- U(0, 1) $\times$ g, with g = 0.135 $\times$ log$_{10}$ FLOP, a single fit over 92 networks of the gain of the 600 s cotengra search over random-greedy-128 (residual 0.78 decades). It is used as the scale of a further improvement a better search could find. The band vanishes where the cost is set by the fixed per-run overhead ($\ge$ 1 J of kernel launches) rather than by the path.
   \item \textbf{Interpolated depths.} Log-normal with $\sigma$ = 0.35 decades, measured on the real 5-layer circuits.
   \item \textbf{Statevector extrapolation.} Student-t prediction interval.
   \item \textbf{QPU noise fit.} Bootstrap of the 27 post-selected Kingston calibration runs, applied to all backends until their own calibrations land.
