@@ -52,6 +52,7 @@ td.num { font-family: var(--mono); white-space: nowrap; }
 .methods li { margin-bottom: 6px; }
 .methods ul { margin: 0; padding-left: 18px; max-width: 80ch; }
 a { color: var(--ibm); }
+pre.code { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 10px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
 .setup code { font-family: var(--mono); font-size: 12.5px; }
 .setup ul { margin: 0 0 6px; }
 .multi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -127,6 +128,15 @@ a { color: var(--ibm); }
     <ul id="methods"></ul>
     <h3>Device figures and sources</h3>
     <div class="tblw"><table id="srcs"><thead><tr><th>Parameter</th><th>Value</th><th>Source</th></tr></thead><tbody></tbody></table></div>
+  </section>
+  <section class="fig" aria-labelledby="paper-h" id="paper">
+    <h2 id="paper-h">Paper files</h2>
+    <p class="cap" id="paper-meta">The LaTeX figure environment, the methods section and the vector PDF, regenerated with every re-render.</p>
+    <div class="ctl"><button class="chip" id="dl-pdf" disabled>Download figure (PDF)</button><button class="chip" id="dl-zip" disabled>Download LaTeX + PDF (zip)</button><span id="dl-msg" class="cap"></span></div>
+    <h3>Figure environment <button class="chip" data-copy="tex-fig" style="margin-left:8px">Copy</button></h3>
+    <pre class="code" id="tex-fig">Waiting for the paper files.</pre>
+    <h3>Methods section <button class="chip" data-copy="tex-meth" style="margin-left:8px">Copy</button></h3>
+    <pre class="code" id="tex-meth">Waiting for the paper files.</pre>
   </section>
   <section class="fig methods setup" aria-labelledby="setup-h">
 <h2 id="setup-h">Circuits, scaling and experimental setup</h2>
@@ -456,6 +466,28 @@ function methods() {
   E('srcs').querySelector('tbody').innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td class="num" style="white-space:normal">${r[1]}</td><td>${r[2]}</td></tr>`).join('');
 }
 
+let PAPER = null, DL = null;
+const b64bytes = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
+function paper() {
+  if (!PAPER) return;
+  E('tex-fig').textContent = PAPER.figure_tex; E('tex-meth').textContent = PAPER.methods_tex;
+  E('paper-meta').textContent = `Generated ${PAPER.updated}${PAPER.commit ? ' from commit ' + PAPER.commit : ''}. The figure environment expects ${PAPER.pdf_name} next to the .tex; the methods section needs hyperref.`;
+  E('dl-pdf').disabled = E('dl-zip').disabled = !DL;
+}
+async function save(name, b64, type) {
+  if (!DL || !PAPER) return;
+  try { await DL.save({ filename: name, data: new Blob([b64bytes(b64)], { type }) }); E('dl-msg').textContent = 'Saved ' + name; }
+  catch (e) { E('dl-msg').textContent = e && e.code === 'declined' ? 'Download cancelled.' : 'Downloads are not available in this view; copy the LaTeX above instead.'; }
+}
+E('dl-pdf').addEventListener('click', () => PAPER && save(PAPER.pdf_name, PAPER.pdf_b64, 'application/pdf'));
+E('dl-zip').addEventListener('click', () => PAPER && save(PAPER.zip_name, PAPER.zip_b64, 'application/zip'));
+document.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
+  const el = E(b.dataset.copy);
+  try { await navigator.clipboard.writeText(el.textContent); b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); }
+  catch { const r = document.createRange(); r.selectNodeContents(el); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); b.textContent = 'Selected: press Ctrl+C'; }
+}));
+(async () => { for (let i = 0; i < 30 && !window.claude; i++) await new Promise(r => setTimeout(r, 100));
+  DL = window.claude ? await window.claude.use('downloads') : null; paper(); })();
 function render() {
   if (!DATA.meta) return;
   E('upd').textContent = 'updated ' + DATA.meta.updated;
@@ -479,7 +511,8 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { ch
   if (!db) { clearTimeout(fail); E('livetxt').textContent = 'Live data unavailable in this view (sign in to see it).'; return; }
   db.collection('fig').onSnapshot(snap => {
     clearTimeout(fail);
-    for (const d of snap.docs) { const v = d.data(); if (!v) continue; if (d.id === 'meta') DATA.meta = v; else DATA.series[d.id] = v.points || []; }
+    for (const d of snap.docs) { const v = d.data(); if (!v) continue; if (d.id === 'meta') DATA.meta = v; else if (d.id === 'paper') PAPER = v; else DATA.series[d.id] = v.points || []; }
+    paper();
     E('livedot').classList.add('live'); E('livetxt').textContent = 'Live: redraws when new results are written';
     render();
   }, () => { clearTimeout(fail); E('livetxt').textContent = 'Live connection lost. Reload the page to reconnect.'; });

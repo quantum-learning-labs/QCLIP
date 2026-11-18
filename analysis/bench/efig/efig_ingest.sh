@@ -31,3 +31,5 @@ print('pending:', pend)
 PY
 W=/cs/research/pplv/comp_bridge/qclip_wt/energyfig/analysis/bench/efig
 scp -q efig.json efig_calc.py efig_plot.py tails-agent:$W/ && ssh tails-agent "cd $W && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_log2 log2 && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_L4 L4 && /cs/research/pplv/comp_bridge/.venv/bin/python efig_plot.py efig.json efig_L8 L8" && scp -q "tails-agent:$W/efig_*.p*" . && ls -la efig_*.pdf
+# paper files: LaTeX figure + methods, and the page's 'paper' store document (push it with ArtifactData set, pinned to its version)
+python3 efig_tex.py && python3 efig_paperdoc.py "$(ssh tails-agent 'cd /cs/research/pplv/comp_bridge/qclip_wt/energyfig && git rev-parse --short HEAD')"

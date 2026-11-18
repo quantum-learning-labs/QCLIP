@@ -1,0 +1,118 @@
+% Methods: circuits, scaling and experimental setup of the energy figure (generated from efig_setup.md by efig_tex.py).
+% Needs \usepackage{hyperref}.
+\subsection*{Circuits, scaling and experimental setup}\label{sec:energy-setup}
+
+Every number below is taken from the code, configs, data files or job logs named next to it. Items marked \textbf{unknown} or \textbf{assumed} could not be traced to a measurement or a source.
+
+\paragraph{Circuits}
+
+\begin{itemize}
+  \item \textbf{Model family.} The qclip compositional variational quantum circuit: each sentence's CCG diagram becomes a circuit with one parametrised box per word. The ansatz is \texttt{custom\_v5} (\texttt{modules/compilation/quantum/ansatz.py}): a Hadamard on every wire, then per layer Rz$\cdot$Ry$\cdot$Rz on every qubit followed by a ring of CX gates (qubit i controls i+1 mod N). Cups are removed by currying (\texttt{text.curry: true}). The readout is post-selected (\texttt{text.discard: false}).
+  \item \textbf{Wire sizes.} Noun wires have n qubits (\texttt{text.n}), sentence and preposition wires one qubit (\texttt{text.s = text.p = 1}), and the output register has e qubits (\texttt{embedding\_qubits}). Config: \texttt{hp\_sc4i\_nodiscard\_e3\_n*\_tl*\_qlr3e-3\_s0/config.yaml}, model code commit \texttt{39974f7}.
+  \item \textbf{Image side.} The CLIP ViT-B/32 image embedding passes through a 2-layer MLP image tower (\texttt{vision.method: mlp}), which prepares the image state on the e output qubits.
+  \item \textbf{One decision.} An image choice on the SVO-Probes standard test set: does the caption match the positive or the negative image? Each decision is priced on two compute--uncompute (CU) circuits, one per image (\texttt{cu\_pos}, \texttt{cu\_neg}). Each circuit is the text circuit, then the inverse image-state preparation on the output register, then measurement of all qubits. The decision margin is m = U$_{0}$/P$_{0}$ per image, where P$_{0}$ is the post-selection acceptance and U$_{0}$ the post-selected overlap; the decision is d = m\_pos -- m\_neg (\texttt{analysis/bench/calib\_noise.py}). The O-readout variant (\texttt{O}) is computed but not used for pricing.
+  \item \textbf{Sentences per size.} The modal ("typical") qubit width of the std test sentences at that size (\texttt{inf\_engines.load}, \texttt{frames(typical=...)}). The first 3--5 such sentences are transpiled, 2 networks per size get greedy and random-greedy path searches and 1 gets cotengra, 40 decisions are used for the GPU energies, and 300 for the noise calibration.
+  \item \textbf{Circuits for each size.} Untrained checkpoints from \texttt{analysis/bench/make\_init\_ckpt.py}: random-initialised parameters, used for structure only. They take the config of \texttt{hp\_sc4i\_nodiscard\_e3\_n9\_tl2} with \texttt{text.n}, \texttt{text.layers} and \texttt{embedding\_qubits} overridden. The lines use e = 3 with n $\in$ \{4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 32, 40\}, giving typical widths of 16, 19, 22, 25, 28, 31, 34, 40, 49, 64, 79, 100 and 124 qubits.
+  \item \textbf{Depth.} The log-depth rule is L = round(log$_{2}$ qubits): 16--22 q at 4 layers, 25--40 q at 5, 49--79 q at 6 and 100--124 q at 7. Fixed 2, 4 and 8 layers are shown as references.
+
+\end{itemize}
+\paragraph{Scaling and point status}
+
+\begin{itemize}
+  \item \textbf{Measured.} GPU energy runs: statevector engines up to 31 q at 2 layers; exact tensor networks where the largest intermediate is $\le$ 2$^{29}$ entries (\texttt{--tn\_width\_max 29}).
+  \item \textbf{Upper bound.} Classical energy from the best contraction path found, as FLOP / $\eta$. A better path can only lower it.
+  \item \textbf{Interpolated.} Depths 5--7 that have not been computed yet. Gate counts, durations and best-path log$_{10}$ FLOP are interpolated linearly in L between the 4- and 8-layer circuits of the same size. Each interpolated point is replaced by the real circuit when its job lands.
+  \item \textbf{Statevector line.} The best of cuStateVec, the lazy torch statevector and Aer, measured at 2 layers to 31 q. It is scaled to other depths by the logical two-qubit gate count, and beyond 31 q extrapolated with an exponential fit (log$_{10}$ J per gate linear in qubits, over the 3 largest measured sizes).
+
+\end{itemize}
+\paragraph{Classical side}
+
+\begin{itemize}
+  \item \textbf{Hardware.} NVIDIA L4 for every GPU energy point (\texttt{gpu\_engines*.csv}), on the UCL CS cluster, with one process alone on the GPU. A run aborts if the idle power exceeds 100 W.
+  \item \textbf{Energy measurement.} The NVML total-energy counter of the job's GPU, matched by UUID because NVML ignores \texttt{CUDA\_VISIBLE\_DEVICES} (fix 698a2be). Each run repeats until $\ge$ 10 s and excludes a warm-up run (\texttt{analysis/bench/inf\_engines.py}). The figure uses gross energy per decision (including idle power); net = gross -- idle $\times$ time. The band spans net to gross.
+  \item \textbf{Host share.} 20 W $\times$ run time, one busy CPU core (\textbf{assumed}).
+  \item \textbf{Engines.}
+  \begin{itemize}
+    \item Aer GPU statevector (qiskit-aer-gpu-cu11 0.17.2, double precision).
+    \item cuStateVec through Aer (custatevec-cu11 1.6.0, single precision, default fusion), for the statevector and the density matrix.
+    \item Lazy torch statevector (torch 2.9.0).
+    \item Exact tensor network: opt\_einsum 3.4.0 on torch complex64. The measured runs use the greedy path.
+    \item Tensor-network sampler: N$_{0}$ post-selected amplitude contractions.
+    \item MPS (torch, $\chi$ = 2--256): counted only when its margin error is $\le$ 10\% relative to exact and its decisions agree with exact on $\ge$ 95\% of pairs.
+  \end{itemize}
+  \item \textbf{Paths} (\texttt{analysis/bench/tw\_bounds.py}).
+  \begin{itemize}
+    \item Searches: opt\_einsum greedy and random-greedy-128; cotengra 0.7.5 \texttt{HyperOptimizer} with greedy trials, a 600 s budget with subtree reconfiguration, and a hard stop at 1.5 $\times$ budget.
+    \item Energy: best-path FLOP / $\eta$, with $\eta$ = 1.86 $\times$ 10$^{10}$ FLOP/J (median of the compute-bound L4 runs).
+    \item Time: 1.31 $\times$ 10$^{12}$ FLOP/s.
+    \item A better path lowers only the compute part of a measured run.
+  \end{itemize}
+  \item \textbf{One-off costs.} Path-search and transpile wall time $\times$ 20 W, shared by K = 1833/25 = 73.3 decisions per circuit shape (std test set).
+
+\end{itemize}
+\paragraph{QPU side}
+
+\begin{itemize}
+  \item \textbf{Transpilation.} Qiskit 2.5.0 at \texttt{optimization\_level=1} (\texttt{analysis/bench/qpu\_esp.py}, \texttt{qpu\_iqm.py}).
+  \begin{itemize}
+    \item IBM: FakeKingston (qiskit-ibm-runtime 0.47.0), seeds 0--4, keeping the fewest two-qubit gates per circuit.
+    \item IonQ: basis \{rz, ry, rx, rxx\}, all-to-all, seed 0.
+    \item IQM: iqm-client 35.0.1 \texttt{IQMFakeAphrodite} (54-qubit square lattice, prx + cz), seeds 0--4.
+  \end{itemize}
+  \item \textbf{Routing overhead.} Routed two-qubit gates divided by logical two-qubit gates, as a median per depth. Kingston: 3.94 (2 layers), 4.15 (4), 3.59 (5), 3.69 (8). IQM: 1.58 (4), 1.39 (5). Every size is priced at logical $\times$ median overhead; the spread of individual circuits enters the uncertainty.
+  \item \textbf{Shots.} N = N$_{0}$ / F$^{2}$ with N$_{0}$ = 179 noiseless shots per decision for a 10\% margin error. N$_{0}$ comes from the shot study (CPTP report §23.1). That accounting divides the per-shot variance by shots $\times$ acceptance, so 1/p$_{0}$ is included. The derivation of 179 is \textbf{not re-derived here}.
+  \item \textbf{Fidelity.} ln F = a -- $\varepsilon\cdot$n$_{2}$q.
+  \begin{itemize}
+    \item IBM: a = --0.187, $\varepsilon$ = 3.31 $\times$ 10$^{-3}$ per routed two-qubit gate. F is the least-squares slope of noisy on exact margins, from 54 density-matrix emulations on FakeKingston (6--13 q, 300 std pairs, 2$^{20}$ shots, CU readout).
+    \item IonQ: $\varepsilon_{2}$ = 4 $\times$ 10$^{-3}$ and $\varepsilon_{1}$ = 2 $\times$ 10$^{-4}$ (99.6\% / 99.98\%, \textbf{assumed}), with Kingston's a.
+    \item IQM: Kingston's fit scaled by the median-error ratios: $\varepsilon$ = 3.31 $\times$ 10$^{-3}$ $\times$ 5 $\times$ 10$^{-3}$ / 1.8 $\times$ 10$^{-3}$ and a = --0.187 $\times$ 3 $\times$ 10$^{-2}$ / 9.52 $\times$ 10$^{-3}$. This is a model, not a calibration.
+    \item Like-for-like calibrations on the same 27 post-selected models (IQM fake Garnet, IonQ cloud simulator with noise model forte-1) are running and replace these constants when they land.
+  \end{itemize}
+  \item \textbf{Energy per decision.}
+  \begin{itemize}
+    \item IBM: [N (t\_circ + 250 $\mu$s) + 2$\cdot$2/190 s] $\times$ 25 kW.
+    \item IonQ: [N (n$_{1}$q$\cdot$110 $\mu$s + n$_{2}$q$\cdot$900 $\mu$s + 1.5 ms) + 2$\cdot$10 s] $\times$ 5 kW.
+    \item IQM: N (1.92 ms + t\_circ) $\times$ 24 kW.
+    \item Each plus transpile time $\times$ 20 W / K.
+  \end{itemize}
+  \item \textbf{Sources.}
+  \begin{itemize}
+    \item IQM: 24 kW typical mean total (\href{https://iqm.tech/products/iqm-radiance/}{IQM Radiance spec}); 30 kW peak (\href{https://arxiv.org/abs/2509.12949}{Mansfield et al. 2025}); median errors and CLOPS 2600 at QV 32 (\href{https://arxiv.org/abs/2408.12433}{arXiv:2408.12433}); 1.92 ms = 100$\cdot$10$\cdot$100$\cdot$5 / 2600 / 10$^{5}$ shots.
+    \item IBM: 25 kW, 250 $\mu$s and 2 s job overhead are public figures (\textbf{assumed}); 26 kW System Two refrigerator (\href{https://arxiv.org/abs/2304.14344}{arXiv:2304.14344}).
+    \item IonQ: timings from \href{https://arxiv.org/abs/2605.02798}{Knitter et al. 2026}. The 5 kW value is carried over from the earlier page and was \textbf{not re-verified} in that paper.
+
+  \end{itemize}
+\end{itemize}
+\paragraph{Uncertainty}
+
+\begin{itemize}
+  \item \textbf{Method.} 1000 Monte Carlo draws; the bands are the 16th--84th percentiles; the central line is the current estimate (\texttt{efig\_calc.py}, seed 12345).
+  \item \textbf{Workload.} Circuit shapes per size are resampled. The QPU routing overhead is drawn from the overheads of individual circuits at that depth.
+  \item \textbf{GPU energy.} U(net/gross, 1) $\times$ measured, with median net/gross 0.47. Run-to-run repeats on an L4 are being added.
+  \item \textbf{Classical upper bounds.} One-sided: log$_{10}$ FLOP -- U(0, 1) $\times$ the gap between the two best non-greedy optimisers.
+  \item \textbf{Interpolated depths.} Log-normal with $\sigma$ = 0.35 decades, measured on the real 5-layer circuits.
+  \item \textbf{Statevector extrapolation.} Student-t prediction interval.
+  \item \textbf{QPU noise fit.} Bootstrap of the 27 post-selected Kingston calibration runs, applied to all backends until their own calibrations land.
+  \item \textbf{QPU ranges.} Power, uniform: IBM 25--30 kW, IonQ 3.5--6.5 kW (\textbf{assumed}), IQM 24--30 kW. Time per shot: IBM repetition delay 100--500 $\mu$s (\textbf{assumed}), IonQ $\times$0.8--1.2 (\textbf{assumed}), IQM 0.96--1.92 ms (\textbf{assumed} lower end).
+  \item \textbf{Not covered.} Better classical algorithms than those tried; hardware roadmaps; error mitigation or correction overheads; queueing.
+
+\end{itemize}
+\paragraph{Software, hardware and commands}
+
+\begin{itemize}
+  \item \textbf{Software.} Cluster container \texttt{ubuntu2404}: Python 3.12.13, torch 2.9.0, qiskit 2.5.0, qiskit-aer-gpu-cu11 0.17.2, qiskit-ibm-runtime 0.47.0, qiskit-ionq 1.1.1, iqm-client 35.0.1, cuquantum-python-cu11 24.3.0.post0, custatevec-cu11 1.6.0.post1, opt\_einsum 3.4.0, cotengra 0.7.5, numpy 2.5.1, nvidia-ml-py 13.610.43.
+  \item \textbf{Hardware.} UCL CS SGE cluster: CPU nodes for structure, transpiles and path search; NVIDIA L4 for GPU energies; NVIDIA L40S or similar for the noise emulations.
+  \item \textbf{Code.} Branch \texttt{energy-fig} (from \texttt{shotcost} 0f3ecf3), on quantum-learning-labs/QCLIP:
+  \begin{itemize}
+    \item \texttt{analysis/bench/qpu\_iqm.py};
+    \item \texttt{analysis/bench/shotcost\_noise.py} (iqm\_garnet profile, \texttt{--dump});
+    \item \texttt{analysis/bench/ionq\_calib.py};
+    \item \texttt{analysis/bench/efig/} (\texttt{efig\_calc.py}, \texttt{efig\_plot.py}, \texttt{efig\_page.html}, \texttt{efig\_ingest.sh}, job scripts in \texttt{job\_scripts/}).
+  \end{itemize}
+  \item \textbf{Reproduce the figure.}
+\end{itemize}
+(1) Run the jobs in \texttt{analysis/bench/efig/job\_scripts/}: \texttt{job\_cpu\_l\{5,6,7\}.sh}, \texttt{job\_iqm\_l4.sh}, \texttt{job\_calcounts.sh}, \texttt{job\_gpu\_rep.sh}, \texttt{mk\_iqm.sh}, \texttt{job\_ionq\_dump.sh}.\\
+(2) Copy the CSVs into \texttt{adv\_data/}: \texttt{efig\_ingest.sh} does this.\\
+(3) Aggregate and compute: \texttt{python3 adv\_agg.py \&\& python3 efig\_calc.py}.\\
+(4) Draw: \texttt{python efig\_plot.py efig.json efig\_log2 log2}.\\
+
