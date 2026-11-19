@@ -20,11 +20,9 @@ import json, math, os
 d = json.load(open('efig.json'))
 pend = []
 have = {r['layers'] for r in json.load(open('adv.json'))['rows'] if any(c['o'] == 'ctg' for cs in (r.get('paths_ps') or []) for c in cs)}
-for L in (5, 6, 7):
-    if L not in have: pend.append(f'{L}-layer circuits (interpolated until then)')
+ip = [f"{x['nq']} q" for x in d['series']['log2'] if x['cls_status'] == 'interpolated']
+if ip: pend.append('interpolated until their circuits land: ' + ', '.join(ip))
 if not d['meta']['iqm_route']: pend.append('IQM transpiles (Kingston overhead stands in)')
-for L, f in ((5, 'tw_bounds_ctg_l5.csv'), (6, 'tw_bounds_ctg_l6.csv'), (7, 'tw_bounds_ctg_l7.csv')):
-    if not os.path.exists(f) or sum(1 for _ in open(f)) < 2: pend.append(f'{L}-layer cotengra paths (random-greedy bounds until then)')
 cs = d['meta'].get('cal_src', {})
 for b_ in ('IonQ', 'IQM'):
     if not cs.get(b_, '').startswith('calibrated'): pend.append(f'{b_} noise calibration (modelled until then)')

@@ -125,7 +125,7 @@ def tnc(meas, meas_s, paths, lf_any, lf_greedy, mult, gps, gap_fb=0.0):
             cs = [dict(c, lf=c['lf'] - u * gain(c['lf'])) if c.get('lf') is not None and c['o'] not in GREEDY else c for c in cs]
         for c in cs:
             ru = run(c)
-            if MC and meas is not None and ru == meas: ru = meas * MC['meas_f']   # measured: idle-subtracted (net) .. gross convention
+            if MC and meas is not None and ru == meas: ru = meas * MC['meas_f'] * 10 ** MC['rng'].gauss(0, SIG_RUN)   # net..gross convention x run-to-run
             t_run = (meas_s if (meas is not None and ru == meas) else max(0.016, 10 ** c['lf'] / RATE))
             host = mult * t_run * PCPU                       # host share of the GPU run (one busy core)
             tot = mult * ru + host + c['s'] * PCPU / K
@@ -313,7 +313,7 @@ def point(r):
     p['sv'] = sv_point(r); p['be_sv'] = {}
     if MC and p['sv']:
         if p['sv']['status'] == 'extrapolated': p['sv'] = dict(p['sv'], J=p['sv']['J'] * 10 ** (MC['sv_t']() * sv_pi(r['nq'])))
-        elif p['sv']['status'] in ('measured', 'scaled'): p['sv'] = dict(p['sv'], J=p['sv']['J'] * MC['meas_f'])
+        elif p['sv']['status'] in ('measured', 'scaled'): p['sv'] = dict(p['sv'], J=p['sv']['J'] * MC['meas_f'] * 10 ** MC['rng'].gauss(0, SIG_RUN))
     p['shot_J'] = dict(IBM=(q['ibm_dur'] + IBM['rep']) * IBM['P'], IonQ=(q['ionq_n1q'] * IONQ['t1'] + q['ionq_n2q'] * IONQ['t2'] + IONQ['shot']) * IONQ['P'],
                        IQM=(IQM['shot'] + q['iqm_dur']) * IQM['P'])
     p['shots'] = {b: {str(m): N0 / max(F2(b, q, m), 1e-300) for m in NOISE} for b in EF}
@@ -367,6 +367,20 @@ for fn in glob.glob(os.path.join(H, 'gpu_engines*.csv')):
             if g > 0 and 0 < n <= g: _ratios.append(n / g)
         except (KeyError, ValueError): pass
 NET_GROSS = statistics.median(_ratios) if _ratios else 1.0
+# run-to-run reproducibility of the measured GPU energies: 4 repeats on an L4 (gpu_rep.csv) against the original measurements of the same
+# circuits (other node, other day): rms of log10(repeat mean / original), which also covers the smaller within-session spread
+def _sig_run():
+    fn = os.path.join(H, 'gpu_rep.csv')
+    if not os.path.exists(fn): return 0.0, 0
+    rep_ = {(r['nq'], r['engine']): float(r['mean_J']) for r in csv.DictReader(open(fn))}
+    orig = {}
+    for f_ in glob.glob(os.path.join(H, 'gpu_engines*.csv')):
+        for r in csv.DictReader(open(f_)):
+            try: orig.setdefault((r['nq'], r['engine']), float(r['J_gross_per_decision']))
+            except (TypeError, ValueError): pass   # empty (failed) rows and stray header lines
+    d_ = [math.log10(v / orig[k]) for k, v in rep_.items() if k in orig]
+    return (math.sqrt(sum(x * x for x in d_) / len(d_)), len(d_)) if d_ else (0.0, 0)
+SIG_RUN, N_RUN = _sig_run()
 # interpolation error: the real 5-layer circuits against what the 4/8-layer interpolation predicted for them
 _ie = []
 for nq in SIZES:
@@ -385,7 +399,8 @@ SOURCES = [
     ('workload', 'QPU: routing overhead of individual circuits at that depth (placement on the coupling map); classical: one typical-width '
                  'network per size was searched, so the per-sentence spread of contraction cost is NOT covered'),
     ('measured GPU energy', f'idle-subtracted to gross energy convention (median net/gross {NET_GROSS:.2f}; gross, the central value, is the '
-                            'upper edge); run-to-run repeats on an L4 are queued and will be added'),
+                            f'upper edge) x run-to-run reproducibility, log-normal sigma {SIG_RUN:.3f} decades (4 repeats on an L4 against the original '
+                            f'runs on another node and day, {N_RUN} engine-size pairs; within-session spread 0.3-3%)'),
     ('classical upper bounds', f'one-sided (downward only; the best path found is the upper edge): log10 FLOP lowered by U(0,1) x g, where '
                                f'g = {GAIN_A:.2f} + {GAIN_B:.3f} log10 FLOP (fit over {len(_G)} networks of the gain of the 600 s cotengra search '
                                f'over random-greedy-128, residual {GAIN_RMS:.2f} decades): one path-quality model for all sizes'),

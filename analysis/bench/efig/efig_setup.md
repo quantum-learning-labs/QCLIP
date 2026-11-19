@@ -65,7 +65,7 @@ Every number below is taken from the code, configs, data files or job logs named
 
 - **Method.** 2000 Monte Carlo draws; the bands are the 16th–84th percentiles; the central line is the current estimate (`efig_calc.py`, seed 12345). Classical and statevector bands are one-sided: the central estimate (best path found, gross energy) is their upper edge.
 - **Workload.** The QPU routing overhead is drawn from the overheads of individual circuits at that depth. On the classical side one typical-width network per size was searched, so the per-sentence spread of contraction cost is **not covered**.
-- **GPU energy.** U(net/gross, 1) × measured (median net/gross 0.47). Run-to-run repeats on an L4 are queued and will be added.
+- **GPU energy.** U(net/gross, 1) × measured (median net/gross 0.47), times a log-normal run-to-run factor with σ = 0.024 decades: 4 repeats on an L4 of cuStateVec, lazy statevector, exact TN (22, 28, 31 q) and MPS (31 q, χ = 4, 16) agree within 0.3–3% of each other and within 0.024 decades rms of the original runs on another node and day (`analysis/bench/efig/job_scripts/job_gpu_rep.sh`).
 - **Classical upper bounds.** One-sided: log₁₀ FLOP − U(0, 1) × g, with g = 0.135 × log₁₀ FLOP, a single fit over 92 networks of the gain of the 600 s cotengra search over random-greedy-128 (residual 0.78 decades). It is used as the scale of a further improvement a better search could find. The band vanishes where the cost is set by the fixed per-run overhead (≥ 1 J of kernel launches) rather than by the path.
 - **Interpolated depths.** Log-normal with σ = 0.35 decades, measured on the real 5-layer circuits.
 - **Statevector extrapolation.** Student-t prediction interval.
