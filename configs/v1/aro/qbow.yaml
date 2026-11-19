@@ -1,0 +1,28 @@
+# qclip v1 baseline QBoW for ARO: as svo-probes/qbow.yaml with the ARO CCG-VQC's depth (3 layers) and batch size.
+# Not parameter-matched by design: 141,912 text params (CCG-VQC 59,130).
+model_type: "vqc"
+batch_size: 512
+qlr: 0.01
+clr: 0.0001
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_qubits: 9
+out_dim: 512
+
+text:
+  ansatz: "custom_v5"
+  n: 1
+  s: 1
+  p: 1
+  layers: 3
+  curry: true
+  root: "word"
+  spider: true
+  discard: false
+
+vision:
+  layers: 2
+  method: "amp"
+
+dataset: "aro"

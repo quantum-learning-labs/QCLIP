@@ -1,0 +1,25 @@
+# qclip v1 baseline MicroCLIP-24 for ARO: as svo-probes/microclip.yaml with width 24 and ff_dim 47, which matches the ARO
+# CCG-VQC: ~59,130 text params (scripts/count_params.py).
+model_type: "microclip"
+batch_size: 512
+lr: 0.001
+weight_decay: 0.0
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_dim: 512
+loss: "hs"
+temperature: 0.07
+label_smoothing: 0.1
+
+text:
+  width: 24
+  layers: 2
+  heads: 2
+  ff_dim: 47
+  max_len: 32
+
+vision:
+  method: "amp"
+
+dataset: "aro"

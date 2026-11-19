@@ -1,0 +1,29 @@
+# qclip v1 baseline QBoW for SVO-Probes: every word its own custom_v5 box on the 9 output qubits, words merged by
+# Frobenius multiplication (word order and grammar ignored). Same depth (5 layers), recipe and image vector as the CCG-VQC
+# (svo-probes/ps.yaml). Not parameter-matched by design: 24,435 text params (CCG-VQC 19,485).
+model_type: "vqc"
+batch_size: 256
+qlr: 0.01
+clr: 0.0001
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_qubits: 9
+out_dim: 512
+
+text:
+  ansatz: "custom_v5"
+  n: 1
+  s: 1
+  p: 1
+  layers: 5
+  curry: true
+  root: "word"
+  spider: true
+  discard: false
+
+vision:
+  layers: 2
+  method: "amp"
+
+dataset: "svo-probes"

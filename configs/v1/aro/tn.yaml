@@ -1,0 +1,26 @@
+# qclip v1 baseline CCG tensor network for aro: the same CCG diagrams and dimensions as the CCG-VQC (wires 2^3 = 8, output
+# 512 = the raw CLIP vector), word tensors MPS-decomposed at bond dimension 2. It can't be parameter-matched without changing
+# the dimensions (bond 1 is already 335k on SVO / 283k on ARO): 288,720 text params (5x the CCG-VQC's 59,130).
+model_type: "tn"
+batch_size: 512
+lr: 0.001
+weight_decay: 0.0
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_dim: 512
+loss: "hs"
+temperature: 0.07
+label_smoothing: 0.1
+
+text:
+  n: 8
+  s: 8
+  p: 8
+  bond_dim: 2
+  max_order: 3
+
+vision:
+  method: "amp"
+
+dataset: "aro"
