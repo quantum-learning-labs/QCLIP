@@ -49,8 +49,8 @@ Every number below is taken from the code, configs, data files or job logs named
 - **Fidelity.** ln F = a − ε·n₂q.
   - IBM (calibrated): a = −0.241, ε = 3.67 × 10⁻³ (± 0.56 × 10⁻³) per routed two-qubit gate. F is the least-squares slope of noisy on exact margins, from 27 density-matrix emulations of the post-selected models on FakeKingston (6–13 q, 300 std pairs, 2²⁰ shots, CU readout), fitted against their best-of-5 routed two-qubit counts (`analysis/bench/efig/calib_data/calib_kingston_counts.csv`), the same counts the figure prices. The fit over all 54 emulations (post-selected and discard) gives a = −0.194, ε = 3.73 × 10⁻³, the same within errors. The constants used before (a = −0.187, ε = 3.31 × 10⁻³) were fitted against counts that were not stored.
   - IonQ (calibrated): a = −0.152, ε₂ = 5.37 × 10⁻³ (± 0.49 × 10⁻³) per two-qubit gate, with the one-qubit term kept at the spec ratio (ε₁ = 0.05 ε₂). Fitted on the same 27 post-selected models run on IonQ's cloud simulator with its noise model `forte-1` (100 std pairs, 4096 shots, CU readout; `analysis/bench/ionq_calib.py`, `calib_fit.py`) against IonQ-native counts (r² = 0.83). This replaces the earlier spec values (ε₂ = 4 × 10⁻³, ε₁ = 2 × 10⁻⁴, **assumed**).
-  - IQM: Kingston's fit scaled by the median-error ratios: ε = 3.67 × 10⁻³ × 5 × 10⁻³ / 1.8 × 10⁻³ and a = −0.241 × 3 × 10⁻² / 9.52 × 10⁻³. This is a model, not a calibration.
-  - The like-for-like IQM calibration (fake Garnet noise model, same 27 models) is running and replaces the IQM model when it lands.
+  - IQM (calibrated): a = −0.384, ε = 7.06 × 10⁻³ (± 0.66 × 10⁻³) per routed CZ, from the same 27 post-selected models emulated with the iqm-client fake Garnet noise model (density matrix, 300 std pairs, 2²⁰ shots, CU readout; `shotcost_noise.py --profiles iqm_garnet`) against their best-of-5 routed CZ counts on the IQM lattice (r² = 0.82). It replaces the earlier model (Kingston's fit scaled by the median-error ratios, ε = 1.02 × 10⁻²).
+  - All three backends are calibrated the same way on the same 27 post-selected models; each fit is bootstrapped over its own runs in the uncertainty bands.
 - **Energy per decision.**
   - IBM: [N (t_circ + 250 µs) + 2·2/190 s] × 25 kW.
   - IonQ: [N (n₁q·110 µs + n₂q·900 µs + 1.5 ms) + 2·10 s] × 5 kW.
@@ -69,7 +69,7 @@ Every number below is taken from the code, configs, data files or job logs named
 - **Classical upper bounds.** One-sided: log₁₀ FLOP − U(0, 1) × g, with g = 0.135 × log₁₀ FLOP, a single fit over 92 networks of the gain of the 600 s cotengra search over random-greedy-128 (residual 0.78 decades). It is used as the scale of a further improvement a better search could find. The band vanishes where the cost is set by the fixed per-run overhead (≥ 1 J of kernel launches) rather than by the path.
 - **Interpolated depths.** Log-normal with σ = 0.35 decades, measured on the real 5-layer circuits.
 - **Statevector extrapolation.** Student-t prediction interval.
-- **QPU noise fit.** Bootstrap of the 27 post-selected Kingston calibration runs (ln F against best-of-5 routed counts): IBM directly; its relative spread is applied to IonQ and IQM until their own calibrations land.
+- **QPU noise fit.** Bootstrap of each backend's own 27 calibration runs (IBM: FakeKingston emulations; IonQ: cloud simulator; IQM: fake Garnet emulations), each against that backend's own counts.
 - **QPU ranges.** Power, uniform: IBM 25–30 kW, IonQ 3.5–6.5 kW (**assumed**), IQM 24–30 kW. Time per shot: IBM repetition delay 100–500 µs (**assumed**), IonQ ×0.8–1.2 (**assumed**), IQM 0.96–1.92 ms (**assumed** lower end).
 - **Not covered.** Better classical algorithms than those tried; hardware roadmaps; error mitigation or correction overheads; queueing.
 

@@ -49,8 +49,20 @@ KING_MED2Q, KING_MEDRO = 1.80e-3, 9.52e-3     # FakeKingston snapshot medians (2
 IQM = dict(P=24e3,                             # W, typical mean total electrical power, IQM Radiance spec (iqm.tech/products/iqm-radiance)
            e2=5e-3, e1=9e-4, ro=3e-2,          # median CZ, 1q, simultaneous readout errors (IQM Garnet benchmarks, arXiv 2408.12433)
            shot=100 * 10 * 100 * 5 / 2600 / (100 * 10 * 100))   # s per shot incl. overheads from CLOPS 2600 (M=100, K=10, S=100, D=5): 1.92 ms
-IQM['eff'] = CAL['eIBM'] * IQM['e2'] / KING_MED2Q              # effective per-CZ log-fidelity, scaled from the Kingston fit by the median-error ratio
-IQM['a'] = CAL['a'] * IQM['ro'] / KING_MEDRO                   # intercept (SPAM) scaled by the readout-error ratio
+IQM['eff'] = CAL['eIBM'] * IQM['e2'] / KING_MED2Q              # model (until calibrated): Kingston fit scaled by the median-error ratio
+IQM['a'] = CAL['a'] * IQM['ro'] / KING_MEDRO                   # model: intercept scaled by the readout-error ratio
+# IQM calibration: the same 27 post-selected models emulated with the iqm-client fake Garnet noise model (density matrix, 300 std pairs,
+# 2^20 shots; noise_calib_iqm.csv), ln F = a - eps n2q against their best-of-5 routed CZ counts on the IQM lattice (calib_iqm_counts.csv)
+def _iqm_rows():
+    cnt = collections.defaultdict(list); fn = os.path.join(H, 'calib_iqm_counts.csv'); fc = os.path.join(H, 'noise_calib_iqm.csv')
+    if not (os.path.exists(fn) and os.path.exists(fc)): return []
+    for r in csv.DictReader(open(fn)):
+        if r.get('circ') != 'O' and r.get('fits') == '1': cnt[r['ckpt']].append(float(r['iqm_n2q']))
+    return [(statistics.mean(cnt[r['ckpt']]), math.log(float(r['F_eff']))) for r in csv.DictReader(open(fc)) if r['ckpt'] in cnt]
+IQM_PTS = _iqm_rows()
+if len(IQM_PTS) >= 5:
+    _aq, _bq = _lin(IQM_PTS); IQM['a'], IQM['eff'] = _aq, -_bq
+    CAL_SRC['IQM'] = f'calibrated: {len(IQM_PTS)} post-selected models with the iqm-client fake Garnet noise model, best-of-5 lattice counts'
 NOISE = [1, 0.1, 0.01]       # multiplier on the two-qubit (and IonQ one-qubit) gate error only; readout/SPAM intercept a unchanged
 
 rows_all = D['rows']
@@ -312,7 +324,7 @@ def point(r):
              iqm_src=q['iqm_src'], qpu={}, be={})
     p['sv'] = sv_point(r); p['be_sv'] = {}
     if MC and p['sv']:
-        if p['sv']['status'] == 'extrapolated': p['sv'] = dict(p['sv'], J=p['sv']['J'] * 10 ** (MC['sv_t']() * sv_pi(r['nq'])))
+        if p['sv']['status'] == 'extrapolated': p['sv'] = dict(p['sv'], J=p['sv']['J'] * 10 ** max(-10.0, min(10.0, MC['sv_t']() * sv_pi(r['nq']))))   # heavy t tail (2 dof) capped at +-10 decades
         elif p['sv']['status'] in ('measured', 'scaled'): p['sv'] = dict(p['sv'], J=p['sv']['J'] * MC['meas_f'] * 10 ** MC['rng'].gauss(0, SIG_RUN))
     p['shot_J'] = dict(IBM=(q['ibm_dur'] + IBM['rep']) * IBM['P'], IonQ=(q['ionq_n1q'] * IONQ['t1'] + q['ionq_n2q'] * IONQ['t2'] + IONQ['shot']) * IONQ['P'],
                        IQM=(IQM['shot'] + q['iqm_dur']) * IQM['P'])
@@ -407,7 +419,7 @@ SOURCES = [
     ('interpolated depths', f'log-normal, sigma = {SIG_INTERP:.2f} decades: error of the 4/8-layer interpolation measured on the real 5-layer circuits'),
     ('statevector extrapolation', 'Student-t prediction interval of the regression of log10(J per gate) on qubits over the measured 22-31 q points'),
     ('QPU noise fit', f'bootstrap of the calibration runs of the same {len(_cal)} post-selected models: IBM (FakeKingston emulations, best-of-5 '
-                      f'routed counts), IonQ ({len(ION_PTS)} cloud-simulator runs, native counts); IQM uses the IBM spread until its calibration lands'),
+                      f'routed counts), IonQ ({len(ION_PTS)} cloud-simulator runs, native counts), IQM ({len(IQM_PTS)} fake-Garnet emulations, best-of-5 lattice counts), each bootstrapped on its own runs'),
     ('QPU power', 'IBM 25-30 kW (26 kW System Two refrigerator, arXiv:2304.14344; ~30 kW System One installations); IonQ 3.5-6.5 kW '
                   '(5 kW +-30%, assumed); IQM 24-30 kW (typical mean, IQM Radiance spec; 30 kW peak, Mansfield et al. 2025)'),
     ('QPU time per shot', 'IBM repetition delay 100-500 us (assumed; IBM docs example uses 500 us); IonQ gate and shot times +-20% (assumed); '
@@ -431,7 +443,10 @@ def draw_all(seed=12345):
                 ai, bi = _lin([rng.choice(ION_PTS) for _ in ION_PTS]); CAL.update(aIonQ=ai, eIonQ=-bi, e1IonQ=-0.05 * bi)
             else:
                 CAL['eIonQ'] = base[0]['eIonQ'] * fac; CAL['e1IonQ'] = base[0]['e1IonQ'] * fac; CAL['aIonQ'] = base[0]['aIonQ'] + da
-            IQM['eff'] = base[3]['eff'] * fac; IQM['a'] = (base[0]['a'] + da) * base[3]['a'] / base[0]['a']
+            if len(IQM_PTS) >= 5:
+                aq, bq = _lin([rng.choice(IQM_PTS) for _ in IQM_PTS]); IQM['a'], IQM['eff'] = aq, -bq
+            else:
+                IQM['eff'] = base[3]['eff'] * fac; IQM['a'] = (base[0]['a'] + da) * base[3]['a'] / base[0]['a']
             IBM['P'] = rng.uniform(*RANGES['IBM_P']); IBM['rep'] = rng.uniform(*RANGES['IBM_rep'])
             IONQ['P'] = rng.uniform(*RANGES['IonQ_P']); ft = rng.uniform(*RANGES['IonQ_t'])
             for k in ('t1', 't2', 'shot'): IONQ[k] = base[2][k] * ft
