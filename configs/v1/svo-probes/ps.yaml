@@ -1,5 +1,7 @@
 # qclip v1 final post-selected model for SVO-Probes: chosen by the v1 qubit search on split-0 val (REPRODUCE.md):
-# k=9 output qubits (the raw CLIP vector, no PCA), one qubit per noun/sentence/prepositional wire, 2 text layers.
+# k=9 output qubits (the raw CLIP vector, no PCA), 3 qubits per noun/sentence/prepositional wire, 5 text layers.
+# Split-0 val hard_neg_acc (best epoch): n3L3 0.646 | n3L4 0.672 | n3L5 0.709 | n2L5 0.684 | n4L4 0.643;
+# n3L6 does not fit in 24 h (>100 min/epoch on a 48 GB GPU).
 model_type: "vqc"
 batch_size: 256
 qlr: 0.01
@@ -12,10 +14,10 @@ out_dim: 512
 
 text:
   ansatz: "custom_v5"
-  n: 1
-  s: 1
-  p: 1
-  layers: 2
+  n: 3
+  s: 3
+  p: 3
+  layers: 5
   curry: true
   root: "word"
   spider: false
