@@ -8,12 +8,11 @@ from modules.symbolic.root import apply_root
 from modules.data_pipeline.splits import assign, select
 
 class DataEngine:
-    def __init__(self, config, ansatz, device, root_mode=None):
+    def __init__(self, config, ansatz, device):
         self.config = config
         self.ansatz = ansatz
         self.device = device
-        self.root_mode = root_mode
-
+        
         ds_config = config['dataset']
         self.DatasetClass = load_obj(ds_config['class'])
         self.collate_fn = load_obj(ds_config['collate_fn'])
@@ -64,9 +63,9 @@ class DataEngine:
             compile_kwargs["discard"] = self.config["text"].get("discard", False)
             compile_kwargs["spider"] = self.config["text"].get("spider", False)
         data = self.load_text(split)
-        if self.root_mode is not None:  
-            for col in [c for c in data.columns if c.endswith('_diagram')]:
-                data[col] = [[apply_root(t, self.root_mode) for t in d] if d and isinstance(d[0], list) else apply_root(d, self.root_mode) for d in data[col]]
+        root = self.config.get('text', {}).get('root', 'word')   # functor.apply_root
+        for col in [c for c in data.columns if c.endswith('_diagram')]:
+            data[col] = [[apply_root(t, root) for t in d] if d and isinstance(d[0], list) else apply_root(d, root) for d in data[col]]
         return self.ansatz.compile_dataset(data, **compile_kwargs)
 
     def text_init(self, text_model, compiled_data):
