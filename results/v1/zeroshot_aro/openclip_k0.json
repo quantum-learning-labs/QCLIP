@@ -1,0 +1,39 @@
+{
+ "model": "openclip",
+ "model_id": "laion/CLIP-ViT-B-32-laion2B-s34B-b79K",
+ "hf_revision": "1a25a446712ba5ee05982a381eed697ef9b435cf",
+ "dataset": "aro",
+ "split_seed": 0,
+ "split": {
+  "spec": {
+   "by": "vg_image_id",
+   "fractions": [
+    0.7,
+    0.15,
+    0.15
+   ],
+   "seed": 0
+  },
+  "id": "0cc9e231ec874787",
+  "rows": {
+   "train": 39309,
+   "val": 6125,
+   "test": 7239
+  },
+  "groups_moved_for_vocab": 132
+ },
+ "limit": null,
+ "git_commit": "55985fb",
+ "device": "cuda",
+ "seconds": 50.9,
+ "results": {
+  "att_cos_hard_neg_acc": 0.5648369132856006,
+  "att_cos_hard_neg_acc_tie_half": 0.5649695041103155,
+  "att_cos_ties": 1,
+  "att_cos_n": 3771,
+  "rel_cos_hard_neg_acc": 0.4994232987312572,
+  "rel_cos_hard_neg_acc_tie_half": 0.4992791234140715,
+  "rel_cos_ties": 1,
+  "rel_cos_n": 3468
+ }
+}

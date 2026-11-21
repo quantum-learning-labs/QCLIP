@@ -7,7 +7,9 @@ data/
 !configs/data/
 .data/
 data_compact/
-results/
+/results/*
+# the v1 release results are part of the repo
+!/results/v1/
 *.db
 *.zip
 *.jpg

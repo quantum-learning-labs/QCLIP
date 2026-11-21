@@ -1,0 +1,39 @@
+{
+ "model": "clip",
+ "model_id": "openai/clip-vit-base-patch32",
+ "hf_revision": "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268",
+ "dataset": "aro",
+ "split_seed": 3,
+ "split": {
+  "spec": {
+   "by": "vg_image_id",
+   "fractions": [
+    0.7,
+    0.15,
+    0.15
+   ],
+   "seed": 3
+  },
+  "id": "fbd824cac093170b",
+  "rows": {
+   "train": 38325,
+   "val": 6964,
+   "test": 7384
+  },
+  "groups_moved_for_vocab": 125
+ },
+ "limit": null,
+ "git_commit": "55985fb",
+ "device": "cuda",
+ "seconds": 36.3,
+ "results": {
+  "att_cos_hard_neg_acc": 0.628103277060576,
+  "att_cos_hard_neg_acc_tie_half": 0.627979145978153,
+  "att_cos_ties": 1,
+  "att_cos_n": 4028,
+  "rel_cos_hard_neg_acc": 0.516984505363528,
+  "rel_cos_hard_neg_acc_tie_half": 0.5171334922526818,
+  "rel_cos_ties": 1,
+  "rel_cos_n": 3356
+ }
+}

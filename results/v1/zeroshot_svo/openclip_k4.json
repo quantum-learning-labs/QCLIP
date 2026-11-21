@@ -1,0 +1,48 @@
+{
+ "model": "openclip",
+ "model_id": "laion/CLIP-ViT-B-32-laion2B-s34B-b79K",
+ "hf_revision": "1a25a446712ba5ee05982a381eed697ef9b435cf",
+ "dataset": "svo-probes",
+ "split_seed": 4,
+ "split": {
+  "spec": {
+   "by": "pos_image_id",
+   "fractions": [
+    0.6,
+    0.2,
+    0.2
+   ],
+   "seed": 4,
+   "test_always": "swap95"
+  },
+  "id": "326f6c2f3f89ab7f",
+  "rows": {
+   "train": 5311,
+   "val": 1726,
+   "test": 1892
+  },
+  "groups_moved_for_vocab": 9
+ },
+ "limit": null,
+ "git_commit": "7f1983e",
+ "device": "cuda",
+ "seconds": 14.7,
+ "results": {
+  "std_cos_hard_neg_acc": 0.8715644820295984,
+  "std_cos_hard_neg_acc_tie_half": 0.8715644820295984,
+  "std_cos_ties": 0,
+  "std_cos_n": 1892,
+  "swap_full_cos_hard_neg_acc": 0.7235550708833152,
+  "swap_full_cos_hard_neg_acc_tie_half": 0.7235550708833152,
+  "swap_full_cos_ties": 0,
+  "swap_full_cos_n": 1834,
+  "swap95_cos_hard_neg_acc": 0.6210526315789474,
+  "swap95_cos_hard_neg_acc_tie_half": 0.6210526315789474,
+  "swap95_cos_ties": 0,
+  "swap95_cos_n": 95,
+  "swap100_cos_hard_neg_acc": 0.71,
+  "swap100_cos_hard_neg_acc_tie_half": 0.71,
+  "swap100_cos_ties": 0,
+  "swap100_cos_n": 100
+ }
+}

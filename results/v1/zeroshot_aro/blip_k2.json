@@ -1,0 +1,47 @@
+{
+ "model": "blip",
+ "model_id": "Salesforce/blip-itm-base-coco",
+ "hf_revision": "bed8ad38cb2d04a5a4bdf2d071b3c3c0a4aa724c",
+ "dataset": "aro",
+ "split_seed": 2,
+ "split": {
+  "spec": {
+   "by": "vg_image_id",
+   "fractions": [
+    0.7,
+    0.15,
+    0.15
+   ],
+   "seed": 2
+  },
+  "id": "32444ae892f1018d",
+  "rows": {
+   "train": 38639,
+   "val": 7010,
+   "test": 7024
+  },
+  "groups_moved_for_vocab": 124
+ },
+ "limit": null,
+ "git_commit": "55985fb",
+ "device": "cuda",
+ "seconds": 307.9,
+ "results": {
+  "att_itm_hard_neg_acc": 0.8720752797558494,
+  "att_itm_hard_neg_acc_tie_half": 0.8720752797558494,
+  "att_itm_ties": 0,
+  "att_itm_n": 3932,
+  "att_itc_hard_neg_acc": 0.7639877924720244,
+  "att_itc_hard_neg_acc_tie_half": 0.7639877924720244,
+  "att_itc_ties": 0,
+  "att_itc_n": 3932,
+  "rel_itm_hard_neg_acc": 0.5472186287192755,
+  "rel_itm_hard_neg_acc_tie_half": 0.5472186287192755,
+  "rel_itm_ties": 0,
+  "rel_itm_n": 3092,
+  "rel_itc_hard_neg_acc": 0.5116429495472187,
+  "rel_itc_hard_neg_acc_tie_half": 0.5116429495472187,
+  "rel_itc_ties": 0,
+  "rel_itc_n": 3092
+ }
+}

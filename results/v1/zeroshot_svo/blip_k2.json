@@ -1,0 +1,64 @@
+{
+ "model": "blip",
+ "model_id": "Salesforce/blip-itm-base-coco",
+ "hf_revision": "bed8ad38cb2d04a5a4bdf2d071b3c3c0a4aa724c",
+ "dataset": "svo-probes",
+ "split_seed": 2,
+ "split": {
+  "spec": {
+   "by": "pos_image_id",
+   "fractions": [
+    0.6,
+    0.2,
+    0.2
+   ],
+   "seed": 2,
+   "test_always": "swap95"
+  },
+  "id": "8c7eb29b39419d1a",
+  "rows": {
+   "train": 5358,
+   "val": 1780,
+   "test": 1791
+  },
+  "groups_moved_for_vocab": 9
+ },
+ "limit": null,
+ "git_commit": "7f1983e",
+ "device": "cuda",
+ "seconds": 46.6,
+ "results": {
+  "std_itm_hard_neg_acc": 0.9419318816303741,
+  "std_itm_hard_neg_acc_tie_half": 0.9419318816303741,
+  "std_itm_ties": 0,
+  "std_itm_n": 1791,
+  "std_itc_hard_neg_acc": 0.9134561697375768,
+  "std_itc_hard_neg_acc_tie_half": 0.9134561697375768,
+  "std_itc_ties": 0,
+  "std_itc_n": 1791,
+  "swap_full_itm_hard_neg_acc": 0.748558246828143,
+  "swap_full_itm_hard_neg_acc_tie_half": 0.748558246828143,
+  "swap_full_itm_ties": 0,
+  "swap_full_itm_n": 1734,
+  "swap_full_itc_hard_neg_acc": 0.7531718569780853,
+  "swap_full_itc_hard_neg_acc_tie_half": 0.7534602076124567,
+  "swap_full_itc_ties": 1,
+  "swap_full_itc_n": 1734,
+  "swap95_itm_hard_neg_acc": 0.631578947368421,
+  "swap95_itm_hard_neg_acc_tie_half": 0.631578947368421,
+  "swap95_itm_ties": 0,
+  "swap95_itm_n": 95,
+  "swap95_itc_hard_neg_acc": 0.3684210526315789,
+  "swap95_itc_hard_neg_acc_tie_half": 0.3684210526315789,
+  "swap95_itc_ties": 0,
+  "swap95_itc_n": 95,
+  "swap100_itm_hard_neg_acc": 0.75,
+  "swap100_itm_hard_neg_acc_tie_half": 0.75,
+  "swap100_itm_ties": 0,
+  "swap100_itm_n": 100,
+  "swap100_itc_hard_neg_acc": 0.75,
+  "swap100_itc_hard_neg_acc_tie_half": 0.75,
+  "swap100_itc_ties": 0,
+  "swap100_itc_n": 100
+ }
+}
