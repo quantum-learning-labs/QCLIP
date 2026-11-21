@@ -1,0 +1,93 @@
+model_type: vqc
+batch_size: 256
+qlr: 0.01
+clr: 0.0001
+patience: 12
+min_delta: 0.001
+epochs: 100
+embedding_qubits: 9
+out_dim: 512
+text:
+  ansatz: custom_v5
+  n: 3
+  s: 3
+  p: 3
+  layers: 5
+  curry: true
+  root: word
+  spider: false
+  discard: false
+vision:
+  layers: 2
+  method: amp
+dataset:
+  name: svo-probes
+  class: modules.data_pipeline.datasets.SVODataset
+  collate_fn: modules.data_pipeline.datasets.svo_collate_fn
+  eval_mapper: modules.data_pipeline.datasets.svo_mapper
+  split: &id001
+    by: pos_image_id
+    fractions:
+    - 0.6
+    - 0.2
+    - 0.2
+    seed: 0
+    test_always: swap95
+  train:
+    text_path: data/svo-probes/processed/all.pkl
+    img_path: data/svo-probes/processed/image_embeddings.pt
+  val:
+    text_path: data/svo-probes/processed/all.pkl
+    img_path: data/svo-probes/processed/image_embeddings.pt
+    diagnostics:
+    - evaluate_image_choice
+    - diagnostic_image_choice
+  test:
+    std:
+      class: modules.data_pipeline.datasets.SVODataset
+      collate_fn: modules.data_pipeline.datasets.svo_collate_fn
+      split: test
+      text_path: data/svo-probes/processed/all.pkl
+      img_path: data/svo-probes/processed/image_embeddings.pt
+      task: evaluate_image_choice
+    swap_full:
+      class: modules.data_pipeline.datasets.SwapDataset
+      collate_fn: modules.data_pipeline.datasets.text_choice_collate_fn
+      split: test
+      derive: swap
+      text_path: data/svo-probes/processed/all.pkl
+      img_path: data/svo-probes/processed/image_embeddings.pt
+      task: evaluate_text_choice
+    swap95:
+      class: modules.data_pipeline.datasets.SwapDataset
+      collate_fn: modules.data_pipeline.datasets.text_choice_collate_fn
+      split: test
+      derive: swap95
+      text_path: data/svo-probes/processed/all.pkl
+      img_path: data/svo-probes/processed/image_embeddings.pt
+      task: evaluate_text_choice
+    swap100:
+      class: modules.data_pipeline.datasets.SwapDataset
+      collate_fn: modules.data_pipeline.datasets.text_choice_collate_fn
+      split: test
+      derive: swap
+      sample: 100
+      text_path: data/svo-probes/processed/all.pkl
+      img_path: data/svo-probes/processed/image_embeddings.pt
+      task: evaluate_text_choice
+  split_record:
+    spec: *id001
+    id: 8db5720edc4c2bc3
+    rows:
+      train: 5399
+      val: 1719
+      test: 1811
+    groups_moved_for_vocab: 13
+run_name: v1_svo_ps_n3L5_k0
+mlflow_db: mlf_dbs/v1_svo_ps_n3L5_k0.db
+overrides:
+- run_name=v1_svo_ps_n3L5_k0
+- mlflow_db=mlf_dbs/v1_svo_ps_n3L5_k0.db
+- dataset.split.seed=0
+seed: 0
+git_commit: 7995aad
