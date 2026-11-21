@@ -99,6 +99,7 @@ class RunManager:
                 "overrides": " ".join(self.config.get('overrides', [])) or "none",
                 "init_from": self.config.get('init_from') or "none",
                 "swap_negatives": bool(self.config.get('swap_negatives', False)),
+                "hard_negatives": bool(self.config.get('hard_negatives', False)),
                 "distill_from": self.config.get('distill_from') or "none",
                 "distill_kd_weight": self.config.get('distill_kd_weight', 1.0) if self.config.get('distill_from') else 0.0,
                 "distill_tau": self.config.get('distill_tau', 1.0),

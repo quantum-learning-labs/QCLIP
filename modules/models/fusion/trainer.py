@@ -6,13 +6,14 @@ from torch.utils.data import DataLoader
 from modules.factory import load_experiment
 
 class ContrastiveTrainer:
-    def __init__(self, image_model, text_model, optimizer, loss_fn, device, swap_negatives=False, teacher=None):
+    def __init__(self, image_model, text_model, optimizer, loss_fn, device, swap_negatives=False, teacher=None, hard_negatives=False):
         self.image_model = image_model.to(device)
         self.text_model = text_model.to(device)
         self.optimizer = optimizer
         self.loss_fn = loss_fn
         self.device = device
         self.swap_negatives = swap_negatives   # swapped captions as extra image->text negatives (needs swap_caption in the batch)
+        self.hard_negatives = hard_negatives   # a text-choice dataset's own false captions (ARO) as extra image->text negatives
         self.teacher = teacher                 # Teacher: score distillation from a frozen post-selected model
 
     @torch.no_grad()
@@ -86,6 +87,9 @@ class ContrastiveTrainer:
 
             if self.swap_negatives and 'swap_caption' in batch:
                 loss = self.loss_fn(text_emb, image_emb, self.text_model(batch['swap_caption']), batch['swap_valid'].to(self.device))
+            elif self.hard_negatives and 'neg_caption' in batch:
+                neg = batch['neg_caption']
+                loss = self.loss_fn(text_emb, image_emb, self.text_model(neg), torch.ones(len(neg), dtype=torch.bool, device=self.device))
             else:
                 loss = self.loss_fn(text_emb, image_emb)
             if self.teacher is not None:

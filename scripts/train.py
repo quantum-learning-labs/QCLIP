@@ -53,7 +53,8 @@ if __name__ == "__main__":
         teacher = Teacher(config['distill_from'], exp.train, DEV,
                           kd_weight=config.get('distill_kd_weight', 1.0), kd_tau=config.get('distill_tau', 1.0))
     trainer = ContrastiveTrainer(image_model, text_model, optimizer, exp.loss_fn, DEV,
-                                 swap_negatives=bool(config.get('swap_negatives', False)), teacher=teacher)
+                                 swap_negatives=bool(config.get('swap_negatives', False)), teacher=teacher,
+                                 hard_negatives=bool(config.get('hard_negatives', False)))
     evaluator = MMEvaluator(image_model, text_model, DEV)
 
     manager = RunManager(config, trainer, evaluator, DEV, SEED, scheduler=scheduler)
