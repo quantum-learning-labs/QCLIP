@@ -1,0 +1,102 @@
+{
+ "seed0": {
+  "spec": {
+   "by": "pos_image_id",
+   "fractions": [
+    0.6,
+    0.2,
+    0.2
+   ],
+   "seed": 0,
+   "test_always": "swap95"
+  },
+  "id": "8db5720edc4c2bc3",
+  "rows": {
+   "train": 5399,
+   "val": 1719,
+   "test": 1811
+  },
+  "groups_moved_for_vocab": 13
+ },
+ "seed1": {
+  "spec": {
+   "by": "pos_image_id",
+   "fractions": [
+    0.6,
+    0.2,
+    0.2
+   ],
+   "seed": 1,
+   "test_always": "swap95"
+  },
+  "id": "51a52f4736f82739",
+  "rows": {
+   "train": 5185,
+   "val": 1744,
+   "test": 2000
+  },
+  "groups_moved_for_vocab": 14
+ },
+ "seed2": {
+  "spec": {
+   "by": "pos_image_id",
+   "fractions": [
+    0.6,
+    0.2,
+    0.2
+   ],
+   "seed": 2,
+   "test_always": "swap95"
+  },
+  "id": "8c7eb29b39419d1a",
+  "rows": {
+   "train": 5358,
+   "val": 1780,
+   "test": 1791
+  },
+  "groups_moved_for_vocab": 9
+ },
+ "seed3": {
+  "spec": {
+   "by": "pos_image_id",
+   "fractions": [
+    0.6,
+    0.2,
+    0.2
+   ],
+   "seed": 3,
+   "test_always": "swap95"
+  },
+  "id": "85c52baf551cd51f",
+  "rows": {
+   "train": 5206,
+   "val": 1784,
+   "test": 1939
+  },
+  "groups_moved_for_vocab": 9
+ },
+ "seed4": {
+  "spec": {
+   "by": "pos_image_id",
+   "fractions": [
+    0.6,
+    0.2,
+    0.2
+   ],
+   "seed": 4,
+   "test_always": "swap95"
+  },
+  "id": "326f6c2f3f89ab7f",
+  "rows": {
+   "train": 5311,
+   "val": 1726,
+   "test": 1892
+  },
+  "groups_moved_for_vocab": 9
+ },
+ "pool": {
+  "path": "data/svo-probes/processed/all.pkl",
+  "md5": "2dc06f6e33ba567b244ecdc7ef1f23f6",
+  "rows": 8929
+ }
+}

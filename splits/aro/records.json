@@ -1,0 +1,97 @@
+{
+ "seed0": {
+  "spec": {
+   "by": "vg_image_id",
+   "fractions": [
+    0.7,
+    0.15,
+    0.15
+   ],
+   "seed": 0
+  },
+  "id": "0cc9e231ec874787",
+  "rows": {
+   "train": 39309,
+   "val": 6125,
+   "test": 7239
+  },
+  "groups_moved_for_vocab": 132
+ },
+ "seed1": {
+  "spec": {
+   "by": "vg_image_id",
+   "fractions": [
+    0.7,
+    0.15,
+    0.15
+   ],
+   "seed": 1
+  },
+  "id": "4fe905156665a616",
+  "rows": {
+   "train": 38693,
+   "val": 6991,
+   "test": 6989
+  },
+  "groups_moved_for_vocab": 129
+ },
+ "seed2": {
+  "spec": {
+   "by": "vg_image_id",
+   "fractions": [
+    0.7,
+    0.15,
+    0.15
+   ],
+   "seed": 2
+  },
+  "id": "32444ae892f1018d",
+  "rows": {
+   "train": 38639,
+   "val": 7010,
+   "test": 7024
+  },
+  "groups_moved_for_vocab": 124
+ },
+ "seed3": {
+  "spec": {
+   "by": "vg_image_id",
+   "fractions": [
+    0.7,
+    0.15,
+    0.15
+   ],
+   "seed": 3
+  },
+  "id": "fbd824cac093170b",
+  "rows": {
+   "train": 38325,
+   "val": 6964,
+   "test": 7384
+  },
+  "groups_moved_for_vocab": 125
+ },
+ "seed4": {
+  "spec": {
+   "by": "vg_image_id",
+   "fractions": [
+    0.7,
+    0.15,
+    0.15
+   ],
+   "seed": 4
+  },
+  "id": "af7239405c1f9d01",
+  "rows": {
+   "train": 37804,
+   "val": 7011,
+   "test": 7858
+  },
+  "groups_moved_for_vocab": 118
+ },
+ "pool": {
+  "path": "data/aro/processed/all.pkl",
+  "md5": "caebdd392273418dc0d1e1bd508d3f25",
+  "rows": 52673
+ }
+}
