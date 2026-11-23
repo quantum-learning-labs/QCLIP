@@ -1,0 +1,32 @@
+# ARO as used for the LREC 2026 paper's numbers (July 2026 files): per-split files, no computed split. 36,585 train,
+# 8,000 val, 4,438 VG-Attribution and 3,650 VG-Relation test pairs (a subset of the authors' release); whole-image CLIP
+# embeddings keyed by Visual Genome image_id (not the per-row crops of configs/data/aro.yaml). No test image is in
+# train or val. Files: data/aro_legacy/{train,val,test_att,test_rel}.pkl, image_embeddings.pt.
+name: "aro_legacy"
+class: "modules.data_pipeline.datasets.ARODataset"
+collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+eval_mapper: "modules.data_pipeline.datasets.aro_mapper"
+
+train:
+  text_path: "data/aro_legacy/train.pkl"
+  img_path: "data/aro_legacy/image_embeddings.pt"
+val:
+  text_path: "data/aro_legacy/val.pkl"
+  img_path: "data/aro_legacy/image_embeddings.pt"
+  diagnostics:
+    - "evaluate_text_choice"
+    - "diagnostic_text_choice"
+
+test:
+  att:
+    class: "modules.data_pipeline.datasets.ARODataset"
+    collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+    text_path: "data/aro_legacy/test_att.pkl"
+    img_path: "data/aro_legacy/image_embeddings.pt"
+    task: "evaluate_text_choice"
+  rel:
+    class: "modules.data_pipeline.datasets.ARODataset"
+    collate_fn: "modules.data_pipeline.datasets.text_choice_collate_fn"
+    text_path: "data/aro_legacy/test_rel.pkl"
+    img_path: "data/aro_legacy/image_embeddings.pt"
+    task: "evaluate_text_choice"
