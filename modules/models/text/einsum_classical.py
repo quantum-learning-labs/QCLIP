@@ -15,8 +15,14 @@ class TNModel(nn.Module):
 
     def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False,
                  head: str = 'affine', hybrid: bool = False, word_base: float = None, centre: bool = False,
-                 mix_fixed: float = None, eval_chunk: int = None, word_dropout: float = 0.0):
+                 mix_fixed: float = None, eval_chunk: int = None, word_dropout: float = 0.0, affine: bool = False):
         super().__init__()
+        # affine (text.affine, step 5e, levelwise only): homogeneous coordinates on every wire (modules/models/text/affine.py):
+        # each type tensor computes prod_k (a_k.x_k + c_k) per rank component, i.e. multilinear plus all lower-order terms.
+        # Uses with the output on a different leg read the same row through another mask: virtual bank ('v', bank, view).
+        if affine and (engine != 'levelwise' or bow or hybrid):
+            raise ValueError('text.affine needs text.tn_engine: levelwise (and no bow / hybrid)')
+        self.affine, self._masks = bool(affine), None
         # scale_free (text.scale_free, levelwise only): divide every intermediate of the contraction by its (detached) max |entry|,
         # per sentence. The network is multilinear, so this only rescales each sentence vector by a positive number, which
         # the LayerNorm head removes: same outputs and gradients (up to the LayerNorm eps), no fp32 overflow/underflow
@@ -107,6 +113,9 @@ class TNModel(nn.Module):
             flat_tensors = self._flatten_symbols(tensor_arr)
             for symbol_info in flat_tensors:
                 symbol = symbol_info['name']
+                if self.affine:   # output-view aliases are views of their base tensor, not parameters
+                    from modules.models.text.affine import split_alias
+                    symbol = split_alias(symbol)[0]
                 if self.init == 'norm' and symbol_info.get('out') is not None:
                     self.out_votes[symbol][symbol_info['out']] += 1
                 if symbol not in symbols_hash:
@@ -255,6 +264,9 @@ class TNModel(nn.Module):
         new = {}
         for tensor_arr in tn_arr:
             flat = self._flatten_symbols(tensor_arr)
+            if self.affine:
+                from modules.models.text.affine import split_alias
+                flat = [{**s, 'name': split_alias(s['name'])[0]} for s in flat]
             unseen = [s for s in flat if s['name'] not in self.trained_symbols]
             n_sent += 1; n_oov_sent += bool(unseen)
             n_tensors += len(flat); n_oov_tensors += len(unseen)
@@ -277,6 +289,11 @@ class TNModel(nn.Module):
                 rows[b].append(t * self.word_scale if self.word_scale is not None and name.startswith('w:') else t)
             for b, ts in rows.items():
                 self.register_parameter(f'bank{b}', nn.Parameter(torch.cat([self._bank(b).data, torch.stack(ts).to(device)])))
+            if self.affine:
+                from modules.models.text.affine import zero_bias
+                for name in new:
+                    b, r = self.sym_loc[name]; zero_bias(self._bank(b).data[r], name, new[name], self.out_dim)
+                self._masks = None
         return {"oov_sentence_frac": n_oov_sent / max(n_sent, 1), "oov_tensor_frac": n_oov_tensors / max(n_tensors, 1),
                 "oov_new_symbols": len(new)}
 
@@ -363,6 +380,61 @@ class TNModel(nn.Module):
             if cache_key not in self.path_cache: 
                 self.path_cache[cache_key] = contract_expression(batched_str, *shapes)
 
+    def _loc(self, name):
+        # (bank, row) of a symbol; text.affine output-view aliases '<base>^<view>' -> (('v', bank, view), row of base)
+        loc = self.sym_loc.get(name)
+        if loc is None and self.affine:
+            from modules.models.text.affine import split_alias
+            base, view = split_alias(name)
+            if view is not None and base in self.sym_loc:
+                b, r = self.sym_loc[base]
+                loc = self.sym_loc[name] = (('v', b, view), r)
+                self._masks = None
+        if loc is None:
+            raise KeyError(name)
+        return loc
+
+    def _real_bank(self, b):
+        return b[1] if isinstance(b, tuple) else b
+
+    @torch.no_grad()
+    def _build_masks(self):
+        # per bank (real = argument view, virtual = output view): (M, C) with the bank's shape; rows used = row * M + C
+        from modules.models.text.affine import split_alias, row_mask
+        names = defaultdict(list)   # real bank -> [(row, base name)]
+        for name in self.symbols:
+            b, r = self.sym_loc[name]; names[b].append((r, name))
+        views = {b for b, _ in self.sym_loc.values() if isinstance(b, tuple)}
+        dev = self._bank(0).device
+        masks = {}
+        for b in list(range(len(self.bank_shapes))) + sorted(views, key=str):
+            rb = self._real_bank(b); shape = self.bank_shapes[rb]; n = self._bank(rb).shape[0]
+            M, C = torch.ones(n, *shape), torch.zeros(n, *shape)
+            view = b[2] if isinstance(b, tuple) else None
+            for r, name in names[rb]:
+                M[r], C[r] = row_mask(name, shape, view, self.out_dim)
+            masks[b] = (M.to(dev), C.to(dev))
+        wshape = (self.bank_shapes[self._word_bank][0],) if self.word_scale is not None else None
+        if wshape is not None:
+            masks['base'] = tuple(t.to(dev) for t in row_mask('w:', wshape, None, self.out_dim))
+        self._masks = masks
+
+    def _affine_piece(self, b, rows, piece):
+        if self._masks is None:
+            self._build_masks()
+        M, C = self._masks[b]
+        if b == 'base':
+            return piece * M + C
+        return piece * M.index_select(0, rows) + C.index_select(0, rows)
+
+    @torch.no_grad()
+    def affine_reset_bias(self):
+        # text.affine init: every slot entry 0 (after any init constraint), so training starts from the multilinear model
+        from modules.models.text.affine import zero_bias
+        for name in self.symbols:
+            b, r = self.sym_loc[name]
+            zero_bias(self._bank(b)[r], name, self.bank_shapes[b], self.out_dim)
+
     def _plan(self, einsum_expr, tensor_arr):
         # per-sentence plan, built once per sentence object (keyed by id, the entry keeps the object alive so ids are
         # never reused): structure id (einsum + shapes) and the bank row of each tensor
@@ -373,9 +445,9 @@ class TNModel(nn.Module):
         sid = self._struct_ids.get(key)
         if sid is None:
             sid = self._struct_ids[key] = len(self._structs)
-            banks = tuple(self.sym_loc[d['name']][0] for d in tensor_arr)   # a slot's bank is fixed by its shape
+            banks = tuple(self._loc(d['name'])[0] for d in tensor_arr)   # a slot's bank is fixed by its shape
             self._structs.append([_batched(einsum_expr), key[1], None, banks])
-        rows = tuple(self.sym_loc[d['name']][1] for d in tensor_arr)
+        rows = tuple(self._loc(d['name'])[1] for d in tensor_arr)
         self._plans[id(tensor_arr)] = (tensor_arr, sid, rows)
         return sid, rows
 
@@ -583,7 +655,7 @@ class TNModel(nn.Module):
                 uniq, inv = np.zeros(1, dtype=np.int64), np.zeros(len(uses), dtype=np.int64)
             else:
                 uniq, inv = np.unique(uses, return_inverse=True)
-            shape = self.bank_shapes[wb if b == 'base' else b]
+            shape = self.bank_shapes[wb if b == 'base' else self._real_bank(b)]
             pid = len(piece_sizes[shape]); piece_sizes[shape].append(len(uniq)); vmap[shape].append(inv.reshape(-1))
             leaves.append((b, shape, put(uniq)))
             o = 0
@@ -700,21 +772,24 @@ class TNModel(nn.Module):
             return (torch.cat(src) if len(src) > 1 else src[0]).index_select(0, sl(span))
         wb = self._word_bank if self.word_scale is not None else None
         for b, shape, uspan in leaves:
+            rb = self._real_bank(b) if b != 'base' else b
             if b == 'base':
                 piece = self.extra['word_base'].unsqueeze(0)
             elif base_only and b == wb:
                 piece = self.extra['word_base'].expand(uspan[1] - uspan[0], -1)
             else:
                 if torch.is_grad_enabled():   # training: RowAdam updates exactly these rows from the leaf's gradient
-                    leaf = self._bank(b).detach().index_select(0, sl(uspan)).requires_grad_()
-                    self._active.append((b, sl(uspan), leaf))
+                    leaf = self._bank(rb).detach().index_select(0, sl(uspan)).requires_grad_()
+                    self._active.append((rb, sl(uspan), leaf))
                 else:
-                    leaf = self._bank(b).index_select(0, sl(uspan))
+                    leaf = self._bank(rb).index_select(0, sl(uspan))
                 if b == wb and self.word_dropout and self.training:
                     keep = (torch.rand(leaf.shape[0], 1, device=leaf.device) >= self.word_dropout).to(leaf.dtype)
                     piece = leaf * keep + self.extra['word_base']
                 else:
                     piece = leaf + self.extra['word_base'] if b == wb else leaf   # unique rows only
+            if self.affine:   # homogeneous slots: pinned entries (the word base too: its slot is 1)
+                piece = self._affine_piece('base' if (b == 'base' or (base_only and b == wb)) else b, sl(uspan), piece)
             pieces[shape].append(piece)
             if track:
                 scales[shape].append(piece.new_zeros(piece.shape[0]))

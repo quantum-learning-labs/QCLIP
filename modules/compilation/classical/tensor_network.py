@@ -7,14 +7,19 @@ from collections import Counter
     
 class TNCompiler: 
     def __init__(self, obmap: dict[str, int], decomp_fn, decouple: bool = False, orient: bool = False, lift=None,
-                 lift_rootmap: str = None, own_pairs: str = None):
+                 lift_rootmap: str = None, own_pairs: str = None, affine: bool = False):
         # decouple: one shared vector per word + one shared tensor per complex type (compile_decoupled_tn)
         # orient: each symbol also gets 'out' = position of its leg towards the sentence output (for text.init: norm)
         self.obmap = obmap
         self.word_dim = obmap.get('sem', 16)
         self.decomposition = decomp_fn
         self.decouple = decouple
-        self.orient = orient
+        self.orient = orient or affine
+        # affine (step 5e, text.affine): rename each use whose output leg is not a CP rank leg to its output-view alias
+        # ('<symbol>^o' / '<symbol>^<leg>', modules/models/text/affine.py); needs the decoupled compile
+        self.affine = affine
+        if affine and not decouple:
+            raise ValueError('text.affine needs text.decouple: true')
         self.id = type(self).__name__ + '_' + str(obmap['n']) + '_' + str(obmap['s']) + '_' + str(obmap['p']) + '_' + str(obmap['out'])
         if decouple:
             self.id += f'_dec{self.word_dim}'
@@ -144,6 +149,10 @@ class TNCompiler:
         if self.orient:
             for sym, out in zip(symbols, out_legs([idx for _, idx, _ in processed_tensors])):
                 sym['out'] = out
+        if self.affine:
+            from modules.models.text.affine import alias_for
+            for sym in symbols:
+                sym['name'] = alias_for(sym['name'], sym['shape'], sym.get('out'), self.obmap['out'])
 
         output_subs = oe.parser.get_symbol(0)
         einsum_str = f"{','.join(input_subs)}->{output_subs}"

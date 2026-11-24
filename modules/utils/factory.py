@@ -45,11 +45,15 @@ def build_experiment(config, device):
     
     if model_type == 'tn':
         compiler = config['text']
-        obmap = {'n': compiler['n'], 's': compiler['s'], 'p': compiler['p'], 'out': config['embedding_dim'],
-                 'sem': compiler.get('word_dim', 128)}
+        affine = bool(compiler.get('affine', False))   # step 5e: one homogeneous slot per wire, one extra CP component
+        h = 1 if affine else 0
+        obmap = {'n': compiler['n'] + h, 's': compiler['s'] + h, 'p': compiler['p'] + h, 'out': config['embedding_dim'],
+                 'sem': compiler.get('word_dim', 128) + h}
+        if affine and config['text'].get('decomp', 'mps') != 'cp':
+            raise ValueError('text.affine is implemented for text.decomp: cp')
         decomp = config['text'].get('decomp', 'mps')   # step 5: mps (default) | tr | cp
         if decomp == 'cp':
-            mps_proc = CP(rank=config['text']['cp_rank'], max_order=config['text']['max_order'],
+            mps_proc = CP(rank=config['text']['cp_rank'] + h, max_order=config['text']['max_order'],
                           share_out=config['text'].get('share_out', False), share_args=config['text'].get('share_args'))
         else:
             mps_proc = (TR if decomp == 'tr' else MPS)(bond_dim=config['text']['bond_dim'], max_order=config['text']['max_order'],
@@ -59,7 +63,7 @@ def build_experiment(config, device):
             raise ValueError('text.lift needs text.tn_engine: levelwise')
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc, decouple=compiler.get('decouple', False),
                             orient=compiler.get('init', 'glorot') == 'norm', lift=compiler.get('lift'),
-                            lift_rootmap=compiler.get('lift_rootmap'), own_pairs=compiler.get('own_pairs'))
+                            lift_rootmap=compiler.get('lift_rootmap'), own_pairs=compiler.get('own_pairs'), affine=affine)
         
         method = config['vision']['method']
         if method == 'clip':   # precomputed, L2-normalised CLIP ViT-B/32 vectors (embeddings.embed_images)
@@ -75,7 +79,7 @@ def build_experiment(config, device):
                              hybrid=config['text'].get('compose', 'tn') == 'hybrid', word_base=config['text'].get('word_base'),
                              centre=config['text'].get('centre', False), mix_fixed=config['text'].get('mix_fixed'),
                              eval_chunk=config['text'].get('eval_chunk'),
-                             word_dropout=config['text'].get('word_dropout', 0.0)).to(device)
+                             word_dropout=config['text'].get('word_dropout', 0.0), affine=affine).to(device)
         loss_fn = classical_loss(config)
         
     elif model_type == "vqc":
