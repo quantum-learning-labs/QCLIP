@@ -813,7 +813,10 @@ class TNModel(nn.Module):
             for j, ((eq, _, out_shape, _), ins) in enumerate(zip(ops, operands)):
                 r = torch.einsum(eq, ins)
                 if self.scale_free:
-                    m = r.detach().abs().flatten(1).amax(dim=1).clamp_min(1e-30)
+                    m = r.detach().abs().flatten(1).amax(dim=1)
+                    # an all-zero intermediate (text.affine at zero bias: bias-only blocks) is left as is: dividing it by a
+                    # clamp (1e-30) scaled its backward by 1e30 (inf gradients). Same as the clamp for every max > 1e-30
+                    m = torch.where(m > 1e-30, m, torch.ones_like(m))
                     r = r / m.view(-1, *([1] * (r.dim() - 1)))
                 results[out_shape].append(r)
                 if track:
