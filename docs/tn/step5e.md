@@ -20,7 +20,7 @@
   - But relative to BoW the TN loses more on rare shapes: TN − BoW is −0.10 for unseen shapes and −0.04 for shapes seen 1000+
     times.
   - So the shared generators are less well identified on rare structures (thesis requirement I).
-- **Width 256: +3 rsum** (328.1, seed 0; seed 1 running). Capacity is not the limit.
+- **Width 256: +4 rsum** (328.1 / 330.1 = 329.1, 2 seeds). Capacity is not the limit.
 - **Pure affine-multilinear composition (homogeneous coordinates) cannot be trained at caption depth: negative result.**
   - The constant slot sets scale_free's max-|entry| divisor, so the multilinear part shrinks by about (a·x)^k per level.
   - The 512-d output (slot dropped) ends up near 1e-20, and unit-normalising it makes the step-0 gradients 2e15-8e21, which
@@ -48,7 +48,7 @@ unscaled; bit-identical plain losses vs 51bcef0).
 |---|---|---|---|---|---|---|---|---|---|---|
 | TN, learnable T + negatives (5d) | 2 | 325.2 | 412.3 (s0) | 0.725 | 0.576 | 0.845 | 0.996 | 0.747 / 0.503 / 0.448 | 0.371 / 0.425 | 0.169 / 0.077 |
 | TN SigLIP (5c) | 1 (s0) | 333.9 | 422.0 | | | | | | | |
-| TN width 256 | 1 (s0) | 328.1 | | 0.745 | 0.571 | 0.845 | 0.995 | 0.738 / 0.509 / 0.449 | 0.418 / 0.430 | 0.156 / 0.092 |
+| TN width 256 | 2 | 329.1 | | 0.747 | 0.569 | 0.844 | 0.995 | 0.738 / 0.514 / 0.444 | 0.420 / 0.440 | 0.156 / 0.086 |
 | **BoW, same words + recipe** | 2 | **370.5** | 451.2 (s0) | 0.263 | 0.273 | 0.846 | 0.21 | 0.865 / 0.690 / 0.594 | 0.150 / 0.246 | 0.060 / 0.015 |
 | DisCoViz Tree-LSTM (ref.) | | 367 | | 0.679 | 0.591 | | | | | |
 | DisCoViz RNTN (ref.) | | 337 | | 0.678 | 0.578 | | | | | |
