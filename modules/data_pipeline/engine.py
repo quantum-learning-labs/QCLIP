@@ -46,6 +46,10 @@ class DataEngine:
                 print(f" Split of {entry['text_path']}: {self.splits[entry['text_path']][1]}")
             labels = self.splits[entry["text_path"]][0] if which != 'all' else None
             data = select(data, labels, which, entry.get('subset'))
+        if entry.get('filter'):   # keep rows whose column contains a substring (ARO attribution only: true_caption ' and the ')
+            col, text = entry['filter']['column'], entry['filter']['contains']
+            data = data[data[col].str.contains(text, regex=False)].reset_index(drop=True)
+            print(f" Filter {split}: {col} contains {text!r} -> {len(data)} rows")
         if entry.get('derive') == 'swap':
             data = build_swap_set(data)
         elif entry.get('derive') == 'swap95':   # SVO-Swap, the paper's 95 pairs (datasets.select_swap95)

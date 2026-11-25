@@ -43,7 +43,7 @@ if __name__ == "__main__":
     optimizer, scheduler = build_optimizer(config, text_model, image_model)
     print(f"Optimizer: {optimizer.__class__.__name__} | LR: {[g['lr'] for g in optimizer.param_groups]} | Weight Decay: {config.get('weight_decay', 1e-4)}")
     if scheduler is not None:
-        print(f"Scheduler: {scheduler.__class__.__name__} | Warmup Epochs: {config.get('warmup_epochs', 5)} | Total Epochs: {config['epochs']}")
+        print(f"Scheduler: {scheduler.__class__.__name__} | lr_schedule {config.get('lr_schedule', 'cosine')} | max_lr_cuts {config.get('max_lr_cuts')} | Warmup Epochs: {config.get('warmup_epochs', 5)} | Total Epochs: {config['epochs']}")
     print(f"Early stopping: patience {config.get('patience', 15)} | delta {config.get('min_delta', 1e-3)}")
     print(f"Loss: {exp.loss_fn.__class__.__name__} | temperature: {exp.loss_fn.temperature} | label smoothing: {getattr(exp.loss_fn, 'label_smoothing', None)}")
     print(f"Training for {config['epochs']} epochs with batch size {config['batch_size']}")

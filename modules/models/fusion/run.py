@@ -1,3 +1,4 @@
+import math
 import json
 import torch, yaml, mlflow, time, socket
 from pathlib import Path
@@ -93,6 +94,8 @@ class RunManager:
                 "label_smoothing": getattr(self.trainer.loss_fn, 'label_smoothing', None),
                 "weight_decay": self.config.get('weight_decay', 1e-4),
                 "warmup_epochs": self.config.get('warmup_epochs', 5),
+                "lr_schedule": self.config.get('lr_schedule', 'cosine'),
+                "max_lr_cuts": self.config.get('max_lr_cuts'),
                 "purity_weight": getattr(self.trainer.loss_fn, 'purity_weight', None),
                 "text_layers": self.config.get('text', {}).get('layers'),
                 "vision_layers": self.config.get('vision', {}).get('layers'),
@@ -118,7 +121,8 @@ class RunManager:
 
                 grad_norm_dict = self.trainer.grad_norm_by_type()
 
-                if self.scheduler is not None:
+                plateau = isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
+                if self.scheduler is not None and not plateau:
                     self.scheduler.step()
                     current_lr = self.scheduler.get_last_lr()[0]
                     mlflow.log_metric("learning_rate", current_lr, step=epoch)
@@ -148,6 +152,19 @@ class RunManager:
                 mlflow.log_metric("train_loss", loss, step=epoch)
                 if checkpoint_every and epoch % checkpoint_every == 0:
                     self._save_snapshot(f"epoch_{epoch:03d}.pt", epoch, loss, metrics)
+
+                if plateau:
+                    max_cuts = self.config.get('max_lr_cuts')
+                    base_lr = self.config.get('qlr', self.config.get('lr'))
+                    lr_now = self.trainer.optimizer.param_groups[0]['lr']
+                    cuts = round(math.log(base_lr / lr_now) / math.log(1 / self.config.get('lr_factor', 0.5)))
+                    if max_cuts is not None and cuts >= max_cuts:   # as the old notebooks: one epoch at the last LR, then stop
+                        tqdm.write(f"\n[LR-CUT STOP] learning rate cut {cuts} times (now {lr_now:g}); best {best_metric_value:.4f}")
+                        mlflow.log_metric("early_stopped_epoch", epoch)
+                        break
+                    self.scheduler.step(current_metric)
+                    current_lr = self.trainer.optimizer.param_groups[0]['lr']
+                    mlflow.log_metric("learning_rate", current_lr, step=epoch)
 
                 if patience_counter >= patience:
                     stopped_epoch = epoch
