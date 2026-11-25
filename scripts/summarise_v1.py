@@ -1,5 +1,6 @@
 # Summarises the v1 results (results/v1/<tag>/k<k>.json and zero-shot <model>_k<k>.json) into results/v1/summary.json
 # and a markdown table (results/v1/summary.md): test accuracy with a tie counted 1/2, mean +- sample SD over split seeds 0-4.
+# Trained models are scored on unit-normalised embeddings (*_hard_neg_acc_norm_tie_half).
 #   python scripts/summarise_v1.py results/v1
 import json, os, statistics, sys
 
@@ -42,7 +43,9 @@ for ds in SETS:
             continue
         cells, entry = [], {'model': label, 'dataset': ds, 'dir': tag, 'text_params': params, 'scores': {}}
         for ts in SETS[ds]:
-            key = f'{ts}_{head}_hard_neg_acc_tie_half' if head else f'{ts}_hard_neg_acc_tie_half'
+            # trained models: unit-normalised states (fidelity / cosine), so the caption's norm (its post-selection
+            # success amplitude, image-independent) cannot decide a text choice; zero-shot rows: the model's own score
+            key = f'{ts}_{head}_hard_neg_acc_tie_half' if head else f'{ts}_hard_neg_acc_norm_tie_half'
             vals = []
             for k in range(5):
                 p = os.path.join(ROOT, tag, f'{prefix}k{k}.json')

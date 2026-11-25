@@ -221,7 +221,8 @@ The main keys:
 ### v1 release: reproducible results (LREC 2026 reviews)
 
 Every model on the same 5 splits per dataset (SVO-Swap's 95 pairs are never trained on or used for selection), the
-same frozen CLIP ViT-B/32 image vector, text parameters only; test accuracy (tie = ½), mean ± SD over split seeds 0–4.
+same frozen CLIP ViT-B/32 image vector, text parameters only; test accuracy on unit-normalised states (tie = ½), mean ± SD
+over split seeds 0–4.
 Splits, weights, raw results and one command per row: **[REPRODUCE.md](REPRODUCE.md)** (`splits/`, `weights/v1/`,
 `results/v1/`).
 
@@ -230,10 +231,10 @@ Splits, weights, raw results and one command per row: **[REPRODUCE.md](REPRODUCE
 | Zero-shot CLIP ViT-B/32 | - | 0.833 | 0.842 | 0.589 | 0.629 | 0.509 |
 | Zero-shot OpenCLIP ViT-B/32 | - | 0.873 | 0.722 | 0.621 | 0.584 | 0.494 |
 | Zero-shot BLIP (ITM) | - | 0.945 | 0.751 | 0.632 | 0.872 | 0.549 |
-| QBoW | 24k / 142k | 0.652 | 0.500 | 0.500 | 0.500 | 0.500 |
-| MicroCLIP-16 / -24 (matched) | 19.5k / 59.1k | 0.724 | 0.799 | 0.522 | 0.500 | 0.514 |
-| CCG tensor network | 364k / 289k | 0.600 | 0.683 | 0.587 | **0.611** | **0.550** |
-| **CCG-VQC** (post-selection) | 19.5k / 59.1k | 0.673 | **0.941** | **0.775** | 0.547 | 0.526 |
+| QBoW | 24k / 142k | 0.669 | 0.500 | 0.500 | 0.500 | 0.500 |
+| MicroCLIP-16 / -24 (matched) | 19.5k / 59.1k | 0.733 | 0.809 | 0.528 | 0.498 | 0.515 |
+| CCG tensor network | 364k / 289k | 0.603 | 0.683 | 0.587 | **0.611** | **0.550** |
+| **CCG-VQC** (post-selection) | 19.5k / 59.1k | 0.673 | **0.929** | **0.760** | 0.543 | 0.528 |
 
 Text parameters are SVO / ARO. SDs are in `results/v1/summary.md`.
 
