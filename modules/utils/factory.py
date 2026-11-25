@@ -63,7 +63,8 @@ def build_experiment(config, device):
             raise ValueError('text.lift needs text.tn_engine: levelwise')
         ansatz = TNCompiler(obmap=obmap, decomp_fn=mps_proc, decouple=compiler.get('decouple', False),
                             orient=compiler.get('init', 'glorot') == 'norm', lift=compiler.get('lift'),
-                            lift_rootmap=compiler.get('lift_rootmap'), own_pairs=compiler.get('own_pairs'), affine=affine)
+                            lift_rootmap=compiler.get('lift_rootmap'), own_pairs=compiler.get('own_pairs'), affine=affine,
+                            tokens=compiler.get('tokens'))
         
         method = config['vision']['method']
         if method == 'clip':   # precomputed, L2-normalised CLIP ViT-B/32 vectors (embeddings.embed_images)

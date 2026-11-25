@@ -155,6 +155,8 @@ if __name__ == "__main__":
         print(f"Constraints: {config['text']['constraint']}")
     if config['text'].get('affine') and not args.resume:   # step 5e: slot entries 0 after init (and init_orth)
         text_model.affine_reset_bias()
+    if config['text'].get('tokens') and not args.resume:   # step 6: token modifiers = identity after init (and init_orth)
+        text_model.tokens_reset()
     if config.get('ema'):   # step 5: EMA of the text weights (validation and checkpoints use it)
         if args.resume: raise NotImplementedError('ema with --resume: the EMA shadow is not saved in the training state')
         trainer.ema_init(config['ema'])

@@ -10,6 +10,11 @@ from tqdm import tqdm
 import os, zlib, multiprocessing
 import numpy as np
 
+def _bank_key(name, shape):
+    # banks are keyed by shape; token modifiers ('k:', step 6) get their own bank though shaped like the word vectors
+    return ('k',) + tuple(shape) if name.startswith('k:') else shape
+
+
 class TNModel(nn.Module):
     real_scores = True   # real embeddings: image-text scores are plain dot products (no |.| readout)
 
@@ -82,6 +87,8 @@ class TNModel(nn.Module):
         # entry per tensor, as before packing (see _save_to_state_dict).
         self.sym_loc: Dict[str, Tuple[int, int]] = {}
         self.bank_shapes: List[Tuple[int, ...]] = []
+        # bank key = shape, except token modifiers ('k:', step 6): a bank of their own though shaped like the word vectors
+        self.bank_keys: List[tuple] = []
         self._active = []   # (bank, unique rows, leaf) gathered by training forwards since the last optimiser step
         self.path_cache = {}
         self.level_cache = {}   # (batched einsum, shapes) -> levelwise plan (precompute_paths)
@@ -197,10 +204,11 @@ class TNModel(nn.Module):
         # one parameter per symbol; init=False leaves them empty (filled by load_state_dict)
         bank_of, counts = {}, []
         for name, shape in zip(self.symbols, self.shapes):
-            b = bank_of.get(shape)
+            key = _bank_key(name, shape)
+            b = bank_of.get(key)
             if b is None:
-                b = bank_of[shape] = len(self.bank_shapes)
-                self.bank_shapes.append(shape); counts.append(0)
+                b = bank_of[key] = len(self.bank_shapes)
+                self.bank_shapes.append(shape); self.bank_keys.append(key); counts.append(0)
             self.sym_loc[name] = (b, counts[b]); counts[b] += 1
         banks = [torch.empty(n, *shape) for n, shape in zip(counts, self.bank_shapes)]
         if init:
@@ -279,13 +287,15 @@ class TNModel(nn.Module):
             for name in sorted(new):
                 shape = new[name]
                 self.symbols.append(name); self.shapes.append(shape)
-                if shape not in self.bank_shapes:
-                    self.bank_shapes.append(shape)
+                key = _bank_key(name, shape)
+                if key not in self.bank_keys:
+                    self.bank_shapes.append(shape); self.bank_keys.append(key)
                     self.register_parameter(f'bank{len(self.bank_shapes) - 1}', nn.Parameter(torch.empty(0, *shape, device=device)))
-                b = self.bank_shapes.index(shape)
+                b = self.bank_keys.index(key)
                 gen = torch.Generator().manual_seed(seed * 1_000_003 + zlib.crc32(name.encode()))
                 self.sym_loc[name] = (b, self._bank(b).shape[0] + len(rows[b]))
                 t = self._init_tensor(shape, gen, std=self._norm_std(name, shape)).data
+                if name.startswith('k:'): t = torch.ones(shape)   # unseen token modifier: neutral (identity)
                 rows[b].append(t * self.word_scale if self.word_scale is not None and name.startswith('w:') else t)
             for b, ts in rows.items():
                 self.register_parameter(f'bank{b}', nn.Parameter(torch.cat([self._bank(b).data, torch.stack(ts).to(device)])))
@@ -393,6 +403,23 @@ class TNModel(nn.Module):
         if loc is None:
             raise KeyError(name)
         return loc
+
+    @property
+    def _tok_bank(self):
+        # bank of the token modifiers ('k:', text.tokens) or None
+        return next((b for b, k in enumerate(self.bank_keys) if k[0] == 'k'), None)
+
+    @torch.no_grad()
+    def tokens_reset(self):
+        # text.tokens init: shared factors a:tok.in / a:tok.out = identity, every modifier m = 1, so M(t) = I for all pieces
+        n = 0
+        for name in self.symbols:
+            b, r = self.sym_loc[name]; row = self._bank(b)[r]
+            if name in ('a:tok.in', 'a:tok.out'):
+                row.copy_(torch.eye(row.shape[0], row.shape[1], dtype=row.dtype)); n += 1
+            elif name.startswith('k:'):
+                row.fill_(1.0); n += 1
+        return n
 
     def _real_bank(self, b):
         return b[1] if isinstance(b, tuple) else b
@@ -542,7 +569,8 @@ class TNModel(nn.Module):
         wb, keyed = self._word_bank, {}
         base_groups, to_base = defaultdict(list), np.empty(n, dtype=np.int64)
         for sid, items in groups.items():
-            types = [j for j, b in enumerate(self._structs[sid][3]) if b != wb]
+            kb = self._tok_bank
+            types = [j for j, b in enumerate(self._structs[sid][3]) if b != wb and b != kb]
             for i, rows in items:
                 key = (sid, tuple(rows[j] for j in types))
                 k = keyed.get(key)
@@ -645,17 +673,18 @@ class TNModel(nn.Module):
         leaf_ref, leaves = {}, []
         by_bank = defaultdict(list)
         wb = self._word_bank if self.word_scale is not None else None
+        kb = self._tok_bank   # text.tokens: in base groups every modifier is neutral (pseudo bank 'kbase', one row of ones)
         for g, (sid, mat, _) in enumerate(plans):
             base = entries[g][2]
             for j, b in enumerate(self._structs[sid][3]):
-                by_bank['base' if base and b == wb else b].append((g, j, mat[:, j]))
+                by_bank['base' if base and b == wb else 'kbase' if base and kb is not None and b == kb else b].append((g, j, mat[:, j]))
         for b, items in by_bank.items():
             uses = np.concatenate([r for _, _, r in items])
-            if b == 'base':
+            if b in ('base', 'kbase'):
                 uniq, inv = np.zeros(1, dtype=np.int64), np.zeros(len(uses), dtype=np.int64)
             else:
                 uniq, inv = np.unique(uses, return_inverse=True)
-            shape = self.bank_shapes[wb if b == 'base' else self._real_bank(b)]
+            shape = self.bank_shapes[wb if b == 'base' else kb if b == 'kbase' else self._real_bank(b)]
             pid = len(piece_sizes[shape]); piece_sizes[shape].append(len(uniq)); vmap[shape].append(inv.reshape(-1))
             leaves.append((b, shape, put(uniq)))
             o = 0
@@ -771,10 +800,13 @@ class TNModel(nn.Module):
             src = [scales[shape][pid] for pid in used]
             return (torch.cat(src) if len(src) > 1 else src[0]).index_select(0, sl(span))
         wb = self._word_bank if self.word_scale is not None else None
+        kb = self._tok_bank
         for b, shape, uspan in leaves:
-            rb = self._real_bank(b) if b != 'base' else b
+            rb = self._real_bank(b) if b not in ('base', 'kbase') else b
             if b == 'base':
                 piece = self.extra['word_base'].unsqueeze(0)
+            elif b == 'kbase' or (base_only and kb is not None and b == kb):   # text.tokens: neutral modifiers
+                piece = self._bank(kb).new_ones(1 if b == 'kbase' else uspan[1] - uspan[0], *shape)
             elif base_only and b == wb:
                 piece = self.extra['word_base'].expand(uspan[1] - uspan[0], -1)
             else:

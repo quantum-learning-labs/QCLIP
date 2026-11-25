@@ -7,7 +7,7 @@ from collections import Counter
     
 class TNCompiler: 
     def __init__(self, obmap: dict[str, int], decomp_fn, decouple: bool = False, orient: bool = False, lift=None,
-                 lift_rootmap: str = None, own_pairs: str = None, affine: bool = False):
+                 lift_rootmap: str = None, own_pairs: str = None, affine: bool = False, tokens: str = None):
         # decouple: one shared vector per word + one shared tensor per complex type (compile_decoupled_tn)
         # orient: each symbol also gets 'out' = position of its leg towards the sentence output (for text.init: norm)
         self.obmap = obmap
@@ -23,6 +23,13 @@ class TNCompiler:
         self.id = type(self).__name__ + '_' + str(obmap['n']) + '_' + str(obmap['s']) + '_' + str(obmap['p']) + '_' + str(obmap['out'])
         if decouple:
             self.id += f'_dec{self.word_dim}'
+        # tokens (text.tokens, step 6, decoupled only): 'bpe' = each word a token sub-network (tokens.py); None = one vector
+        self.pieces = None
+        if tokens:
+            if tokens != 'bpe' or not decouple:
+                raise ValueError(f"text.tokens: only 'bpe' with text.decouple: true, got {tokens!r}")
+            from modules.compilation.classical.tokens import BPEPieces
+            self.pieces = BPEPieces(); self.id += '_tokbpe'
         # lift (text.lift, decoupled only, default off; E2): Frobenius lifting of higher-order roles from one core per word
         # (modules/compilation/classical/lift.py). 'frobenius' = all rules, or a list of rule names ['R1', ...]
         self.lift = None
@@ -120,7 +127,11 @@ class TNCompiler:
                     processed_tensors.extend(self.own_decomp.decompose(own_sym, list(idx_arr), dims, index_counter))
                 continue
             wire = next(index_counter)
-            processed_tensors.append(('w:' + word, [wire], (self.word_dim,)))
+            if self.pieces is not None:   # step 6: the word's token sub-network ends on its wire
+                from modules.compilation.classical.tokens import word_chain
+                processed_tensors.extend(word_chain(word, wire, self.word_dim, self.pieces, index_counter))
+            else:
+                processed_tensors.append(('w:' + word, [wire], (self.word_dim,)))
 
             mid = len(idx_arr) // 2
             type_idx = list(idx_arr[:mid]) + [wire] + list(idx_arr[mid:])
