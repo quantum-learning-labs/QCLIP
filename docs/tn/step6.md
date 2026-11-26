@@ -1,0 +1,62 @@
+# Step 6: token sub-networks for words (report, 26 Nov 2026)
+
+## 1. Answer
+- **Token sub-networks change nothing at test.** Each word becomes a chain of CLIP-BPE pieces, w = M(tn)…M(t2) v(t1) with
+  M(t) = A diag(m_t) B and identity init.
+  - rsum 326.3 (325.6 / 326.9) vs 325.2 for the step-5 TN.
+  - ARO-Att 0.718, ARO-Rel 0.573, SVO 0.843, swap_full 0.996: all within seed noise of step 5.
+- **It does reduce memorisation, but by fitting training images less, not by generalising better.** Train-5k rsum 403 vs 412;
+  the train-test gap falls from 86 to 77 while test is unchanged.
+- **Out-of-vocabulary captions do not improve.** The 562 test captions that contain a word never seen in training as a whole
+  word score t2i R@10 0.472 with tokens vs 0.491 without; BoW gets 0.596.
+  - Test sentences with an untrained symbol halve (OOV sentence fraction 9.7% → 4.5%).
+  - But being made of known pieces does not make a rare word usable. BPE pieces of rare COCO words ('sur'+'boar'+'ders',
+    'cloud'+'wreath'+'ed') share spelling, not meaning, and a contrastive loss on COCO alone gives them no reason to compose.
+- **Finding: multiplicative composition is not robust to a single bad leaf.** BoW loses 0.14 R@10 on captions with an unseen
+  word; the TN loses 0.18-0.20.
+  - An untrained or poorly trained word vector enters the TN multiplicatively, so it rotates and scales the whole sentence
+    vector. In the BoW mean it is one term of n.
+  - So the lexical gap is also a robustness property of the generator family: a multilinear map has no way to ignore a word.
+    This bears on the thesis table (expressivity/robustness of shared multilinear generators) and on step 7, where noisy
+    scene-graph nodes play the role of rare words.
+- **Isometric generators (the "quantum-implementable" row) cost a lot, but the comparison is confounded.** T2 = MPS bond 16
+  with left-canonical (isometric) cores + tokens: rsum 258.8 (−67), ARO-Att 0.653, ARO-Rel 0.555; Winoground text 0.195 (the
+  highest TN value, n = 390, about 1.5 SE above T1).
+  - T2 changes two things at once (MPS vs CP, isometric vs free). Step 4 already found MPS below CP under the old recipe.
+  - Separating the two needs one control: free MPS bond 16 + tokens.
+
+## 2. Setup
+Code tn-step6: 0a21ca0 (text.tokens), checks `tools/tn/s6_tok_check.py`:
+- compile: 0 mismatches;
+- engine vs per-caption reference: 5.6e-7;
+- identity chain vs root vector: 7.8e-8;
+- tokens off: bit-identical losses vs 783c288.
+
+Recipe = step 5 (CP128 + R1, learnable temperature + v1 negatives, EMA 0.999, 150 epochs, best by val MRR).
+- 1.8% of word uses are multi-piece (rare words); 19,349 distinct pieces.
+- Unseen test word types: 557, of which 367 are fully built from trained pieces.
+- Params 3.47M (CP, +1% vs step 5); same memory and speed.
+
+## 3. Results (test)
+| model | seeds | rsum | train5k | ARO-Att | ARO-Rel | SVO | swap_full | SC++ repl obj/att/rel | SC++ swap obj/att | Wino text/image |
+|---|---|---|---|---|---|---|---|---|---|---|
+| step-5 TN (5d) | 2 | 325.2 | 412.3 (s0) | 0.725 | 0.576 | 0.845 | 0.996 | 0.747 / 0.503 / 0.448 | 0.371 / 0.425 | 0.169 / 0.077 |
+| **T1 tokens** | 2 | 326.3 | 403.3 | 0.718 | 0.573 | 0.843 | 0.996 | 0.733 / 0.496 / 0.438 | 0.396 / 0.430 | 0.148 / 0.081 |
+| T2 tokens + isometric MPS b16 | 1 | 258.8 | 353.4 | 0.653 | 0.555 | 0.824 | 0.988 | 0.643 / 0.364 / 0.389 | 0.336 / 0.365 | 0.195 / 0.092 |
+| BoW, same words (5e) | 2 | 370.5 | 451.2 (s0) | 0.263 | 0.273 | 0.846 | 0.21 | 0.865 / 0.690 / 0.594 | 0.150 / 0.246 | 0.060 / 0.015 |
+
+**Test t2i R@10 by the caption's words (word-level buckets from the step-5 compile; TN values = 2-seed means):**
+
+| captions | n | step-5 TN | T1 tokens | BoW |
+|---|---|---|---|---|
+| contain a word unseen in training | 562 | 0.491 | 0.472 | 0.596 |
+| rarest word seen 1-9 times | 1463 | 0.602 | 0.602 | 0.684 |
+| all others | 22884 | 0.671 | 0.674 | 0.735 |
+
+Results: results/tn/step6/ (benchmarks, breakdowns, gaps; worktree, untracked). Two pool runs ended without their post-training
+benchmark (cause unknown); best.pt was benchmarked afterwards with the same script.
+
+## 4. Next
+Step 6 closes without a recall gain. The lexical lever is not sharing by spelling. What matters for step 7 is the robustness
+finding: a scene-graph TN multiplies node and relation errors in the same way. The image-graph design should therefore measure
+how much each wrong node or relation costs (GT graphs A vs generator graphs B), with that as a headline quantity.
