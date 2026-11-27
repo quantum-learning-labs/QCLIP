@@ -12,13 +12,9 @@
   - Test sentences with an untrained symbol halve (OOV sentence fraction 9.7% → 4.5%).
   - But being made of known pieces does not make a rare word usable. BPE pieces of rare COCO words ('sur'+'boar'+'ders',
     'cloud'+'wreath'+'ed') share spelling, not meaning, and a contrastive loss on COCO alone gives them no reason to compose.
-- **Finding: multiplicative composition is not robust to a single bad leaf.** BoW loses 0.14 R@10 on captions with an unseen
-  word; the TN loses 0.18-0.20.
-  - An untrained or poorly trained word vector enters the TN multiplicatively, so it rotates and scales the whole sentence
-    vector. In the BoW mean it is one term of n.
-  - So the lexical gap is also a robustness property of the generator family: a multilinear map has no way to ignore a word.
-    This bears on the thesis table (expressivity/robustness of shared multilinear generators) and on step 7, where noisy
-    scene-graph nodes play the role of rare words.
+- **Retracted (step 6n below): "multiplicative composition is not robust to a single bad leaf".** The unseen-word bucket
+  drop (TN 0.18-0.20 vs BoW 0.14 R@10) is real, but direct tests show it is not leaf-error propagation: one corrupted word
+  costs the TN the same as BoW (section 5).
 - **Isometric generators (the "quantum-implementable" row) cost a lot, but the comparison is confounded.** T2 = MPS bond 16
   with left-canonical (isometric) cores + tokens: rsum 258.8 (−67), ARO-Att 0.653, ARO-Rel 0.555; Winoground text 0.195 (the
   highest TN value, n = 390, about 1.5 SE above T1).
@@ -57,6 +53,44 @@ Results: results/tn/step6/ (benchmarks, breakdowns, gaps; worktree, untracked). 
 benchmark (cause unknown); best.pt was benchmarked afterwards with the same script.
 
 ## 4. Next
-Step 6 closes without a recall gain. The lexical lever is not sharing by spelling. What matters for step 7 is the robustness
-finding: a scene-graph TN multiplies node and relation errors in the same way. The image-graph design should therefore measure
-how much each wrong node or relation costs (GT graphs A vs generator graphs B), with that as a headline quantity.
+Step 6 closes without a recall gain. The lexical lever is not sharing by spelling. Step 6n (section 5) shows the TN is as
+robust to one bad leaf as BoW, so step 7 does not need a robustness fix first; measuring the cost of each wrong node or
+relation (GT graphs A vs generator graphs B) is still worth reporting.
+
+## 5. Step 6n: robustness to one bad leaf (eval only, branch tn-neutral)
+Question: does an error in one leaf propagate through the multilinear tree (the product-of-similarities argument: one leaf
+with similarity 0 to the right word would zero the sentence similarity), which would call for a neutral-element mixture in
+the composition rule? Two tests on the step-5 TN (tn_s5d_ltneg_s{0,1}), the token TN and BoW (tn_s5e_bow_s{0,1}); no training.
+
+**Test 1, unseen words set to the neutral leaf** (`text.oov_init`, 771dc14: random = seeded init as before, neutral = bank
+row 0 so the word is word_base alone, mean = mean trained row). t2i R@10 on the 562 test captions with a word unseen in
+training (rest 0.667 TN, 0.670 token TN, 0.732 BoW):
+
+| model | random | neutral | mean |
+|---|---|---|---|
+| TN (step 5) | 0.491 | 0.496 | 0.496 |
+| token TN | 0.472 | 0.478 | 0.476 |
+| BoW | 0.603 | 0.615 | 0.605 (1 seed) |
+
+COCO rsum moves by < 0.3 for every model. The untrained vectors were not doing damage; the unseen-word gap is missing
+information, not a bad leaf. (Untrained symbols at test are 2.2% of captions, 544 'w:' + 2 't:'; the benchmark's
+oov_sentence_frac 9.7% counts compiled sentence arrays differently.)
+
+**Test 2, one corrupted word per caption** (`tools/tn/s6n_corrupt.py`): in every test caption one word leaf, chosen uniformly
+(seeded, the same leaf in both modes), is replaced by the neutral leaf or by a trained word drawn by training frequency
+(wrong but valid, like a detector error). t2i R@10, mean of 2 seeds:
+
+| model | clean | neutral | swap |
+|---|---|---|---|
+| TN (step 5) | 0.663 | −0.059 (8.9%) | −0.088 (13.2%) |
+| BoW | 0.729 | −0.056 (7.6%) | −0.091 (12.5%) |
+
+Swap drop by caption length (words: <9 / 9-10 / 11-12 / 13+; n = 4281 / 10874 / 6253 / 3501): TN 0.107 / 0.093 / 0.076 /
+0.066, BoW 0.115 / 0.098 / 0.078 / 0.061. Both fall with length at the same rate: the TN dilutes one bad word like an average.
+
+**Conclusion.** The TN is not more fragile than BoW to one bad leaf, so the product-of-similarities picture does not describe
+the trained model. Likely reason (hypothesis, not tested here): since step 4c every word is word_base + d_w, so each leaf
+already has a shared neutral component, and the expansion of the tree over (base + d) contains the low-order, BoW-like terms
+that a neutral-element mixture would add. The proposed per-leaf confidence mixture is therefore not pursued. For step 7: give
+image-graph nodes the same base + specific form, and keep the per-error cost as a measured quantity.
+Results: results/tn/step6n/ (breakdown_*_{neutral,mean}.json, corrupt_*.json), benchmark_best_oov_{neutral,mean}.json per run.
