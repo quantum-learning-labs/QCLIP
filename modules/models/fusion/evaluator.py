@@ -6,6 +6,7 @@ class MMEvaluator:
         self.text_model = text_model.to(device)
         self.device = device
         self._sims_cache = None  # set by eval_set so several tasks share one encoding pass
+        self._embs = {}          # (loader id, choice) -> unit embeddings + sizes of the whole set (grounding controls)
 
     @torch.no_grad()
     def _pair_sims(self, dataloader, choice):
@@ -19,7 +20,15 @@ class MMEvaluator:
                 d = int(round(emb.shape[1] ** 0.5))
                 return emb / emb.view(-1, d, d).diagonal(dim1=1, dim2=2).sum(-1).real.clamp(min=1e-12).unsqueeze(1)
             return emb / emb.norm(dim=1, keepdim=True).clamp(min=1e-12)
+        def size(emb):
+            # the norm a readout would divide out: vector norm (statevectors) or trace (density matrices); for a
+            # post-selected VQC the text norm is the caption's success amplitude, which does not depend on the image
+            if is_dm:
+                d = int(round(emb.shape[1] ** 0.5))
+                return emb.view(-1, d, d).diagonal(dim1=1, dim2=2).sum(-1).real
+            return emb.norm(dim=1)
         pos_arr, neg_arr, pos_n_arr, neg_n_arr = [], [], [], []
+        m1_all, pos_all, neg_all, pos_sz, neg_sz = [], [], [], [], []
         for batch in dataloader:
             if choice == 'text':
                 m1_emb = self._encode_img(batch["image"])
@@ -34,7 +43,11 @@ class MMEvaluator:
             m1_u = unit(m1_emb)
             pos_n_arr.append(torch.sum(m1_u.conj() * unit(pos_m2_emb), dim=1).abs())
             neg_n_arr.append(torch.sum(m1_u.conj() * unit(neg_m2_emb), dim=1).abs())
+            if m1_emb.shape[1] <= 4096:   # keep the set's unit embeddings for the grounding controls (small outputs only)
+                m1_all.append(m1_u); pos_all.append(unit(pos_m2_emb)); neg_all.append(unit(neg_m2_emb))
+                pos_sz.append(size(pos_m2_emb)); neg_sz.append(size(neg_m2_emb))
         sims = tuple(torch.cat(a).cpu() for a in (pos_arr, neg_arr, pos_n_arr, neg_n_arr))
+        self._embs[key] = tuple(torch.cat(a) for a in (m1_all, pos_all, neg_all, pos_sz, neg_sz)) if m1_all else None
         if self._sims_cache is not None:
             self._sims_cache[key] = sims
         return sims
@@ -143,14 +156,39 @@ class MMEvaluator:
         tie, tie_n = torch.isclose(pos_sim, neg_sim, rtol=1e-5, atol=1e-8), torch.isclose(pos_n, neg_n, rtol=1e-5, atol=1e-8)
         tie_half = correct * ~tie + 0.5 * tie.float()
         tie_half_n = correct_n * ~tie_n + 0.5 * tie_n.float()
-        return ({"hard_neg_acc": correct.sum().item() / len(correct),
-                 "hard_neg_acc_norm": correct_n.sum().item() / len(correct_n),
-                 "hard_neg_acc_tie_half": tie_half.sum().item() / len(tie_half),
-                 "hard_neg_acc_norm_tie_half": tie_half_n.sum().item() / len(tie_half_n),
-                 "ties": int(tie.sum().item())},
+        metrics = {"hard_neg_acc": correct.sum().item() / len(correct),
+                   "hard_neg_acc_norm": correct_n.sum().item() / len(correct_n),
+                   "hard_neg_acc_tie_half": tie_half.sum().item() / len(tie_half),
+                   "hard_neg_acc_norm_tie_half": tie_half_n.sum().item() / len(tie_half_n),
+                   "ties": int(tie.sum().item())}
+        metrics.update(self.grounding_controls(dataloader, choice, metrics["hard_neg_acc_norm_tie_half"]))
+        return (metrics,
                 {"pos_scores": list(pos_sim.numpy()), "neg_scores": list(neg_sim.numpy()),
                  "margins": list(margin.numpy()), "correct": list(correct.numpy()), "correct_norm": list(correct_n.numpy())})
             
+    @torch.no_grad()
+    def grounding_controls(self, dataloader, choice, acc_norm) -> dict:
+        # Does the decision use the shared side (the image in a text choice, the caption in an image choice)?
+        #  shuffled: unit-normalised scores with the shared side replaced by another pair's (random permutation, seed 0);
+        #            grounding_gap = acc_norm - shuffled (near 0: the decision comes from the candidates alone)
+        #  size_only: pick the candidate with the larger norm/trace, no shared side at all (a post-selected caption's
+        #            success amplitude: an image-free prior)
+        #  calibrated: unit score minus the candidate's mean unit score over every shared item of the set (PMI-style:
+        #            anything a candidate gets regardless of the image cancels)
+        embs = self._embs.get((id(dataloader), choice))
+        if embs is None:
+            return {}
+        m1, pos, neg, pos_sz, neg_sz = embs
+        half = lambda a, b: ((a > b).float() * ~torch.isclose(a, b, rtol=1e-5, atol=1e-12) + 0.5 * torch.isclose(a, b, rtol=1e-5, atol=1e-12).float()).mean().item()
+        ov = lambda x, y: torch.sum(x.conj() * y, dim=1).abs()
+        perm = torch.randperm(len(m1), generator=torch.Generator().manual_seed(0)).to(m1.device)
+        shuffled = half(ov(m1[perm], pos), ov(m1[perm], neg))
+        mean_pos = torch.cat([(m1.conj() @ pos[j:j + 1024].T).abs().mean(0) for j in range(0, len(pos), 1024)])
+        mean_neg = torch.cat([(m1.conj() @ neg[j:j + 1024].T).abs().mean(0) for j in range(0, len(neg), 1024)])
+        calibrated = half(ov(m1, pos) - mean_pos, ov(m1, neg) - mean_neg)
+        return {"hard_neg_acc_shuffled_norm_tie_half": shuffled, "grounding_gap": acc_norm - shuffled,
+                "hard_neg_acc_size_only": half(pos_sz, neg_sz), "hard_neg_acc_calibrated_tie_half": calibrated}
+
     def evaluate_text_choice(self, dataloader) -> dict:
         return self.hard_neg_eval(dataloader, choice='text')
 
