@@ -15,11 +15,15 @@
 - **Retracted (step 6n below): "multiplicative composition is not robust to a single bad leaf".** The unseen-word bucket
   drop (TN 0.18-0.20 vs BoW 0.14 R@10) is real, but direct tests show it is not leaf-error propagation: one corrupted word
   costs the TN the same as BoW (section 5).
-- **Isometric generators (the "quantum-implementable" row) cost a lot, but the comparison is confounded.** T2 = MPS bond 16
-  with left-canonical (isometric) cores + tokens: rsum 258.8 (−67), ARO-Att 0.653, ARO-Rel 0.555; Winoground text 0.195 (the
-  highest TN value, n = 390, about 1.5 SE above T1).
-  - T2 changes two things at once (MPS vs CP, isometric vs free). Step 4 already found MPS below CP under the old recipe.
-  - Separating the two needs one control: free MPS bond 16 + tokens.
+- **Isometric generators (the "quantum-implementable" row) cost nothing; the loss is the MPS decomposition.** T2 = MPS bond 16
+  with left-canonical (isometric) cores + tokens: rsum 258.8, ARO-Att 0.653, ARO-Rel 0.555, Winoground text 0.195. Control
+  (tn_s6_mpsfree_s0, 2026-11-27, free MPS bond 16 + tokens, code 771dc14): rsum 259.3, ARO-Att 0.667, ARO-Rel 0.564, swap_full
+  0.993. So isometric = free within noise; the −67 vs T1 (CP128) is MPS bond 16 vs CP rank 128.
+  - Expected from the gauge freedom of tree tensor networks: any MPS can be brought to left-canonical form, all cores but one
+    isometric, the last one carrying the norm; with unit-normalised sentence vectors the norm is irrelevant. The isometric
+    constraint is a gauge fixing, not a restriction of the function class (for this readout), and here it does not slow training
+    either. For the thesis table: on tree graphs with a linear normalised readout, the unitary/isometric generator row has the
+    same expressivity as the generic row at equal bond dimension.
 
 ## 2. Setup
 Code tn-step6: 0a21ca0 (text.tokens), checks `tools/tn/s6_tok_check.py`:
