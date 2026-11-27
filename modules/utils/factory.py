@@ -80,7 +80,8 @@ def build_experiment(config, device):
                              hybrid=config['text'].get('compose', 'tn') == 'hybrid', word_base=config['text'].get('word_base'),
                              centre=config['text'].get('centre', False), mix_fixed=config['text'].get('mix_fixed'),
                              eval_chunk=config['text'].get('eval_chunk'),
-                             word_dropout=config['text'].get('word_dropout', 0.0), affine=affine).to(device)
+                             word_dropout=config['text'].get('word_dropout', 0.0), affine=affine,
+                             oov_init=config['text'].get('oov_init', 'random')).to(device)
         loss_fn = classical_loss(config)
         
     elif model_type == "vqc":

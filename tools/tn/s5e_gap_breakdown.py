@@ -56,6 +56,10 @@ def buckets(K, R):
 
 ck = sys.argv[2]
 config, DEV, SEED = setup_exp(str(Path(ck).parent / 'config.yaml'))
+for kv in sys.argv[3:]:   # config overrides for evaluation, e.g. text.oov_init=neutral
+    k, v = kv.split('=', 1); d = config
+    for part in k.split('.')[:-1]: d = d[part]
+    d[k.split('.')[-1]] = v
 ansatz, image_model, text_model, _ = build_experiment(config, DEV)
 de = DataEngine(config, ansatz, DEV)
 tr, va = de.compile_text('train'), de.compile_text('val')

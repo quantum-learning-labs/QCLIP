@@ -20,8 +20,16 @@ class TNModel(nn.Module):
 
     def __init__(self, out_dim: int = 512, engine: str = 'grouped', init: str = 'glorot', scale_free: bool = False, bow: bool = False,
                  head: str = 'affine', hybrid: bool = False, word_base: float = None, centre: bool = False,
-                 mix_fixed: float = None, eval_chunk: int = None, word_dropout: float = 0.0, affine: bool = False):
+                 mix_fixed: float = None, eval_chunk: int = None, word_dropout: float = 0.0, affine: bool = False,
+                 oov_init: str = 'random'):
         super().__init__()
+        # oov_init (text.oov_init, eval only): unseen word vectors ('w:') are 'random' (seeded init, as before), 'neutral'
+        # (bank row 0: the word is the shared word_base alone, the network's no-information leaf) or 'mean' (mean trained row)
+        if oov_init not in ('random', 'neutral', 'mean'):
+            raise ValueError(f"text.oov_init must be random / neutral / mean, got {oov_init}")
+        if oov_init != 'random' and word_base is None:
+            raise ValueError('text.oov_init neutral / mean need text.word_base')
+        self.oov_init = oov_init
         # affine (text.affine, step 5e, levelwise only): homogeneous coordinates on every wire (modules/models/text/affine.py):
         # each type tensor computes prod_k (a_k.x_k + c_k) per rank component, i.e. multilinear plus all lower-order terms.
         # Uses with the output on a different leg read the same row through another mask: virtual bank ('v', bank, view).
@@ -284,6 +292,12 @@ class TNModel(nn.Module):
         if new:
             device = self._bank(0).device
             rows = defaultdict(list)   # bank -> new rows (appended; existing rows keep their place)
+            word_mean = {}   # oov_init mean: per word bank, the mean of the trained rows
+            if self.oov_init == 'mean':
+                for nm in self.trained_symbols:
+                    if nm.startswith('w:'):
+                        wb_, r_ = self.sym_loc[nm]; word_mean.setdefault(wb_, []).append(r_)
+                word_mean = {b_: self._bank(b_).data[rs].mean(0).cpu() for b_, rs in word_mean.items()}
             for name in sorted(new):
                 shape = new[name]
                 self.symbols.append(name); self.shapes.append(shape)
@@ -296,6 +310,8 @@ class TNModel(nn.Module):
                 self.sym_loc[name] = (b, self._bank(b).shape[0] + len(rows[b]))
                 t = self._init_tensor(shape, gen, std=self._norm_std(name, shape)).data
                 if name.startswith('k:'): t = torch.ones(shape)   # unseen token modifier: neutral (identity)
+                if name.startswith('w:') and self.oov_init != 'random':
+                    rows[b].append(torch.zeros(shape) if self.oov_init == 'neutral' else word_mean[b]); continue
                 rows[b].append(t * self.word_scale if self.word_scale is not None and name.startswith('w:') else t)
             for b, ts in rows.items():
                 self.register_parameter(f'bank{b}', nn.Parameter(torch.cat([self._bank(b).data, torch.stack(ts).to(device)])))
