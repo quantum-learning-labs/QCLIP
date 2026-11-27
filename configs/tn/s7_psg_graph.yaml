@@ -1,0 +1,55 @@
+# Step 7 (A): PSG subset of MSCOCO (images with a PSG ground-truth graph; tools/tn/s7_psg_graphs.py). Test = PSG ∩ coco5k
+# (2,170 images). Generated from dec_t3.yaml; run options as tn-step6 (see docs/tn/step7a.md).
+# G1: scene-graph image TN (modules/models/vision/graph_tn.py); G2 vision.relations=false, G3 vision.global=false.
+model_type: tn
+batch_size: 512
+lr: 0.001
+weight_decay: 0.0001
+warmup_epochs: 1
+epochs: 3
+patience: 1000
+min_delta: 0.0
+save_best: false
+temperature: 0.07
+embedding_dim: 512
+text:
+  n: 128
+  s: 128
+  p: 128
+  bond_dim: 8
+  max_order: 2
+  decouple: true
+  word_dim: 128
+  tn_engine: levelwise
+  init: norm
+vision:
+  method: graph
+  graph_path: data/psg/graphs.pt
+  crops_path: data/psg/crops_b32.pt
+  graph_dim: 32
+  apex_dim: 128
+  relations: true
+  global: true
+  scale_free: true
+  max_tw: 2
+dataset:
+  name: mscoco
+  class: modules.data_pipeline.datasets.CocoDataset
+  collate_fn: modules.data_pipeline.datasets.coco_collate_fn
+  eval_mapper: modules.models.fusion.engine.mscoco_mapper
+  train:
+    text_path: data/psg/splits/train_negs_psg.pkl
+    img_path: data/psg/img_graph.pt
+  val:
+    text_path: data/psg/splits/val_holdout_psg.pkl
+    img_path: data/psg/img_graph.pt
+    diagnostics:
+    - global_retrieval
+  test:
+    coco_psg:
+      class: modules.data_pipeline.datasets.CocoDataset
+      collate_fn: modules.data_pipeline.datasets.coco_collate_fn
+      text_path: data/psg/splits/validation_psg.pkl
+      img_path: data/psg/img_graph.pt
+      task: global_retrieval
+      eval_mapper: modules.models.fusion.engine.mscoco_mapper

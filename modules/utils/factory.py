@@ -71,8 +71,16 @@ def build_experiment(config, device):
             image_model = FrozenCLIP(normalize=True).to(device)
         elif method == 'ttn':
             image_model = TTNImageModel(embedding_dim=config['embedding_dim']).to(device)
+        elif method == 'graph':   # step 7: scene-graph tensor network (modules/models/vision/graph_tn.py)
+            from modules.models.vision.graph_tn import ImageGraphTN
+            v = config['vision']
+            image_model = ImageGraphTN(embedding_dim=config['embedding_dim'], graph_path=v.get('graph_path', 'data/psg/graphs.pt'),
+                                       crops_path=v.get('crops_path', 'data/psg/crops_b32.pt'), graph_dim=v.get('graph_dim', 32),
+                                       apex_dim=v.get('apex_dim', 128), relations=v.get('relations', True),
+                                       use_global=v.get('global', True), scale_free=v.get('scale_free', True),
+                                       max_tw=v.get('max_tw')).to(device)
         else:
-            raise ValueError(f"tn: vision.method must be 'clip' or 'ttn', got '{method}'")
+            raise ValueError(f"tn: vision.method must be 'clip', 'ttn' or 'graph', got '{method}'")
 
         text_model = TNModel(out_dim=config['embedding_dim'], engine=config['text'].get('tn_engine', 'grouped'),
                              init=config['text'].get('init', 'glorot'), scale_free=config['text'].get('scale_free', False),

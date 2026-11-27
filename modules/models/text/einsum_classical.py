@@ -10,9 +10,15 @@ from tqdm import tqdm
 import os, zlib, multiprocessing
 import numpy as np
 
+DATA_KINDS = ('x', 'y')   # step 7: data leaves (no parameters; values from TNModel.data_fn, e.g. image-graph node vectors)
+
 def _bank_key(name, shape):
-    # banks are keyed by shape; token modifiers ('k:', step 6) get their own bank though shaped like the word vectors
-    return ('k',) + tuple(shape) if name.startswith('k:') else shape
+    # banks are keyed by shape; token modifiers ('k:', step 6), predicate modifiers ('m:', step 7) and data leaves ('x:',
+    # 'y:', step 7) get their own bank though shaped like other vectors
+    return (name[0],) + tuple(shape) if name[:2] in ('k:', 'm:', 'x:', 'y:') else shape
+
+def _is_data(key):
+    return isinstance(key[0], str) and key[0] in DATA_KINDS
 
 
 class TNModel(nn.Module):
@@ -98,6 +104,10 @@ class TNModel(nn.Module):
         # bank key = shape, except token modifiers ('k:', step 6): a bank of their own though shaped like the word vectors
         self.bank_keys: List[tuple] = []
         self._active = []   # (bank, unique rows, leaf) gathered by training forwards since the last optimiser step
+        # step 7 (image graph TN): row_grads False = banks get ordinary dense gradients (plain Adam; no RowAdam row leaves);
+        # data_fn(kind, rows) -> (len(rows), *shape) values of the data leaves 'x:<row>' / 'y:<row>' (bank row = data row)
+        self.row_grads = True
+        self.data_fn = None
         self.path_cache = {}
         self.level_cache = {}   # (batched einsum, shapes) -> levelwise plan (precompute_paths)
         self.out_dim: int = out_dim
@@ -218,11 +228,12 @@ class TNModel(nn.Module):
                 b = bank_of[key] = len(self.bank_shapes)
                 self.bank_shapes.append(shape); self.bank_keys.append(key); counts.append(0)
             self.sym_loc[name] = (b, counts[b]); counts[b] += 1
-        banks = [torch.empty(n, *shape) for n, shape in zip(counts, self.bank_shapes)]
+        banks = [torch.empty(0 if _is_data(k) else n, *shape) for n, shape, k in zip(counts, self.bank_shapes, self.bank_keys)]
         if init:
             with torch.no_grad():
                 for name, shape in zip(self.symbols, self.shapes):
                     b, r = self.sym_loc[name]
+                    if _is_data(self.bank_keys[b]): continue
                     self._init_tensor(shape, out=banks[b][r], std=self._norm_std(name, shape))
         for b, t in enumerate(banks):
             self.register_parameter(f'bank{b}', nn.Parameter(t))
@@ -250,6 +261,7 @@ class TNModel(nn.Module):
         # one entry per symbol (views into the banks; torch.save stores each bank once): same keys as before packing
         for name in self.symbols:
             b, r = self.sym_loc[name]
+            if _is_data(self.bank_keys[b]): continue   # data leaves are not parameters
             bank = self._bank(b)
             destination[prefix + 'params.' + name] = (bank if keep_vars else bank.detach())[r]
 
@@ -257,6 +269,7 @@ class TNModel(nn.Module):
         with torch.no_grad():
             for name in self.symbols:
                 key = prefix + 'params.' + name
+                if _is_data(self.bank_keys[self.sym_loc[name][0]]): continue
                 if key not in state_dict:
                     missing_keys.append(key); continue
                 b, r = self.sym_loc[name]
@@ -825,6 +838,10 @@ class TNModel(nn.Module):
                 piece = self._bank(kb).new_ones(1 if b == 'kbase' else uspan[1] - uspan[0], *shape)
             elif base_only and b == wb:
                 piece = self.extra['word_base'].expand(uspan[1] - uspan[0], -1)
+            elif _is_data(self.bank_keys[rb]):   # step 7: data leaves (bank row = data row)
+                piece = self.data_fn(self.bank_keys[rb][0], sl(uspan))
+            elif not self.row_grads:   # step 7: dense gradients into the bank (plain Adam)
+                piece = self._bank(rb).index_select(0, sl(uspan))
             else:
                 if torch.is_grad_enabled():   # training: RowAdam updates exactly these rows from the leaf's gradient
                     leaf = self._bank(rb).detach().index_select(0, sl(uspan)).requires_grad_()
