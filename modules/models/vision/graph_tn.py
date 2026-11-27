@@ -47,13 +47,14 @@ def cap_treewidth(n, rels, max_tw):
     return rels
 
 
-def compile_graph(row, n_obj, obj0, rels, D, A, relations=True):
-    # einsum + symbols of one image graph: z = apex index, k_j = object j, r_e = rank index of relation e
+def compile_graph(row, obj_rows, rels, D, A, relations=True):
+    # einsum + symbols of one image graph: z = apex index, k_j = object j (data row obj_rows[j]), r_e = rank index of relation e
+    n_obj = len(obj_rows)
     z = get_symbol(0); k = [get_symbol(1 + j) for j in range(n_obj)]
     ins, syms = [z], [{'name': f'y:{row}', 'shape': (A,)}]
     for j in range(n_obj):
         ins += [k[j], k[j] + z]
-        syms += [{'name': f'x:{obj0 + j}', 'shape': (D,)}, {'name': 's:apex', 'shape': (D, A)}]
+        syms += [{'name': f'x:{obj_rows[j]}', 'shape': (D,)}, {'name': 's:apex', 'shape': (D, A)}]
     if relations:
         for e, (s, o, p) in enumerate(rels):
             r = get_symbol(1 + n_obj + e)
@@ -145,7 +146,7 @@ class ImageGraphTN(nn.Module):
                        'relations': sum(map(len, G['rel']))}
         if max_tw is not None: print(f'ImageGraphTN: max_tw {max_tw}: {self.capped}')
         self.rel = rel
-        self.graphs = [compile_graph(r, start[r + 1] - start[r], start[r], rel[r], graph_dim, apex_dim, relations)
+        self.graphs = [compile_graph(r, range(start[r], start[r + 1]), rel[r], graph_dim, apex_dim, relations)
                        if r in keep else None for r in range(len(start) - 1)]
         self.tw, self.tw_apex = G['tw'], G['tw_apex']
         eng = TNModel(out_dim=apex_dim, engine='levelwise', init='glorot', scale_free=scale_free, head='plain')
@@ -173,6 +174,14 @@ class ImageGraphTN(nn.Module):
             eng.path_cache[key] = path; eng.level_cache[key] = plan; self.flops[key[0]] = cost
         self.engine = eng
         self.head = nn.Linear(apex_dim, embedding_dim, bias=False)
+
+    def set_graph(self, r, obj_rows, rels):
+        # replace graph row r (per-error tests): compile it and register its explicit path; returns the new (einsum, symbols)
+        e, sy = compile_graph(r, list(obj_rows), rels, self.D, self.A, self.relations)
+        key, path, plan, cost = _graph_plan((e, tuple(tuple(d['shape']) for d in sy), elim_path(len(obj_rows), rels, self.relations)))
+        self.engine.path_cache[key] = path; self.engine.level_cache[key] = plan
+        self.graphs[r] = (e, sy)
+        return self.graphs[r]
 
     def _data(self, kind, rows):
         if kind == 'x':

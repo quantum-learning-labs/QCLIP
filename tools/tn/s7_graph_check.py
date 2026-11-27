@@ -59,7 +59,7 @@ for relations in (True, False):
 
 D, A = (int(sys.argv[1]), int(sys.argv[2])) if len(sys.argv) > 2 else (32, 128)
 def cost(r):
-    e, s = compile_graph(r, start[r + 1] - start[r], start[r], G['rel'][r], D, A)
+    e, s = compile_graph(r, range(start[r], start[r + 1]), G['rel'][r], D, A)
     _, info = oe.contract_path(e, *[d['shape'] for d in s], optimize=elim_path(start[r + 1] - start[r], G['rel'][r]), shapes=True)
     return float(info.opt_cost), float(info.largest_intermediate)
 with multiprocessing.get_context('fork').Pool(int(os.environ.get('TN_PATH_WORKERS', 8))) as pool:
