@@ -179,6 +179,8 @@ class MMEvaluator:
         if embs is None:
             return {}
         m1, pos, neg, pos_sz, neg_sz = embs
+        dt = torch.promote_types(torch.promote_types(m1.dtype, pos.dtype), neg.dtype)   # real images x complex states
+        m1, pos, neg = m1.to(dt), pos.to(dt), neg.to(dt)
         half = lambda a, b: ((a > b).float() * ~torch.isclose(a, b, rtol=1e-5, atol=1e-12) + 0.5 * torch.isclose(a, b, rtol=1e-5, atol=1e-12).float()).mean().item()
         ov = lambda x, y: torch.sum(x.conj() * y, dim=1).abs()
         perm = torch.randperm(len(m1), generator=torch.Generator().manual_seed(0)).to(m1.device)
