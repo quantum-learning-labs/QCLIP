@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 import pandas as pd
 import torch
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, ReduceLROnPlateau
 
 from modules.compilation.quantum.ansatz import build_ansatz
 from modules.compilation.classical.tensor_network import TNCompiler
@@ -140,6 +140,11 @@ def build_optimizer(config, text_model, image_model):
          {'params': classical_params, 'lr': config['clr']}],
         betas=(0.9, 0.999), eps=1e-08, weight_decay=config.get('weight_decay', 1e-4)
     )
+    if config.get('lr_schedule') == 'plateau':
+        # LREC-era recipe (notebooks of March 2026): no warm-up, halve the LR when val hard_neg_acc stalls for lr_patience
+        # epochs (stepped by RunManager with the val metric); max_lr_cuts stops training after that many cuts
+        return optimizer, ReduceLROnPlateau(optimizer, mode='max', factor=config.get('lr_factor', 0.5),
+                                            patience=config.get('lr_patience', 5))
     warmup_epochs = config.get('warmup_epochs', 5)
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
     scheduler_cosine = CosineAnnealingLR(optimizer, T_max=config['epochs'] - warmup_epochs, eta_min=1e-6)
