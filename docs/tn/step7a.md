@@ -18,8 +18,8 @@ Branch tn-step7 (code d136ec7 for every run; worktree tails `qclip_wt/step7`). P
   (Yuksekgonul et al., ICLR 2023, arXiv 2210.01936). In thesis terms (requirement I): **the retrieval training signal does not
   identify the shared relation generators**; they are free directions of the loss.
 - **First non-tree graph family in qclip, contracted exactly.** Scene graphs have treewidth 0-4 (31% ≥ 2; +1 with the apex).
-  The cost is set by treewidth as M2 predicts: flops per image p50 2·10⁶, but 98% of the total sits in the 3% of graphs with
-  treewidth ≥ 2 with the apex at 3-5, and the 612 graphs of tw ≥ 3 needed a cap (below).
+  The cost is set by treewidth as M2 predicts (uncapped, D = 32, A = 128): flops per image p50 2·10⁶; the 31% of graphs with
+  treewidth ≥ 3 including the apex carry 93% of all flops, the 1.3% with ≥ 4 carry 63%, and those 612 graphs needed a cap (below).
 
 ## 2. Model (modules/models/vision/graph_tn.py)
 Per image: object j has leaf o_j = base + P·crop_j + E[class_j] ∈ R^D (crop = frozen CLIP B/32 of its box, squared); every
