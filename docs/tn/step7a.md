@@ -71,6 +71,26 @@ m_p mean 0.13 (std 0.23); predicates differ (mean |R_p − mean R| / |mean R| 0.
 
 Compute: R0 6.0 h (L4), G1 4.3 h (RTX 3090), G2 ~2.2 h (pool 3090 Ti), G3 4.2 h; GPUs differ, so wall times do not compare.
 
+## 4b. SugarCrepe on the items with a PSG graph (eval only)
+SugarCrepe uses COCO val2017 images, so ~40% of its items have a ground-truth graph (`tools/tn/s7_scpsg_make.py`: subsets
+data/psg/splits/sc_*_psg.pkl; per-run results benchmark_best_scpsg.json). Text-choice accuracy (as benchmark.py, SC++ form),
+mean over seeds (per seed):
+
+| test (n) | R0 frozen CLIP | G1 graph | G2 no relations | G3 no global |
+|---|---|---|---|---|
+| replace_object (665) | 0.692 (.683/.701) | **0.776** (.782/.770) | **0.771** (.761/.780) | **0.782** |
+| replace_relation (627) | 0.371 (.376/.365) | 0.405 (.426/.384) | 0.398 (.421/.375) | 0.372 |
+| replace_attribute (320) | 0.389 (.409/.369) | 0.427 (.422/.431) | 0.356 (.375/.338) | 0.353 |
+| swap_attribute (273) | 0.348 (.377/.319) | 0.372 (.388/.355) | 0.364 (.363/.366) | 0.297 |
+| swap_object (101) | 0.426 (.406/.446) | 0.371 (.356/.386) | 0.441 (.455/.426) | 0.386 |
+
+- **replace_object +8 points** for every graph model, all seeds (binomial SE ~0.018): the object-level image side (crops +
+  classes) grounds object identity better than one global vector. G3 (no global vector) is as good: the gain is the objects.
+- **replace_relation +3 points** (G1 0.405, G2 0.398 vs 0.371; SE ~0.019, seed spread ~0.04): marginal, and the same without
+  relation tensors (G2), so not from the relations; consistent with the per-error result.
+- Attributes and swaps: within noise (n 101-320).
+- Caveats: oracle (ground-truth) graphs, 40% subset of each SugarCrepe test, so these are not the benchmark scores of the targets.
+
 ## 5. What it means
 - **For the step-7 aim (compositional image side):** with ground-truth graphs the TN image side reaches the frozen CLIP vector
   but its relational part is unused, because nothing in COCO retrieval needs it. Retrieval is the wrong test for relations;
